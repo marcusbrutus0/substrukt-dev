@@ -178,6 +178,13 @@ async fn run_server(config: Config) -> eyre::Result<()> {
         http_client,
     });
 
+    // Background webhook cron (auto-fires staging when dirty)
+    substrukt::webhooks::spawn_cron(
+        state.http_client.clone(),
+        state.audit.clone(),
+        state.config.clone(),
+    );
+
     // File watcher for cache invalidation
     let _watcher = cache::spawn_watcher(
         Arc::new(state.cache.clone()),
