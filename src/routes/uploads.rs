@@ -39,7 +39,7 @@ async fn upload_file(State(state): State<AppState>, mut multipart: Multipart) ->
             continue;
         }
 
-        match uploads::store_upload(&state.config.uploads_dir(), &filename, &content_type, &data) {
+        match uploads::store_upload(&state.config.uploads_dir(), &state.pool, &filename, &content_type, &data).await {
             Ok(meta) => {
                 return Json(serde_json::json!({
                     "hash": meta.hash,
@@ -70,27 +70,27 @@ async fn serve_upload(
     State(state): State<AppState>,
     Path((hash, _filename)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    serve_file(&state, &hash)
+    serve_file(&state, &hash).await
 }
 
 async fn serve_upload_no_name(
     State(state): State<AppState>,
     Path(hash): Path<String>,
 ) -> impl IntoResponse {
-    serve_file(&state, &hash)
+    serve_file(&state, &hash).await
 }
 
-pub fn serve_upload_by_hash(state: &AppState, hash: &str) -> axum::response::Response {
-    serve_file(state, hash)
+pub async fn serve_upload_by_hash(state: &AppState, hash: &str) -> axum::response::Response {
+    serve_file(state, hash).await
 }
 
-fn serve_file(state: &AppState, hash: &str) -> axum::response::Response {
+async fn serve_file(state: &AppState, hash: &str) -> axum::response::Response {
     let path = match uploads::get_upload_path(&state.config.uploads_dir(), hash) {
         Some(p) => p,
         None => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    let meta = uploads::get_upload_meta(&state.config.uploads_dir(), hash);
+    let meta = uploads::db_get_upload_meta(&state.pool, hash).await.ok().flatten();
     let content_type = meta
         .as_ref()
         .map(|m| m.mime.clone())

@@ -315,7 +315,7 @@ async fn upload_file(
             continue;
         }
 
-        match uploads::store_upload(&state.config.uploads_dir(), &filename, &content_type, &data) {
+        match uploads::store_upload(&state.config.uploads_dir(), &state.pool, &filename, &content_type, &data).await {
             Ok(meta) => {
                 return Json(serde_json::json!({
                     "hash": meta.hash,
@@ -347,7 +347,7 @@ async fn get_upload(
     _token: BearerToken,
     Path(hash): Path<String>,
 ) -> impl IntoResponse {
-    crate::routes::uploads::serve_upload_by_hash(&state, &hash)
+    crate::routes::uploads::serve_upload_by_hash(&state, &hash).await
 }
 
 async fn export_bundle(State(state): State<AppState>, _token: BearerToken) -> impl IntoResponse {

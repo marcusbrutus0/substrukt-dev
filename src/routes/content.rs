@@ -212,7 +212,7 @@ async fn create_entry(
     let mut data = content_form::form_data_to_json(&schema_file.schema, &form_fields, "");
 
     // Process upload fields
-    process_uploads(&state, &mut data, &upload_fields);
+    process_uploads(&state, &mut data, &upload_fields).await;
 
     // Validate
     if let Err(errors) = content::validate_content(&schema_file, &data) {
@@ -281,7 +281,7 @@ async fn update_entry(
 
     let mut data = content_form::form_data_to_json(&schema_file.schema, &form_fields, "");
 
-    process_uploads(&state, &mut data, &upload_fields);
+    process_uploads(&state, &mut data, &upload_fields).await;
 
     if let Err(errors) = content::validate_content(&schema_file, &data) {
         let form_html = content_form::render_form_fields(&schema_file.schema, Some(&data), "");
@@ -394,14 +394,15 @@ async fn parse_multipart(
     Ok((form_fields, upload_fields))
 }
 
-fn process_uploads(state: &AppState, data: &mut serde_json::Value, upload_fields: &[UploadField]) {
+async fn process_uploads(state: &AppState, data: &mut serde_json::Value, upload_fields: &[UploadField]) {
     for upload in upload_fields {
         match uploads::store_upload(
             &state.config.uploads_dir(),
+            &state.pool,
             &upload.filename,
             &upload.content_type,
             &upload.data,
-        ) {
+        ).await {
             Ok(meta) => {
                 let upload_ref = serde_json::json!({
                     "hash": meta.hash,

@@ -11,7 +11,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 color-eyre = "0.6"
 eyre = "0.6"
-minijinja = { version = "2.15", features = ["loader"] }
+minijinja = { version = "2.15", features = ["loader", "json"] }
 minijinja-autoreload = "2"
 minijinja-embed = "2"
 notify = "8"
