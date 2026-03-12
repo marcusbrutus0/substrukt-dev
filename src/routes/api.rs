@@ -185,6 +185,14 @@ async fn create_entry(
         }
     };
 
+    if schema_file.meta.kind == crate::schema::models::Kind::Single {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "This schema is a single. Use PUT /content/{slug}/single instead."})),
+        )
+            .into_response();
+    }
+
     if let Err(errors) = content::validate_content(&schema_file, &data) {
         return (
             StatusCode::BAD_REQUEST,

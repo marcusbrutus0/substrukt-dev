@@ -1179,6 +1179,31 @@ async fn api_single_crud() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn api_rejects_collection_create_for_singles() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("api-test").await;
+    s.create_schema(SETTINGS_SCHEMA).await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // POST to collection endpoint for a single schema should be rejected
+    let resp = api
+        .post(s.url("/api/v1/content/site-settings"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "Bad", "tagline": "No"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["error"].as_str().unwrap().contains("single"));
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /// Extract the first entry ID from a content list page's edit links.
