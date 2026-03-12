@@ -41,17 +41,18 @@ impl TestServer {
         session_store.migrate().await.unwrap();
         let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
 
-        let reloader = templates::create_reloader(config.schemas_dir());
+        let audit_db_path = data_dir.path().join("audit.db");
+        let audit_pool = substrukt::audit::init_pool(&audit_db_path).await.unwrap();
+        let audit_logger = substrukt::audit::AuditLogger::new(audit_pool);
+
+        let reloader =
+            templates::create_reloader(config.schemas_dir(), audit_logger.clone(), config.clone());
         let content_cache = DashMap::new();
         cache::populate(&content_cache, &config.schemas_dir(), &config.content_dir());
 
         let metrics_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
             .build_recorder()
             .handle();
-
-        let audit_db_path = data_dir.path().join("audit.db");
-        let audit_pool = substrukt::audit::init_pool(&audit_db_path).await.unwrap();
-        let audit_logger = substrukt::audit::AuditLogger::new(audit_pool);
 
         let state = Arc::new(AppStateInner {
             pool,

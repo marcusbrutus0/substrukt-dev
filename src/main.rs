@@ -142,8 +142,14 @@ async fn run_server(config: Config) -> eyre::Result<()> {
     session_store.migrate().await?;
     let session_layer = SessionManagerLayer::new(session_store).with_secure(config.secure_cookies);
 
+    // Audit logging (separate database) — must be before template reloader
+    let audit_db_path = config.data_dir.join("audit.db");
+    let audit_pool = audit::init_pool(&audit_db_path).await?;
+    let audit_logger = audit::AuditLogger::new(audit_pool);
+
     // Template environment (auto-reloads on file changes)
-    let reloader = templates::create_reloader(config.schemas_dir());
+    let reloader =
+        templates::create_reloader(config.schemas_dir(), audit_logger.clone(), config.clone());
 
     // Migrate .meta.json sidecars to SQLite (one-time, idempotent)
     substrukt::uploads::migrate_meta_sidecars(&config.uploads_dir(), &config.data_dir, &pool)
@@ -155,11 +161,6 @@ async fn run_server(config: Config) -> eyre::Result<()> {
 
     // Prometheus metrics
     let metrics_handle = metrics::setup_recorder();
-
-    // Audit logging (separate database)
-    let audit_db_path = config.data_dir.join("audit.db");
-    let audit_pool = audit::init_pool(&audit_db_path).await?;
-    let audit_logger = audit::AuditLogger::new(audit_pool);
 
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
