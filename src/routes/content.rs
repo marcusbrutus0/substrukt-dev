@@ -10,6 +10,7 @@ use tower_sessions::Session;
 use crate::auth;
 use crate::content::{self, form as content_form};
 use crate::schema;
+use crate::schema::models::Kind;
 use crate::state::AppState;
 use crate::templates::base_for_htmx;
 use crate::uploads;
@@ -30,11 +31,15 @@ async fn list_entries(
     State(state): State<AppState>,
     session: Session,
     Path(schema_slug): Path<String>,
-) -> axum::response::Result<Html<String>> {
+) -> axum::response::Result<axum::response::Response> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let schema_file = schema::get_schema(&state.config.schemas_dir(), &schema_slug)
         .map_err(|e| format!("Error: {e}"))?
         .ok_or("Schema not found")?;
+
+    if schema_file.meta.kind == Kind::Single {
+        return Ok(Redirect::to(&format!("/content/{schema_slug}/_single/edit")).into_response());
+    }
 
     let entries = content::list_entries(&state.config.content_dir(), &schema_file)
         .map_err(|e| format!("Error: {e}"))?;
@@ -89,7 +94,7 @@ async fn list_entries(
             flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
         })
         .map_err(|e| format!("Render error: {e}"))?;
-    Ok(Html(html))
+    Ok(Html(html).into_response())
 }
 
 fn get_display_columns(schema: &serde_json::Value) -> Vec<(String, String)> {

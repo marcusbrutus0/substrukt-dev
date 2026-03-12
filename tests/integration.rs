@@ -961,6 +961,38 @@ async fn export_import_with_upload_manifest() {
     assert!(body.contains("manual.pdf"));
 }
 
+// ── Singles tests ─────────────────────────────────────────────
+
+const SETTINGS_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Site Settings", "slug": "site-settings", "storage": "directory", "kind": "single"},
+    "type": "object",
+    "properties": {
+        "site_name": {"type": "string", "title": "Site Name"},
+        "tagline": {"type": "string", "title": "Tagline"}
+    },
+    "required": ["site_name"]
+}"#;
+
+#[tokio::test]
+async fn single_list_redirects_to_edit() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(SETTINGS_SCHEMA).await;
+
+    // GET /content/site-settings should redirect to /_single/edit
+    let resp = s
+        .client
+        .get(s.url("/content/site-settings"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        resp.headers().get("location").unwrap(),
+        "/content/site-settings/_single/edit"
+    );
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /// Extract the first entry ID from a content list page's edit links.
