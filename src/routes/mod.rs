@@ -6,9 +6,11 @@ pub mod settings;
 pub mod uploads;
 
 use axum::{Router, extract::State, middleware, response::Html};
+use axum_htmx::HxRequest;
 
 use crate::auth::require_auth;
 use crate::state::AppState;
+use crate::templates::base_for_htmx;
 
 pub fn build_router(state: AppState) -> Router {
     let api_routes = api::routes();
@@ -31,17 +33,21 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn not_found(State(state): State<AppState>) -> (axum::http::StatusCode, Html<String>) {
-    let html = render_error(&state, 404, "Page not found");
+async fn not_found(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+) -> (axum::http::StatusCode, Html<String>) {
+    let html = render_error(&state, 404, "Page not found", is_htmx);
     (axum::http::StatusCode::NOT_FOUND, Html(html))
 }
 
-pub fn render_error(state: &AppState, status: u16, message: &str) -> String {
+pub fn render_error(state: &AppState, status: u16, message: &str, is_htmx: bool) -> String {
     let Ok(tmpl) = state.templates.acquire_env() else {
         return format!("<h1>{status}</h1><p>{message}</p>");
     };
     if let Ok(template) = tmpl.get_template("error.html") {
         if let Ok(html) = template.render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
             status => status,
             message => message,
         }) {
@@ -51,7 +57,10 @@ pub fn render_error(state: &AppState, status: u16, message: &str) -> String {
     format!("<h1>{status}</h1><p>{message}</p>")
 }
 
-async fn dashboard(State(state): State<AppState>) -> axum::response::Result<Html<String>> {
+async fn dashboard(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+) -> axum::response::Result<Html<String>> {
     let schemas = crate::schema::list_schemas(&state.config.schemas_dir()).unwrap_or_default();
     let entry_count: usize = schemas
         .iter()
@@ -66,6 +75,7 @@ async fn dashboard(State(state): State<AppState>) -> axum::response::Result<Html
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
         .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
             schema_count => schemas.len(),
             entry_count => entry_count,
         })

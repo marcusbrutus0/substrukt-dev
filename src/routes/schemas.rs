@@ -4,11 +4,13 @@ use axum::{
     response::{Html, IntoResponse, Redirect},
     routing::get,
 };
+use axum_htmx::HxRequest;
 use tower_sessions::Session;
 
 use crate::auth;
 use crate::schema;
 use crate::state::AppState;
+use crate::templates::base_for_htmx;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -24,6 +26,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn list_schemas(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
 ) -> axum::response::Result<Html<String>> {
@@ -49,6 +52,7 @@ async fn list_schemas(
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
         .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
             schemas => schema_data,
             flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
             flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
@@ -57,7 +61,10 @@ async fn list_schemas(
     Ok(Html(html))
 }
 
-async fn new_schema_page(State(state): State<AppState>) -> axum::response::Result<Html<String>> {
+async fn new_schema_page(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+) -> axum::response::Result<Html<String>> {
     let default_schema = serde_json::json!({
         "x-substrukt": {
             "title": "",
@@ -75,6 +82,7 @@ async fn new_schema_page(State(state): State<AppState>) -> axum::response::Resul
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
         .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
             is_new => true,
             schema_json => serde_json::to_string_pretty(&default_schema).unwrap_or_default(),
         })
@@ -142,6 +150,7 @@ async fn create_schema(
 }
 
 async fn edit_schema_page(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     Path(slug): Path<String>,
 ) -> axum::response::Result<impl IntoResponse> {
@@ -155,6 +164,7 @@ async fn edit_schema_page(
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
         .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
             is_new => false,
             slug => slug,
             schema_json => serde_json::to_string_pretty(&schema.schema).unwrap_or_default(),

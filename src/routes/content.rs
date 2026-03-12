@@ -4,12 +4,14 @@ use axum::{
     response::{Html, IntoResponse, Redirect},
     routing::get,
 };
+use axum_htmx::HxRequest;
 use tower_sessions::Session;
 
 use crate::auth;
 use crate::content::{self, form as content_form};
 use crate::schema;
 use crate::state::AppState;
+use crate::templates::base_for_htmx;
 use crate::uploads;
 
 pub fn routes() -> Router<AppState> {
@@ -24,6 +26,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn list_entries(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
     Path(schema_slug): Path<String>,
@@ -74,6 +77,7 @@ async fn list_entries(
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
         .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             columns => column_headers,
@@ -113,6 +117,7 @@ fn get_display_columns(schema: &serde_json::Value) -> Vec<(String, String)> {
 }
 
 async fn new_entry_page(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     Path(schema_slug): Path<String>,
 ) -> axum::response::Result<Html<String>> {
@@ -129,6 +134,7 @@ async fn new_entry_page(
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
         .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             is_new => true,
@@ -139,6 +145,7 @@ async fn new_entry_page(
 }
 
 async fn edit_entry_page(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     Path((schema_slug, entry_id)): Path<(String, String)>,
 ) -> axum::response::Result<Html<String>> {
@@ -159,6 +166,7 @@ async fn edit_entry_page(
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
         .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             entry_id => entry_id,

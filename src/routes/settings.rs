@@ -4,12 +4,14 @@ use axum::{
     response::{Html, IntoResponse, Redirect},
     routing::get,
 };
+use axum_htmx::HxRequest;
 use tower_sessions::Session;
 
 use crate::auth;
 use crate::auth::token;
 use crate::db::models;
 use crate::state::AppState;
+use crate::templates::base_for_htmx;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -21,6 +23,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn tokens_page(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
 ) -> axum::response::Result<Html<String>> {
@@ -48,7 +51,10 @@ async fn tokens_page(
         .get_template("settings/tokens.html")
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
-        .render(minijinja::context! { tokens => token_data })
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            tokens => token_data,
+        })
         .map_err(|e| format!("Render error: {e}"))?;
     Ok(Html(html))
 }
@@ -59,6 +65,7 @@ pub struct CreateTokenForm {
 }
 
 async fn create_token(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
     Form(form): Form<CreateTokenForm>,
@@ -95,6 +102,7 @@ async fn create_token(
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
         .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
             tokens => token_data,
             new_token => raw_token,
         })
