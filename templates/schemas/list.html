@@ -14,6 +14,7 @@
         <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Title</th>
         <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Slug</th>
         <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Storage</th>
+        <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Kind</th>
         <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Fields</th>
         <th class="px-4 py-3"></th>
       </tr>
@@ -26,6 +27,7 @@
         </td>
         <td class="px-4 py-3 text-gray-500 text-sm font-mono">{{ schema.slug }}</td>
         <td class="px-4 py-3 text-gray-500 text-sm">{{ schema.storage }}</td>
+        <td class="px-4 py-3 text-gray-500 text-sm">{{ schema.kind }}</td>
         <td class="px-4 py-3 text-gray-500 text-sm">{{ schema.field_count }}</td>
         <td class="px-4 py-3 text-right">
           <a href="/schemas/{{ schema.slug }}/edit" class="text-gray-400 hover:text-blue-600 text-sm">Edit</a>

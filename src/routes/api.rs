@@ -66,6 +66,7 @@ async fn list_schemas(State(state): State<AppState>, _token: BearerToken) -> imp
                         "title": s.meta.title,
                         "slug": s.meta.slug,
                         "storage": s.meta.storage.to_string(),
+                        "kind": s.meta.kind.to_string(),
                         "schema": s.schema,
                     })
                 })

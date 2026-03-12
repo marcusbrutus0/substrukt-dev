@@ -40,6 +40,7 @@ async fn list_schemas(
                 title => s.meta.title,
                 slug => s.meta.slug,
                 storage => s.meta.storage.to_string(),
+                kind => s.meta.kind.to_string(),
                 field_count => schema::property_count(&s.schema),
             }
         })
