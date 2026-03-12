@@ -139,7 +139,9 @@ async fn run_server(config: Config) -> eyre::Result<()> {
         config.content_dir(),
     );
 
-    let app = routes::build_router(state).layer(session_layer);
+    let app = routes::build_router(state)
+        .layer(session_layer)
+        .layer(tower_http::trace::TraceLayer::new_for_http());
 
     let addr = format!("{}:{}", config.listen_addr, config.listen_port);
     let listener = TcpListener::bind(&addr).await?;
