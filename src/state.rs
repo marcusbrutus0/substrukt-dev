@@ -20,6 +20,7 @@ pub struct AppStateInner {
     pub api_limiter: RateLimiter,
     pub metrics_handle: PrometheusHandle,
     pub audit: AuditLogger,
+    pub http_client: reqwest::Client,
 }
 
 pub type AppState = Arc<AppStateInner>;

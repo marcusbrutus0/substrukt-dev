@@ -7,6 +7,9 @@ pub struct Config {
     pub listen_addr: String,
     pub listen_port: u16,
     pub secure_cookies: bool,
+    pub staging_webhook_url: Option<String>,
+    pub production_webhook_url: Option<String>,
+    pub webhook_check_interval: u64,
 }
 
 impl Config {
@@ -15,6 +18,9 @@ impl Config {
         db_path: Option<PathBuf>,
         port: Option<u16>,
         secure_cookies: bool,
+        staging_webhook_url: Option<String>,
+        production_webhook_url: Option<String>,
+        webhook_check_interval: Option<u64>,
     ) -> Self {
         let data_dir = data_dir.unwrap_or_else(|| PathBuf::from("data"));
         let db_path = db_path.unwrap_or_else(|| data_dir.join("substrukt.db"));
@@ -24,6 +30,9 @@ impl Config {
             listen_addr: "0.0.0.0".into(),
             listen_port: port.unwrap_or(3000),
             secure_cookies,
+            staging_webhook_url,
+            production_webhook_url,
+            webhook_check_interval: webhook_check_interval.unwrap_or(300),
         }
     }
 
