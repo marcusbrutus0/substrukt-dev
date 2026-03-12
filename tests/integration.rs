@@ -62,6 +62,7 @@ impl TestServer {
             api_limiter: RateLimiter::new(1000, std::time::Duration::from_secs(60)),
             metrics_handle,
             audit: audit_logger,
+            http_client: reqwest::Client::new(),
         });
 
         let app = routes::build_router(state).layer(session_layer);

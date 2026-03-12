@@ -161,6 +161,11 @@ async fn run_server(config: Config) -> eyre::Result<()> {
     let audit_pool = audit::init_pool(&audit_db_path).await?;
     let audit_logger = audit::AuditLogger::new(audit_pool);
 
+    let http_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent("Substrukt/0.1")
+        .build()?;
+
     let state = Arc::new(AppStateInner {
         pool,
         config: config.clone(),
@@ -170,6 +175,7 @@ async fn run_server(config: Config) -> eyre::Result<()> {
         api_limiter: RateLimiter::new(100, std::time::Duration::from_secs(60)),
         metrics_handle,
         audit: audit_logger,
+        http_client,
     });
 
     // File watcher for cache invalidation
