@@ -1098,6 +1098,87 @@ async fn single_new_entry_page_redirects() {
     );
 }
 
+#[tokio::test]
+async fn api_single_crud() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("api-test").await;
+    s.create_schema(SETTINGS_SCHEMA).await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // GET /single returns 404 when not yet saved
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // PUT /single creates it
+    let resp = api
+        .put(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "API Site", "tagline": "Hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // GET /single returns the data
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["site_name"], "API Site");
+
+    // PUT /single updates it
+    let resp = api
+        .put(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "Updated Site", "tagline": "New"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Verify update
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["site_name"], "Updated Site");
+
+    // DELETE /single
+    let resp = api
+        .delete(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // GET /single returns 404 again
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /// Extract the first entry ID from a content list page's edit links.

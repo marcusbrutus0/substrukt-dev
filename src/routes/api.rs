@@ -22,6 +22,10 @@ pub fn routes(state: AppState) -> Router<AppState> {
             get(list_entries).post(create_entry),
         )
         .route(
+            "/content/{schema_slug}/single",
+            get(get_single).put(upsert_single).delete(delete_single),
+        )
+        .route(
             "/content/{schema_slug}/{entry_id}",
             get(get_entry).put(update_entry).delete(delete_entry),
         )
@@ -302,6 +306,132 @@ async fn delete_entry(
                 "content_delete",
                 "content",
                 &format!("{schema_slug}/{entry_id}"),
+                None,
+            );
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn get_single(
+    State(state): State<AppState>,
+    _token: BearerToken,
+    Path(schema_slug): Path<String>,
+) -> impl IntoResponse {
+    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    match content::get_entry(&state.config.content_dir(), &schema_file, "_single") {
+        Ok(Some(entry)) => Json(entry.data).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn upsert_single(
+    State(state): State<AppState>,
+    _token: BearerToken,
+    Path(schema_slug): Path<String>,
+    Json(data): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(errors) = content::validate_content(&schema_file, &data) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"errors": errors})),
+        )
+            .into_response();
+    }
+
+    let hashes = uploads::extract_upload_hashes(&data);
+    match content::save_entry(
+        &state.config.content_dir(),
+        &schema_file,
+        Some("_single"),
+        data,
+    ) {
+        Ok(_) => {
+            crate::cache::reload_entry(
+                &state.cache,
+                &state.config.content_dir(),
+                &schema_file,
+                "_single",
+            );
+            let _ =
+                uploads::db_update_references(&state.pool, &schema_slug, "_single", &hashes).await;
+            state.audit.log(
+                "api",
+                "content_update",
+                "content",
+                &format!("{schema_slug}/_single"),
+                None,
+            );
+            StatusCode::OK.into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn delete_single(
+    State(state): State<AppState>,
+    _token: BearerToken,
+    Path(schema_slug): Path<String>,
+) -> impl IntoResponse {
+    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    let _ = uploads::db_delete_references(&state.pool, &schema_slug, "_single").await;
+    match content::delete_entry(&state.config.content_dir(), &schema_file, "_single") {
+        Ok(()) => {
+            let key = format!("{schema_slug}/_single");
+            state.cache.remove(&key);
+            state.audit.log(
+                "api",
+                "content_delete",
+                "content",
+                &format!("{schema_slug}/_single"),
                 None,
             );
             StatusCode::NO_CONTENT.into_response()
