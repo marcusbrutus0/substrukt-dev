@@ -100,6 +100,20 @@ impl TestServer {
             .await
             .unwrap();
     }
+
+    /// Create an API token via the settings UI and extract the raw token from the response.
+    async fn create_api_token(&self, name: &str) -> String {
+        let resp = self.client
+            .post(self.url("/settings/tokens"))
+            .form(&[("name", name)])
+            .send()
+            .await
+            .unwrap();
+        let body = resp.text().await.unwrap();
+        // The token is shown in the response page — extract it.
+        // It's a 64-char hex string shown after "new_token" context.
+        extract_new_token(&body).expect("should find new token in response")
+    }
 }
 
 impl Drop for TestServer {
@@ -421,6 +435,188 @@ async fn sidebar_shows_content_links() {
     assert!(body.contains(r#"href="/content/blog-posts""#));
 }
 
+// ── API token management tests ───────────────────────────────
+
+#[tokio::test]
+async fn token_create_and_list() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s.client.get(s.url("/settings/tokens")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let token = s.create_api_token("test-token").await;
+    assert_eq!(token.len(), 64, "Token should be 64-char hex");
+
+    let resp = s.client.get(s.url("/settings/tokens")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("test-token"));
+}
+
+// ── API tests ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn api_requires_bearer_token() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // No token → 401
+    let no_cookie_client = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = no_cookie_client.get(s.url("/api/v1/schemas")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_schema_and_content_crud() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("api-test").await;
+
+    // Use a separate client without cookies for pure API testing
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Create schema first via UI (API doesn't have schema create)
+    s.create_schema(BLOG_SCHEMA).await;
+
+    // List schemas via API
+    let resp = api.get(s.url("/api/v1/schemas"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let schemas: serde_json::Value = resp.json().await.unwrap();
+    assert!(schemas.as_array().unwrap().iter().any(|s| s["slug"] == "blog-posts"));
+
+    // Get single schema
+    let resp = api.get(s.url("/api/v1/schemas/blog-posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Create entry via API
+    let resp = api.post(s.url("/api/v1/content/blog-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "API Post", "body": "From API"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created: serde_json::Value = resp.json().await.unwrap();
+    let entry_id = created["id"].as_str().unwrap().to_string();
+
+    // List entries via API
+    let resp = api.get(s.url("/api/v1/content/blog-posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert!(!entries.as_array().unwrap().is_empty());
+
+    // Get single entry
+    let resp = api.get(s.url(&format!("/api/v1/content/blog-posts/{entry_id}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entry: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entry["title"], "API Post");
+
+    // Update entry
+    let resp = api.put(s.url(&format!("/api/v1/content/blog-posts/{entry_id}")))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Updated API Post", "body": "Edited"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Delete entry
+    let resp = api.delete(s.url(&format!("/api/v1/content/blog-posts/{entry_id}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn api_export_import() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("sync-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Create schema and content
+    s.create_schema(BLOG_SCHEMA).await;
+    let form = reqwest::multipart::Form::new()
+        .text("title", "Export Me")
+        .text("body", "Content for export");
+    s.client.post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Export
+    let resp = api.post(s.url("/api/v1/export"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bundle = resp.bytes().await.unwrap();
+    assert!(!bundle.is_empty(), "Export should produce data");
+
+    // Import into a fresh server
+    let s2 = TestServer::start().await;
+    s2.setup_admin().await;
+    let token2 = s2.create_api_token("import-test").await;
+
+    let api2 = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let file_part = reqwest::multipart::Part::bytes(bundle.to_vec())
+        .file_name("bundle.tar.gz")
+        .mime_str("application/gzip")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("bundle", file_part);
+    let resp = api2.post(s2.url("/api/v1/import"))
+        .bearer_auth(&token2)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Verify imported content
+    let resp = api2.get(s2.url("/api/v1/content/blog-posts"))
+        .bearer_auth(&token2)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert!(!entries.as_array().unwrap().is_empty(), "Imported entries should exist");
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /// Extract the first entry ID from a content list page's edit links.
@@ -444,6 +640,22 @@ fn extract_upload_hash(html: &str) -> Option<String> {
         let rest = &html[pos + marker.len()..];
         if let Some(end) = rest.find('/') {
             return Some(rest[..end].to_string());
+        }
+    }
+    None
+}
+
+/// Extract the newly created token from the tokens page HTML.
+fn extract_new_token(html: &str) -> Option<String> {
+    // Token is in: <code class="...select-all">HEX_TOKEN</code>
+    let marker = "select-all\">";
+    if let Some(pos) = html.find(marker) {
+        let rest = &html[pos + marker.len()..];
+        if let Some(end) = rest.find('<') {
+            let token = rest[..end].trim();
+            if token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Some(token.to_string());
+            }
         }
     }
     None
