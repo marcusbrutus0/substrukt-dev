@@ -1,6 +1,7 @@
 use axum::{
     Form, Router,
     extract::State,
+    http::HeaderMap,
     response::{Html, IntoResponse, Redirect},
     routing::get,
 };
@@ -40,9 +41,19 @@ async fn login_page(
 
 async fn login_submit(
     State(state): State<AppState>,
+    headers: HeaderMap,
     session: Session,
     Form(form): Form<LoginForm>,
 ) -> impl IntoResponse {
+    let ip = client_ip(&headers);
+    if !state.login_limiter.check(&ip) {
+        return (
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            "Too many login attempts. Please try again later.",
+        )
+            .into_response();
+    }
+
     let user = models::find_user_by_username(&state.pool, &form.username).await;
     match user {
         Ok(Some(user)) if user.verify_password(&form.password) => {
@@ -162,4 +173,13 @@ async fn render_template(
         .render(ctx)
         .map_err(|e| format!("Render error: {e}"))?;
     Ok(Html(html))
+}
+
+fn client_ip(headers: &HeaderMap) -> String {
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(first_ip) = xff.split(',').next() {
+            return first_ip.trim().to_string();
+        }
+    }
+    "unknown".to_string()
 }

@@ -9,6 +9,7 @@ use tower_sessions_sqlx_store::SqliteStore;
 use substrukt::cache;
 use substrukt::config::Config;
 use substrukt::db;
+use substrukt::rate_limit::RateLimiter;
 use substrukt::routes;
 use substrukt::state::AppStateInner;
 use substrukt::templates;
@@ -46,6 +47,8 @@ impl TestServer {
             config,
             templates: reloader,
             cache: content_cache,
+            login_limiter: RateLimiter::new(100, std::time::Duration::from_secs(60)),
+            api_limiter: RateLimiter::new(1000, std::time::Duration::from_secs(60)),
         });
 
         let app = routes::build_router(state).layer(session_layer);

@@ -15,7 +15,7 @@ use crate::state::AppState;
 use crate::templates::base_for_htmx;
 
 pub fn build_router(state: AppState) -> Router {
-    let api_routes = api::routes();
+    let api_routes = api::routes(state.clone());
     let auth_routes = auth::routes();
     let schema_routes = schemas::routes();
     let content_routes = content::routes();

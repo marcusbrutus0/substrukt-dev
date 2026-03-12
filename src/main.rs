@@ -11,6 +11,7 @@ use substrukt::auth;
 use substrukt::cache;
 use substrukt::config::Config;
 use substrukt::db;
+use substrukt::rate_limit::RateLimiter;
 use substrukt::routes;
 use substrukt::state::AppStateInner;
 use substrukt::sync;
@@ -130,6 +131,8 @@ async fn run_server(config: Config) -> eyre::Result<()> {
         config: config.clone(),
         templates: reloader,
         cache: content_cache,
+        login_limiter: RateLimiter::new(10, std::time::Duration::from_secs(60)),
+        api_limiter: RateLimiter::new(100, std::time::Duration::from_secs(60)),
     });
 
     // File watcher for cache invalidation
