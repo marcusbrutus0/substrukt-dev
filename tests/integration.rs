@@ -1352,25 +1352,23 @@ async fn test_publish_api_no_webhook_configured() {
 async fn test_publish_api_fires_webhook() {
     // Start a mock webhook receiver
     let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<String>(1);
-    let mock_app =
-        axum::Router::new().route(
-            "/webhook",
-            axum::routing::post(move |body: String| {
-                let tx = webhook_tx.clone();
-                async move {
-                    let _ = tx.send(body).await;
-                    "ok"
-                }
-            }),
-        );
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move |body: String| {
+            let tx = webhook_tx.clone();
+            async move {
+                let _ = tx.send(body).await;
+                "ok"
+            }
+        }),
+    );
     let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mock_addr = mock_listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(mock_listener, mock_app).await.unwrap() });
 
     let webhook_url = format!("http://{mock_addr}/webhook");
 
-    let s =
-        TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
+    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
     s.setup_admin().await;
     let token = s.create_api_token("webhook-test").await;
     s.create_schema(BLOG_SCHEMA).await;
@@ -1405,24 +1403,22 @@ async fn test_publish_api_fires_webhook() {
 #[tokio::test]
 async fn test_dirty_state_tracking() {
     let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<String>(10);
-    let mock_app =
-        axum::Router::new().route(
-            "/webhook",
-            axum::routing::post(move |body: String| {
-                let tx = webhook_tx.clone();
-                async move {
-                    let _ = tx.send(body).await;
-                    "ok"
-                }
-            }),
-        );
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move |body: String| {
+            let tx = webhook_tx.clone();
+            async move {
+                let _ = tx.send(body).await;
+                "ok"
+            }
+        }),
+    );
     let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mock_addr = mock_listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(mock_listener, mock_app).await.unwrap() });
 
     let webhook_url = format!("http://{mock_addr}/webhook");
-    let s =
-        TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
+    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
     s.setup_admin().await;
     let token = s.create_api_token("dirty-test").await;
     s.create_schema(BLOG_SCHEMA).await;

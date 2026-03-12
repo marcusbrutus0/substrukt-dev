@@ -41,8 +41,12 @@ async fn publish(
         }
         Err(e) => {
             tracing::warn!("Webhook failed for {environment}: {e}");
-            auth::set_flash(&session, "error", "Webhook failed \u{2014} check configuration")
-                .await;
+            auth::set_flash(
+                &session,
+                "error",
+                "Webhook failed \u{2014} check configuration",
+            )
+            .await;
         }
     }
 

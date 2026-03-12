@@ -34,12 +34,11 @@ impl AuditLogger {
     }
 
     pub async fn is_dirty(&self, environment: &str) -> eyre::Result<bool> {
-        let last_fired: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT last_fired_at FROM webhook_state WHERE environment = ?",
-        )
-        .bind(environment)
-        .fetch_optional(self.pool.as_ref())
-        .await?;
+        let last_fired: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT last_fired_at FROM webhook_state WHERE environment = ?")
+                .bind(environment)
+                .fetch_optional(self.pool.as_ref())
+                .await?;
 
         let last_fired_at = match last_fired {
             Some((Some(ts),)) => ts,
@@ -110,7 +109,10 @@ mod tests {
 
     async fn test_pool() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        sqlx::migrate!("./audit_migrations").run(&pool).await.unwrap();
+        sqlx::migrate!("./audit_migrations")
+            .run(&pool)
+            .await
+            .unwrap();
         pool
     }
 
@@ -128,7 +130,9 @@ mod tests {
         logger.mark_fired("staging").await.unwrap();
         // Insert a mutation with a timestamp in the future (RFC3339 format to match mark_fired)
         let future_ts = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
-        let query = format!("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{future_ts}', 'test', 'content_create', 'content', 'test/1')");
+        let query = format!(
+            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{future_ts}', 'test', 'content_create', 'content', 'test/1')"
+        );
         logger.execute_raw(&query).await.unwrap();
         assert!(logger.is_dirty("staging").await.unwrap());
     }

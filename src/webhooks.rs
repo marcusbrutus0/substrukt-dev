@@ -59,8 +59,7 @@ pub async fn fire_webhook(
             "webhook",
             environment,
             Some(
-                &serde_json::json!({"status": "success", "triggered_by": triggered_by})
-                    .to_string(),
+                &serde_json::json!({"status": "success", "triggered_by": triggered_by}).to_string(),
             ),
         );
         Ok(true)
