@@ -686,6 +686,133 @@ async fn api_export_import() {
     assert!(!entries.as_array().unwrap().is_empty(), "Imported entries should exist");
 }
 
+// ── Uploads browser tests ────────────────────────────────────
+
+#[tokio::test]
+async fn upload_reference_tracking() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(GALLERY_SCHEMA).await;
+
+    // Create entry with upload
+    let csrf = s.get_csrf("/content/gallery/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Test Photo")
+        .part("image", reqwest::multipart::Part::bytes(b"fake image data".to_vec())
+            .file_name("test.jpg")
+            .mime_str("image/jpeg").unwrap());
+    let resp = s.client.post(s.url("/content/gallery/new"))
+        .multipart(form)
+        .send().await.unwrap();
+    assert!(resp.status().is_redirection() || resp.status().is_success());
+
+    // Check uploads page shows the upload with reference
+    let resp = s.client.get(s.url("/uploads"))
+        .send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("test.jpg"));
+    assert!(body.contains("gallery"));
+    assert!(!body.contains("Orphaned"));
+}
+
+#[tokio::test]
+async fn uploads_browser_filtering() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(GALLERY_SCHEMA).await;
+
+    // Upload a file via content creation
+    let csrf = s.get_csrf("/content/gallery/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Beach")
+        .part("image", reqwest::multipart::Part::bytes(b"beach data".to_vec())
+            .file_name("beach.jpg")
+            .mime_str("image/jpeg").unwrap());
+    s.client.post(s.url("/content/gallery/new"))
+        .multipart(form)
+        .send().await.unwrap();
+
+    // Filter by filename — should match
+    let resp = s.client.get(s.url("/uploads?q=beach"))
+        .send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("beach.jpg"));
+
+    // Filter by non-matching filename — should not match
+    let resp = s.client.get(s.url("/uploads?q=mountain"))
+        .send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(!body.contains("beach.jpg"));
+
+    // Filter by schema
+    let resp = s.client.get(s.url("/uploads?schema=gallery"))
+        .send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("beach.jpg"));
+}
+
+#[tokio::test]
+async fn export_import_with_upload_manifest() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("test").await;
+    s.create_schema(GALLERY_SCHEMA).await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Upload via web UI
+    let csrf = s.get_csrf("/content/gallery/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Manual")
+        .part("image", reqwest::multipart::Part::bytes(b"pdf content".to_vec())
+            .file_name("manual.pdf")
+            .mime_str("application/pdf").unwrap());
+    s.client.post(s.url("/content/gallery/new"))
+        .multipart(form)
+        .send().await.unwrap();
+
+    // Export via API
+    let resp = api.post(s.url("/api/v1/export"))
+        .bearer_auth(&token)
+        .send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bundle = resp.bytes().await.unwrap();
+
+    // Import into a fresh server
+    let s2 = TestServer::start().await;
+    s2.setup_admin().await;
+    let token2 = s2.create_api_token("test").await;
+
+    let api2 = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let file_part = reqwest::multipart::Part::bytes(bundle.to_vec())
+        .file_name("bundle.tar.gz")
+        .mime_str("application/gzip")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("bundle", file_part);
+    let resp = api2.post(s2.url("/api/v1/import"))
+        .bearer_auth(&token2)
+        .multipart(form)
+        .send().await.unwrap();
+    assert!(resp.status().is_success());
+
+    // Verify upload appears in the new server's uploads browser
+    let resp = s2.client.get(s2.url("/uploads"))
+        .send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("manual.pdf"));
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /// Extract the first entry ID from a content list page's edit links.
