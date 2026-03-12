@@ -40,6 +40,18 @@ struct Cli {
     /// Enable secure (HTTPS-only) session cookies
     #[arg(long, global = true)]
     secure_cookies: bool,
+
+    /// Staging webhook URL (fires automatically when content changes)
+    #[arg(long, global = true)]
+    staging_webhook_url: Option<String>,
+
+    /// Production webhook URL (fires on manual publish)
+    #[arg(long, global = true)]
+    production_webhook_url: Option<String>,
+
+    /// Webhook check interval in seconds
+    #[arg(long, global = true, default_value = "300")]
+    webhook_check_interval: Option<u64>,
 }
 
 #[derive(Subcommand)]
@@ -74,7 +86,15 @@ async fn main() -> eyre::Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let config = Config::new(cli.data_dir, cli.db_path, cli.port, cli.secure_cookies);
+    let config = Config::new(
+        cli.data_dir,
+        cli.db_path,
+        cli.port,
+        cli.secure_cookies,
+        cli.staging_webhook_url,
+        cli.production_webhook_url,
+        cli.webhook_check_interval,
+    );
     config.ensure_dirs()?;
 
     match cli.command.unwrap_or(Command::Serve) {

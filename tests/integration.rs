@@ -30,6 +30,9 @@ impl TestServer {
             Some(db_path),
             Some(0), // port 0 = OS assigns random port
             false,   // no HTTPS in tests
+            None,    // staging_webhook_url
+            None,    // production_webhook_url
+            None,    // webhook_check_interval
         );
         config.ensure_dirs().unwrap();
 
