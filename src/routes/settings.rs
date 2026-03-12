@@ -43,7 +43,7 @@ async fn tokens_page(
         })
         .collect();
 
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env().map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template("settings/tokens.html")
         .map_err(|e| format!("Template error: {e}"))?;
@@ -89,7 +89,7 @@ async fn create_token(
         })
         .collect();
 
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env().map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template("settings/tokens.html")
         .map_err(|e| format!("Template error: {e}"))?;

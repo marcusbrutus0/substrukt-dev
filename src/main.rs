@@ -4,7 +4,6 @@ use std::sync::Arc;
 use clap::{Parser, Subcommand};
 use dashmap::DashMap;
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::SqliteStore;
 
@@ -115,8 +114,8 @@ async fn run_server(config: Config) -> eyre::Result<()> {
     let session_layer = SessionManagerLayer::new(session_store)
         .with_secure(false);
 
-    // Template environment
-    let env = templates::create_environment(config.schemas_dir());
+    // Template environment (auto-reloads on file changes)
+    let reloader = templates::create_reloader(config.schemas_dir());
 
     // Content cache
     let content_cache = DashMap::new();
@@ -125,9 +124,16 @@ async fn run_server(config: Config) -> eyre::Result<()> {
     let state = Arc::new(AppStateInner {
         pool,
         config: config.clone(),
-        templates: RwLock::new(env),
+        templates: reloader,
         cache: content_cache,
     });
+
+    // File watcher for cache invalidation
+    let _watcher = cache::spawn_watcher(
+        Arc::new(state.cache.clone()),
+        config.schemas_dir(),
+        config.content_dir(),
+    );
 
     let app = routes::build_router(state).layer(session_layer);
 

@@ -3,7 +3,6 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use reqwest::{Client, StatusCode, redirect};
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::SqliteStore;
 
@@ -37,14 +36,14 @@ impl TestServer {
         session_store.migrate().await.unwrap();
         let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
 
-        let env = templates::create_environment(config.schemas_dir());
+        let reloader = templates::create_reloader(config.schemas_dir());
         let content_cache = DashMap::new();
         cache::populate(&content_cache, &config.schemas_dir(), &config.content_dir());
 
         let state = Arc::new(AppStateInner {
             pool,
             config,
-            templates: RwLock::new(env),
+            templates: reloader,
             cache: content_cache,
         });
 

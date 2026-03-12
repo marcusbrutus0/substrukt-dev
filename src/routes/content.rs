@@ -67,7 +67,8 @@ async fn list_entries(
     let column_headers: Vec<&str> = columns.iter().map(|(_, label)| label.as_str()).collect();
 
     let flash = auth::take_flash(&session).await;
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template("content/list.html")
         .map_err(|e| format!("Template error: {e}"))?;
@@ -121,7 +122,8 @@ async fn new_entry_page(
 
     let form_html = content_form::render_form_fields(&schema_file.schema, None, "");
 
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template("content/edit.html")
         .map_err(|e| format!("Template error: {e}"))?;
@@ -150,7 +152,8 @@ async fn edit_entry_page(
 
     let form_html = content_form::render_form_fields(&schema_file.schema, Some(&entry.data), "");
 
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template("content/edit.html")
         .map_err(|e| format!("Template error: {e}"))?;
@@ -193,16 +196,17 @@ async fn create_entry(
     // Validate
     if let Err(errors) = content::validate_content(&schema_file, &data) {
         let form_html = content_form::render_form_fields(&schema_file.schema, Some(&data), "");
-        let tmpl = state.templates.read().await;
-        if let Ok(template) = tmpl.get_template("content/edit.html") {
-            if let Ok(html) = template.render(minijinja::context! {
-                schema_title => schema_file.meta.title,
-                schema_slug => schema_slug,
-                is_new => true,
-                form_fields => form_html,
-                errors => errors,
-            }) {
-                return Html(html).into_response();
+        if let Ok(tmpl) = state.templates.acquire_env() {
+            if let Ok(template) = tmpl.get_template("content/edit.html") {
+                if let Ok(html) = template.render(minijinja::context! {
+                    schema_title => schema_file.meta.title,
+                    schema_slug => schema_slug,
+                    is_new => true,
+                    form_fields => form_html,
+                    errors => errors,
+                }) {
+                    return Html(html).into_response();
+                }
             }
         }
         return Redirect::to(&format!("/content/{schema_slug}/new")).into_response();
@@ -252,17 +256,18 @@ async fn update_entry(
 
     if let Err(errors) = content::validate_content(&schema_file, &data) {
         let form_html = content_form::render_form_fields(&schema_file.schema, Some(&data), "");
-        let tmpl = state.templates.read().await;
-        if let Ok(template) = tmpl.get_template("content/edit.html") {
-            if let Ok(html) = template.render(minijinja::context! {
-                schema_title => schema_file.meta.title,
-                schema_slug => schema_slug,
-                entry_id => entry_id,
-                is_new => false,
-                form_fields => form_html,
-                errors => errors,
-            }) {
-                return Html(html).into_response();
+        if let Ok(tmpl) = state.templates.acquire_env() {
+            if let Ok(template) = tmpl.get_template("content/edit.html") {
+                if let Ok(html) = template.render(minijinja::context! {
+                    schema_title => schema_file.meta.title,
+                    schema_slug => schema_slug,
+                    entry_id => entry_id,
+                    is_new => false,
+                    form_fields => form_html,
+                    errors => errors,
+                }) {
+                    return Html(html).into_response();
+                }
             }
         }
         return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response();

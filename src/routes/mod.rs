@@ -32,12 +32,14 @@ pub fn build_router(state: AppState) -> Router {
 }
 
 async fn not_found(State(state): State<AppState>) -> (axum::http::StatusCode, Html<String>) {
-    let html = render_error(&state, 404, "Page not found").await;
+    let html = render_error(&state, 404, "Page not found");
     (axum::http::StatusCode::NOT_FOUND, Html(html))
 }
 
-pub async fn render_error(state: &AppState, status: u16, message: &str) -> String {
-    let tmpl = state.templates.read().await;
+pub fn render_error(state: &AppState, status: u16, message: &str) -> String {
+    let Ok(tmpl) = state.templates.acquire_env() else {
+        return format!("<h1>{status}</h1><p>{message}</p>");
+    };
     if let Ok(template) = tmpl.get_template("error.html") {
         if let Ok(html) = template.render(minijinja::context! {
             status => status,
@@ -57,7 +59,8 @@ async fn dashboard(State(state): State<AppState>) -> axum::response::Result<Html
         .map(|entries| entries.len())
         .sum();
 
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template("dashboard.html")
         .map_err(|e| format!("Template error: {e}"))?;

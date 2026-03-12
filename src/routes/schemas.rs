@@ -43,7 +43,7 @@ async fn list_schemas(
         .collect();
 
     let flash = auth::take_flash(&session).await;
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env().map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template("schemas/list.html")
         .map_err(|e| format!("Template error: {e}"))?;
@@ -69,7 +69,7 @@ async fn new_schema_page(State(state): State<AppState>) -> axum::response::Resul
         "required": []
     });
 
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env().map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template("schemas/edit.html")
         .map_err(|e| format!("Template error: {e}"))?;
@@ -149,7 +149,7 @@ async fn edit_schema_page(
         .map_err(|e| format!("Error: {e}"))?
         .ok_or("Schema not found")?;
 
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env().map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template("schemas/edit.html")
         .map_err(|e| format!("Template error: {e}"))?;
@@ -218,7 +218,7 @@ async fn render_schema_edit(
     schema_json: &str,
     error: &str,
 ) -> axum::response::Result<Html<String>> {
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env().map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template("schemas/edit.html")
         .map_err(|e| format!("Template error: {e}"))?;

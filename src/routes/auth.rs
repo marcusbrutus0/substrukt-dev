@@ -134,7 +134,7 @@ async fn render_template(
     name: &str,
     ctx: minijinja::Value,
 ) -> axum::response::Result<Html<String>> {
-    let tmpl = state.templates.read().await;
+    let tmpl = state.templates.acquire_env().map_err(|e| format!("Template env error: {e}"))?;
     let template = tmpl
         .get_template(name)
         .map_err(|e| format!("Template error: {e}"))?;
