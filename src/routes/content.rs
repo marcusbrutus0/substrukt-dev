@@ -233,6 +233,7 @@ async fn create_entry(
         return Redirect::to(&format!("/content/{schema_slug}/new")).into_response();
     }
 
+    let hashes = uploads::extract_upload_hashes(&data);
     match content::save_entry(&state.config.content_dir(), &schema_file, None, data) {
         Ok(id) => {
             crate::cache::reload_entry(
@@ -241,6 +242,7 @@ async fn create_entry(
                 &schema_file,
                 &id,
             );
+            let _ = uploads::db_update_references(&state.pool, &schema_slug, &id, &hashes).await;
             let user_id = auth::current_user_id(&session).await.unwrap_or(0);
             state.audit.log(&user_id.to_string(), "content_create", "content", &format!("{schema_slug}/{id}"), None);
             auth::set_flash(&session, "success", "Entry created").await;
@@ -302,6 +304,7 @@ async fn update_entry(
         return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response();
     }
 
+    let hashes = uploads::extract_upload_hashes(&data);
     match content::save_entry(
         &state.config.content_dir(),
         &schema_file,
@@ -315,6 +318,7 @@ async fn update_entry(
                 &schema_file,
                 &entry_id,
             );
+            let _ = uploads::db_update_references(&state.pool, &schema_slug, &entry_id, &hashes).await;
             let user_id = auth::current_user_id(&session).await.unwrap_or(0);
             state.audit.log(&user_id.to_string(), "content_update", "content", &format!("{schema_slug}/{entry_id}"), None);
             auth::set_flash(&session, "success", "Entry updated").await;
@@ -337,6 +341,7 @@ async fn delete_entry(
         _ => return axum::http::StatusCode::NOT_FOUND,
     };
 
+    let _ = uploads::db_delete_references(&state.pool, &schema_slug, &entry_id).await;
     let _ = content::delete_entry(&state.config.content_dir(), &schema_file, &entry_id);
     let key = format!("{schema_slug}/{entry_id}");
     state.cache.remove(&key);

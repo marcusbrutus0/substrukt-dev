@@ -188,6 +188,7 @@ async fn create_entry(
             .into_response();
     }
 
+    let hashes = uploads::extract_upload_hashes(&data);
     match content::save_entry(&state.config.content_dir(), &schema_file, None, data) {
         Ok(id) => {
             crate::cache::reload_entry(
@@ -196,6 +197,7 @@ async fn create_entry(
                 &schema_file,
                 &id,
             );
+            let _ = uploads::db_update_references(&state.pool, &schema_slug, &id, &hashes).await;
             state.audit.log("api", "content_create", "content", &format!("{schema_slug}/{id}"), None);
             (StatusCode::CREATED, Json(serde_json::json!({"id": id}))).into_response()
         }
@@ -233,6 +235,7 @@ async fn update_entry(
             .into_response();
     }
 
+    let hashes = uploads::extract_upload_hashes(&data);
     match content::save_entry(
         &state.config.content_dir(),
         &schema_file,
@@ -246,6 +249,7 @@ async fn update_entry(
                 &schema_file,
                 &entry_id,
             );
+            let _ = uploads::db_update_references(&state.pool, &schema_slug, &entry_id, &hashes).await;
             state.audit.log("api", "content_update", "content", &format!("{schema_slug}/{entry_id}"), None);
             StatusCode::OK.into_response()
         }
@@ -274,6 +278,7 @@ async fn delete_entry(
         }
     };
 
+    let _ = uploads::db_delete_references(&state.pool, &schema_slug, &entry_id).await;
     match content::delete_entry(&state.config.content_dir(), &schema_file, &entry_id) {
         Ok(()) => {
             let key = format!("{schema_slug}/{entry_id}");
