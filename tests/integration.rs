@@ -1204,6 +1204,101 @@ async fn api_rejects_collection_create_for_singles() {
     assert!(body["error"].as_str().unwrap().contains("single"));
 }
 
+#[tokio::test]
+async fn single_full_workflow() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(SETTINGS_SCHEMA).await;
+    let token = s.create_api_token("test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // 1. Web: list redirects to edit
+    let resp = s
+        .client
+        .get(s.url("/content/site-settings"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // 2. Web: edit shows empty form
+    let resp = s
+        .client
+        .get(s.url("/content/site-settings/_single/edit"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 3. Web: save creates entry
+    let csrf = s.get_csrf("/content/site-settings/_single/edit").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("site_name", "Web Site")
+        .text("tagline", "From web");
+    let resp = s
+        .client
+        .post(s.url("/content/site-settings/_single"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // 4. API: GET /single returns data
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["site_name"], "Web Site");
+
+    // 5. API: PUT /single updates
+    let resp = api
+        .put(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "API Site", "tagline": "From API"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // 6. Web: edit shows API-updated data
+    let resp = s
+        .client
+        .get(s.url("/content/site-settings/_single/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("API Site"));
+
+    // 7. API: DELETE /single
+    let resp = api
+        .delete(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // 8. Web: edit shows empty form again
+    let resp = s
+        .client
+        .get(s.url("/content/site-settings/_single/edit"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /// Extract the first entry ID from a content list page's edit links.
