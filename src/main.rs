@@ -33,6 +33,10 @@ struct Cli {
     /// Port to listen on
     #[arg(long, short, global = true)]
     port: Option<u16>,
+
+    /// Enable secure (HTTPS-only) session cookies
+    #[arg(long, global = true)]
+    secure_cookies: bool,
 }
 
 #[derive(Subcommand)]
@@ -67,7 +71,7 @@ async fn main() -> eyre::Result<()> {
         .init();
 
     let cli = Cli::parse();
-    let config = Config::new(cli.data_dir, cli.db_path, cli.port);
+    let config = Config::new(cli.data_dir, cli.db_path, cli.port, cli.secure_cookies);
     config.ensure_dirs()?;
 
     match cli.command.unwrap_or(Command::Serve) {
@@ -112,7 +116,7 @@ async fn run_server(config: Config) -> eyre::Result<()> {
     let session_store = SqliteStore::new(pool.clone());
     session_store.migrate().await?;
     let session_layer = SessionManagerLayer::new(session_store)
-        .with_secure(false);
+        .with_secure(config.secure_cookies);
 
     // Template environment (auto-reloads on file changes)
     let reloader = templates::create_reloader(config.schemas_dir());

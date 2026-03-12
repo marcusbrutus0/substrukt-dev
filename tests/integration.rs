@@ -28,6 +28,7 @@ impl TestServer {
             Some(data_dir.path().to_path_buf()),
             Some(db_path),
             Some(0), // port 0 = OS assigns random port
+            false,   // no HTTPS in tests
         );
         config.ensure_dirs().unwrap();
 
