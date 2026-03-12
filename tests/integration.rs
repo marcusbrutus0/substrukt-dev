@@ -435,6 +435,25 @@ async fn sidebar_shows_content_links() {
     assert!(body.contains(r#"href="/content/blog-posts""#));
 }
 
+// ── Flash message tests ──────────────────────────────────────
+
+#[tokio::test]
+async fn flash_message_after_schema_create() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    // After creating a schema, the redirect to /schemas should show the flash
+    let resp = s.client.get(s.url("/schemas")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Schema created"), "Flash message should appear after create");
+
+    // Second load should not show flash (consumed)
+    let resp = s.client.get(s.url("/schemas")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(!body.contains("Schema created"), "Flash should be consumed after first read");
+}
+
 // ── API token management tests ───────────────────────────────
 
 #[tokio::test]

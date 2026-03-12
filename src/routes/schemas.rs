@@ -4,7 +4,9 @@ use axum::{
     response::{Html, IntoResponse, Redirect},
     routing::get,
 };
+use tower_sessions::Session;
 
+use crate::auth;
 use crate::schema;
 use crate::state::AppState;
 
@@ -21,7 +23,10 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-async fn list_schemas(State(state): State<AppState>) -> axum::response::Result<Html<String>> {
+async fn list_schemas(
+    State(state): State<AppState>,
+    session: Session,
+) -> axum::response::Result<Html<String>> {
     let schemas = schema::list_schemas(&state.config.schemas_dir())
         .map_err(|e| format!("Failed to list schemas: {e}"))?;
 
@@ -37,12 +42,17 @@ async fn list_schemas(State(state): State<AppState>) -> axum::response::Result<H
         })
         .collect();
 
+    let flash = auth::take_flash(&session).await;
     let tmpl = state.templates.read().await;
     let template = tmpl
         .get_template("schemas/list.html")
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
-        .render(minijinja::context! { schemas => schema_data })
+        .render(minijinja::context! {
+            schemas => schema_data,
+            flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
+            flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
+        })
         .map_err(|e| format!("Render error: {e}"))?;
     Ok(Html(html))
 }
@@ -79,6 +89,7 @@ pub struct SchemaForm {
 
 async fn create_schema(
     State(state): State<AppState>,
+    session: Session,
     Form(form): Form<SchemaForm>,
 ) -> impl IntoResponse {
     let schema_value: serde_json::Value = match serde_json::from_str(&form.schema_json) {
@@ -126,6 +137,7 @@ async fn create_schema(
             .into_response();
     }
 
+    auth::set_flash(&session, "success", "Schema created").await;
     Redirect::to("/schemas").into_response()
 }
 
@@ -153,6 +165,7 @@ async fn edit_schema_page(
 
 async fn update_schema(
     State(state): State<AppState>,
+    session: Session,
     Path(slug): Path<String>,
     Form(form): Form<SchemaForm>,
 ) -> impl IntoResponse {
@@ -187,6 +200,7 @@ async fn update_schema(
         .into_response();
     }
 
+    auth::set_flash(&session, "success", "Schema updated").await;
     Redirect::to("/schemas").into_response()
 }
 
