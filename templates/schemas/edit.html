@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{% if is_new %}New Schema{% else %}Edit Schema{% endif %} — Substrukt{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold">{% if is_new %}New Schema{% else %}Edit Schema{% endif %}</h1>
+  <a href="/schemas" class="text-gray-500 hover:text-gray-700 text-sm">Back to Schemas</a>
+</div>
+
+{% if error %}
+<div class="bg-red-50 text-red-700 p-3 rounded mb-4 text-sm">{{ error }}</div>
+{% endif %}
+
+<div class="bg-white rounded-lg shadow p-6">
+  <form method="post" action="{% if is_new %}/schemas/new{% else %}/schemas/{{ slug }}{% endif %}">
+    {% if not is_new %}
+    <input type="hidden" name="_method" value="PUT">
+    {% endif %}
+    <div class="mb-4">
+      <label for="schema_json" class="block text-sm font-medium text-gray-700 mb-1">JSON Schema</label>
+      <textarea id="schema_json" name="schema_json" rows="24"
+        class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        spellcheck="false">{{ schema_json }}</textarea>
+    </div>
+    <div class="flex gap-3">
+      <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium">
+        {% if is_new %}Create Schema{% else %}Save Changes{% endif %}
+      </button>
+      {% if not is_new %}
+      <button type="button" onclick="deleteSchema()" class="bg-red-50 text-red-600 px-4 py-2 rounded-md hover:bg-red-100 text-sm font-medium">
+        Delete
+      </button>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+{% if not is_new %}
+<script>
+function deleteSchema() {
+  if (confirm('Delete this schema? This cannot be undone.')) {
+    fetch('/schemas/{{ slug }}', { method: 'DELETE' })
+      .then(() => window.location.href = '/schemas');
+  }
+}
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Substrukt{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Dashboard</h1>
+<div class="grid grid-cols-2 gap-6 max-w-lg">
+  <div class="bg-white rounded-lg shadow p-6">
+    <div class="text-3xl font-bold">{{ schema_count }}</div>
+    <div class="text-gray-500 mt-1">Schemas</div>
+    <a href="/schemas" class="text-blue-600 text-sm mt-2 inline-block hover:underline">Manage schemas</a>
+  </div>
+  <div class="bg-white rounded-lg shadow p-6">
+    <div class="text-3xl font-bold">{{ entry_count }}</div>
+    <div class="text-gray-500 mt-1">Content Entries</div>
+  </div>
+</div>
+{% endblock %}

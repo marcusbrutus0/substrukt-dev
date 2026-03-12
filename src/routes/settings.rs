@@ -1,0 +1,117 @@
+use axum::{
+    Form, Router,
+    extract::State,
+    response::{Html, IntoResponse, Redirect},
+    routing::get,
+};
+use tower_sessions::Session;
+
+use crate::auth;
+use crate::auth::token;
+use crate::db::models;
+use crate::state::AppState;
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/tokens", get(tokens_page).post(create_token))
+        .route(
+            "/tokens/{token_id}/delete",
+            axum::routing::post(delete_token),
+        )
+}
+
+async fn tokens_page(
+    State(state): State<AppState>,
+    session: Session,
+) -> axum::response::Result<Html<String>> {
+    let user_id = auth::current_user_id(&session)
+        .await
+        .ok_or("Not authenticated")?;
+
+    let tokens = models::list_api_tokens(&state.pool, user_id)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let token_data: Vec<minijinja::Value> = tokens
+        .iter()
+        .map(|t| {
+            minijinja::context! {
+                id => t.id,
+                name => t.name,
+                created_at => t.created_at,
+            }
+        })
+        .collect();
+
+    let tmpl = state.templates.read().await;
+    let template = tmpl
+        .get_template("settings/tokens.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! { tokens => token_data })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html))
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateTokenForm {
+    name: String,
+}
+
+async fn create_token(
+    State(state): State<AppState>,
+    session: Session,
+    Form(form): Form<CreateTokenForm>,
+) -> axum::response::Result<Html<String>> {
+    let user_id = auth::current_user_id(&session)
+        .await
+        .ok_or("Not authenticated")?;
+
+    let raw_token = token::generate_token();
+    let token_hash = token::hash_token(&raw_token);
+
+    models::create_api_token(&state.pool, user_id, &form.name, &token_hash)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let tokens = models::list_api_tokens(&state.pool, user_id)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let token_data: Vec<minijinja::Value> = tokens
+        .iter()
+        .map(|t| {
+            minijinja::context! {
+                id => t.id,
+                name => t.name,
+                created_at => t.created_at,
+            }
+        })
+        .collect();
+
+    let tmpl = state.templates.read().await;
+    let template = tmpl
+        .get_template("settings/tokens.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            tokens => token_data,
+            new_token => raw_token,
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html))
+}
+
+async fn delete_token(
+    State(state): State<AppState>,
+    session: Session,
+    axum::extract::Path(token_id): axum::extract::Path<i64>,
+) -> impl IntoResponse {
+    let user_id = match auth::current_user_id(&session).await {
+        Some(id) => id,
+        None => return Redirect::to("/login"),
+    };
+
+    let _ = models::delete_api_token(&state.pool, token_id, user_id).await;
+    Redirect::to("/settings/tokens")
+}
