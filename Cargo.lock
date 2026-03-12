@@ -2999,6 +2999,7 @@ dependencies = [
  "eyre",
  "flate2",
  "hex",
+ "indexmap",
  "jsonschema",
  "metrics",
  "metrics-exporter-prometheus",

@@ -1,0 +1,66 @@
+{% extends base_template %}
+{% block title %}Uploads — Substrukt{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold">Uploads</h1>
+</div>
+
+<div class="bg-white rounded-lg shadow p-6">
+  <form class="flex gap-4 mb-6" hx-get="/uploads" hx-target="#uploads-table" hx-select="#uploads-table" hx-push-url="true" hx-swap="outerHTML">
+    <input type="text" name="q" value="{{ filter_q }}" placeholder="Search by filename..."
+      class="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1">
+    <select name="schema" class="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      <option value="">All schemas</option>
+      {% for s in schemas %}
+      <option value="{{ s.slug }}" {% if filter_schema == s.slug %}selected{% endif %}>{{ s.title }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium">Filter</button>
+  </form>
+
+  <div id="uploads-table">
+    {% if uploads %}
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b text-left text-gray-500">
+          <th class="pb-2 font-medium">Filename</th>
+          <th class="pb-2 font-medium">Type</th>
+          <th class="pb-2 font-medium">Size</th>
+          <th class="pb-2 font-medium">Created</th>
+          <th class="pb-2 font-medium">Used By</th>
+          <th class="pb-2 font-medium">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for upload in uploads %}
+        <tr class="border-b hover:bg-gray-50">
+          <td class="py-2 font-mono text-xs">{{ upload.filename }}</td>
+          <td class="py-2 text-gray-600">{{ upload.mime }}</td>
+          <td class="py-2 text-gray-600">{{ upload.size }}</td>
+          <td class="py-2 text-gray-600">{{ upload.created_at }}</td>
+          <td class="py-2">
+            {% if upload.references %}
+              {% for ref in upload.references %}
+              <a href="/content/{{ ref.schema_slug }}/{{ ref.entry_id }}/edit"
+                 class="text-blue-600 hover:underline text-xs">{{ ref.schema_slug }}/{{ ref.entry_id }}</a>{% if not loop.last %}, {% endif %}
+              {% endfor %}
+            {% else %}
+              <span class="text-amber-600 text-xs font-medium">Orphaned</span>
+            {% endif %}
+          </td>
+          <td class="py-2">
+            <a href="/uploads/file/{{ upload.hash }}/{{ upload.filename }}" target="_blank"
+               class="text-blue-600 hover:underline text-xs mr-2">View</a>
+            <a href="/uploads/file/{{ upload.hash }}/{{ upload.filename }}" download
+               class="text-blue-600 hover:underline text-xs">Download</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-gray-500 text-sm">No uploads found.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
