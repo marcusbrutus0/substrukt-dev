@@ -124,6 +124,13 @@ async fn run_server(config: Config) -> eyre::Result<()> {
     // Template environment (auto-reloads on file changes)
     let reloader = templates::create_reloader(config.schemas_dir());
 
+    // Migrate .meta.json sidecars to SQLite (one-time, idempotent)
+    substrukt::uploads::migrate_meta_sidecars(
+        &config.uploads_dir(),
+        &config.data_dir,
+        &pool,
+    ).await?;
+
     // Content cache
     let content_cache = DashMap::new();
     cache::populate(&content_cache, &config.schemas_dir(), &config.content_dir());
