@@ -1012,6 +1012,72 @@ async fn single_edit_page_shows_empty_form_when_unsaved() {
     assert!(body.contains("<input"), "Should show form fields");
 }
 
+#[tokio::test]
+async fn single_create_and_update_via_web() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(SETTINGS_SCHEMA).await;
+
+    // Save (first time — creates the _single entry)
+    let csrf = s
+        .get_csrf("/content/site-settings/_single/edit")
+        .await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("site_name", "My Site")
+        .text("tagline", "Welcome");
+    let resp = s
+        .client
+        .post(s.url("/content/site-settings/_single"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    // Should redirect back to the single edit page, not the list
+    assert_eq!(
+        resp.headers().get("location").unwrap(),
+        "/content/site-settings/_single/edit"
+    );
+
+    // Edit page should show saved data
+    let resp = s
+        .client
+        .get(s.url("/content/site-settings/_single/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("My Site"));
+
+    // Update
+    let csrf = s
+        .get_csrf("/content/site-settings/_single/edit")
+        .await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("site_name", "Updated Site")
+        .text("tagline", "New tagline");
+    let resp = s
+        .client
+        .post(s.url("/content/site-settings/_single"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Verify update
+    let resp = s
+        .client
+        .get(s.url("/content/site-settings/_single/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Updated Site"));
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /// Extract the first entry ID from a content list page's edit links.

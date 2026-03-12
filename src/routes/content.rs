@@ -360,7 +360,12 @@ async fn update_entry(
                 None,
             );
             auth::set_flash(&session, "success", "Entry updated").await;
-            Redirect::to(&format!("/content/{schema_slug}")).into_response()
+            let redirect_url = if schema_file.meta.kind == Kind::Single {
+                format!("/content/{schema_slug}/_single/edit")
+            } else {
+                format!("/content/{schema_slug}")
+            };
+            Redirect::to(&redirect_url).into_response()
         }
         Err(e) => {
             tracing::error!("Save error: {e}");
