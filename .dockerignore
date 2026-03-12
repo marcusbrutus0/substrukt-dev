@@ -1,0 +1,8 @@
+target/
+data/
+.git/
+.direnv/
+.envrc.private
+*.db
+*.db-wal
+*.db-shm
