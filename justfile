@@ -24,3 +24,10 @@ fmt:
 
 watch:
     bacon
+
+# Documentation (requires mdBook: cargo install mdbook)
+docs-build:
+    mdbook build docs
+
+docs-serve:
+    mdbook serve docs --open

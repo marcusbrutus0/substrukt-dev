@@ -1,0 +1,95 @@
+# Import and Export
+
+Substrukt supports exporting all content as a tar.gz bundle and importing it on another instance. This enables workflows where you edit content locally and push it to production, or back up an instance.
+
+## What's included in a bundle
+
+A bundle contains:
+
+- `schemas/` -- all JSON Schema files
+- `content/` -- all content entries (directory and single-file)
+- `uploads/` -- all uploaded files (content-addressed)
+- `uploads-manifest.json` -- upload metadata (filenames, MIME types, sizes)
+
+The bundle does **not** include users, sessions, API tokens, or audit logs -- only content data.
+
+## CLI usage
+
+### Export
+
+```sh
+substrukt export backup.tar.gz
+```
+
+Creates a tar.gz bundle at the specified path with all schemas, content, and uploads.
+
+### Import
+
+```sh
+substrukt import backup.tar.gz
+```
+
+Extracts the bundle into the data directory. Import behavior:
+
+1. Schemas, content, and uploads are unpacked (overwrite strategy)
+2. Upload metadata is imported into SQLite from the manifest
+3. Upload references are rebuilt by scanning all content files
+4. All imported content is validated against its schema
+5. Validation warnings are printed (import proceeds even if content doesn't validate)
+
+## API usage
+
+### Export via API
+
+```sh
+curl -X POST \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  http://localhost:3000/api/v1/export \
+  -o backup.tar.gz
+```
+
+Returns a `application/gzip` response with the bundle.
+
+### Import via API
+
+```sh
+curl -X POST \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "bundle=@backup.tar.gz" \
+  http://localhost:3000/api/v1/import
+```
+
+Response:
+
+```json
+{
+  "status": "ok",
+  "warnings": []
+}
+```
+
+The `warnings` array contains any content validation issues found during import.
+
+After an API import, the in-memory cache is fully rebuilt.
+
+## Sync workflow
+
+A typical sync workflow with CI:
+
+1. Run Substrukt locally, edit content
+2. Export a bundle: `substrukt export bundle.tar.gz`
+3. Commit the bundle to your git repository
+4. In CI, import the bundle on the production instance:
+
+```sh
+curl -X POST \
+  -H "Authorization: Bearer $DEPLOY_TOKEN" \
+  -F "bundle=@bundle.tar.gz" \
+  https://cms.example.com/api/v1/import
+```
+
+This approach keeps content in version control and makes deployments reproducible.
+
+## Legacy format support
+
+Older versions of Substrukt stored upload metadata as `.meta.json` sidecar files next to each upload. When importing a bundle with sidecar files (no `uploads-manifest.json`), Substrukt automatically migrates them to SQLite and deletes the sidecar files.

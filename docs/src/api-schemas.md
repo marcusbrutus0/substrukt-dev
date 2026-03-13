@@ -1,0 +1,76 @@
+# Schemas API
+
+Read-only access to schema definitions.
+
+## List schemas
+
+```
+GET /api/v1/schemas
+```
+
+Returns all schemas.
+
+### Response
+
+```json
+[
+  {
+    "title": "Blog Posts",
+    "slug": "blog-posts",
+    "storage": "directory",
+    "kind": "collection",
+    "schema": { ... }
+  },
+  {
+    "title": "Site Settings",
+    "slug": "site-settings",
+    "storage": "directory",
+    "kind": "single",
+    "schema": { ... }
+  }
+]
+```
+
+Each object includes the full JSON Schema document in the `schema` field.
+
+### Example
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/schemas
+```
+
+## Get a schema
+
+```
+GET /api/v1/schemas/:slug
+```
+
+Returns the full JSON Schema document for a single schema.
+
+### Response
+
+```json
+{
+  "x-substrukt": {
+    "title": "Blog Posts",
+    "slug": "blog-posts",
+    "storage": "directory"
+  },
+  "type": "object",
+  "properties": {
+    "title": { "type": "string", "title": "Title" },
+    "body": { "type": "string", "format": "textarea" }
+  },
+  "required": ["title"]
+}
+```
+
+### Example
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/schemas/blog-posts
+```
+
+Returns `404` if the schema does not exist.

@@ -35,6 +35,7 @@
               bacon
               claude-code
               cargo-dist
+              mdbook
             ];
 
             buildInputs = [
