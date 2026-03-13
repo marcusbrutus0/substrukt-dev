@@ -7,7 +7,10 @@ WORKDIR /build
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
 # Copy manifests and toolchain for dependency caching
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs ./
+
+# Copy templates early (needed by build.rs for minijinja-embed in release)
+COPY templates/ templates/
 
 # Create dummy source to cache dependency build
 RUN mkdir src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs
