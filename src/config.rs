@@ -8,7 +8,9 @@ pub struct Config {
     pub listen_port: u16,
     pub secure_cookies: bool,
     pub staging_webhook_url: Option<String>,
+    pub staging_webhook_auth_token: Option<String>,
     pub production_webhook_url: Option<String>,
+    pub production_webhook_auth_token: Option<String>,
     pub webhook_check_interval: u64,
 }
 
@@ -19,7 +21,9 @@ impl Config {
         port: Option<u16>,
         secure_cookies: bool,
         staging_webhook_url: Option<String>,
+        staging_webhook_auth_token: Option<String>,
         production_webhook_url: Option<String>,
+        production_webhook_auth_token: Option<String>,
         webhook_check_interval: Option<u64>,
     ) -> Self {
         let data_dir = data_dir.unwrap_or_else(|| PathBuf::from("data"));
@@ -31,7 +35,9 @@ impl Config {
             listen_port: port.unwrap_or(3000),
             secure_cookies,
             staging_webhook_url,
+            staging_webhook_auth_token,
             production_webhook_url,
+            production_webhook_auth_token,
             webhook_check_interval: webhook_check_interval.unwrap_or(300),
         }
     }

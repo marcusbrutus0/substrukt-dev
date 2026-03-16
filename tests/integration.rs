@@ -30,6 +30,16 @@ impl TestServer {
         staging_webhook_url: Option<String>,
         production_webhook_url: Option<String>,
     ) -> Self {
+        Self::start_with_webhook_auth(staging_webhook_url, None, production_webhook_url, None)
+            .await
+    }
+
+    async fn start_with_webhook_auth(
+        staging_webhook_url: Option<String>,
+        staging_webhook_auth_token: Option<String>,
+        production_webhook_url: Option<String>,
+        production_webhook_auth_token: Option<String>,
+    ) -> Self {
         let data_dir = tempfile::tempdir().unwrap();
         let db_path = data_dir.path().join("test.db");
         let config = Config::new(
@@ -38,7 +48,9 @@ impl TestServer {
             Some(0),
             false,
             staging_webhook_url,
+            staging_webhook_auth_token,
             production_webhook_url,
+            production_webhook_auth_token,
             Some(3600), // long interval so cron doesn't fire during tests
         );
         config.ensure_dirs().unwrap();
@@ -1398,6 +1410,77 @@ async fn test_publish_api_fires_webhook() {
     assert_eq!(payload["event_type"], "substrukt-publish");
     assert_eq!(payload["environment"], "staging");
     assert_eq!(payload["triggered_by"], "manual");
+}
+
+#[tokio::test]
+async fn test_webhook_sends_auth_token() {
+    // Mock webhook that captures the Authorization header
+    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<Option<String>>(1);
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(
+            move |headers: axum::http::HeaderMap, _body: String| {
+                let tx = webhook_tx.clone();
+                async move {
+                    let auth = headers
+                        .get("authorization")
+                        .map(|v| v.to_str().unwrap().to_string());
+                    let _ = tx.send(auth).await;
+                    "ok"
+                }
+            },
+        ),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(mock_listener, mock_app).await.unwrap() });
+
+    let webhook_url = format!("http://{mock_addr}/webhook");
+    let s = TestServer::start_with_webhook_auth(
+        Some(webhook_url.clone()),
+        Some("ghp_test_token_123".to_string()),
+        Some(webhook_url),
+        None,
+    )
+    .await;
+    s.setup_admin().await;
+    let token = s.create_api_token("auth-test").await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Fire staging — should include auth token
+    let resp = api
+        .post(s.url("/api/v1/publish/staging"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let auth_header = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(auth_header.as_deref(), Some("Bearer ghp_test_token_123"));
+
+    // Fire production — no auth token configured
+    let resp = api
+        .post(s.url("/api/v1/publish/production"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let auth_header = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(auth_header.is_none(), "production webhook should have no auth header");
 }
 
 #[tokio::test]

@@ -45,9 +45,17 @@ struct Cli {
     #[arg(long, global = true)]
     staging_webhook_url: Option<String>,
 
+    /// Bearer token for staging webhook authentication
+    #[arg(long, global = true)]
+    staging_webhook_auth_token: Option<String>,
+
     /// Production webhook URL (fires on manual publish)
     #[arg(long, global = true)]
     production_webhook_url: Option<String>,
+
+    /// Bearer token for production webhook authentication
+    #[arg(long, global = true)]
+    production_webhook_auth_token: Option<String>,
 
     /// Webhook check interval in seconds
     #[arg(long, global = true, default_value = "300")]
@@ -92,7 +100,9 @@ async fn main() -> eyre::Result<()> {
         cli.port,
         cli.secure_cookies,
         cli.staging_webhook_url,
+        cli.staging_webhook_auth_token,
         cli.production_webhook_url,
+        cli.production_webhook_auth_token,
         cli.webhook_check_interval,
     );
     config.ensure_dirs()?;

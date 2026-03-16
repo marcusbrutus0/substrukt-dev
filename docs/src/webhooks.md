@@ -9,15 +9,21 @@ Configure webhook URLs via CLI flags:
 ```sh
 substrukt serve \
   --staging-webhook-url https://api.example.com/hooks/staging-build \
+  --staging-webhook-auth-token "$STAGING_WEBHOOK_TOKEN" \
   --production-webhook-url https://api.example.com/hooks/production-deploy \
+  --production-webhook-auth-token "$PRODUCTION_WEBHOOK_TOKEN" \
   --webhook-check-interval 300
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--staging-webhook-url` | URL to POST when content changes are detected |
+| `--staging-webhook-auth-token` | Bearer token sent with staging webhook requests |
 | `--production-webhook-url` | URL to POST on manual publish |
+| `--production-webhook-auth-token` | Bearer token sent with production webhook requests |
 | `--webhook-check-interval` | Seconds between dirty-checks for staging (default: 300) |
+
+When an auth token is configured, Substrukt sends it as an `Authorization: Bearer <token>` header with each webhook request.
 
 ## How it works
 
@@ -66,12 +72,32 @@ Each environment tracks its dirty state separately. Firing the staging webhook d
 
 ## Using with CI/CD
 
-A common pattern is pointing the staging webhook at a CI pipeline that rebuilds and deploys a preview site:
+A common pattern is pointing the staging webhook at a CI pipeline that rebuilds and deploys a preview site.
+
+### GitHub Actions
+
+To trigger a GitHub Actions `repository_dispatch` workflow, configure the webhook URL and a personal access token (classic with `repo` scope, or fine-grained with Contents write permission):
 
 ```sh
-# Example: trigger a GitHub Actions workflow
 substrukt serve \
-  --staging-webhook-url https://api.github.com/repos/org/site/dispatches
+  --staging-webhook-url https://api.github.com/repos/org/site/dispatches \
+  --staging-webhook-auth-token "$GITHUB_PAT"
 ```
 
-The receiving endpoint can use the payload to determine which environment to build.
+Substrukt's payload already includes `event_type: "substrukt-publish"`, which GitHub uses to match workflows:
+
+```yaml
+# .github/workflows/deploy.yml
+on:
+  repository_dispatch:
+    types: [substrukt-publish]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Environment: ${{ github.event.client_payload.environment }}"
+```
+
+The `environment` and `triggered_by` fields are available in the payload for conditional logic.

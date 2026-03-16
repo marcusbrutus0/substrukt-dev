@@ -26,10 +26,16 @@ pub async fn fire_webhook(
     environment: &str,
     source: TriggerSource,
 ) -> Result<bool> {
-    let url = match environment {
-        "staging" => config.staging_webhook_url.as_deref(),
-        "production" => config.production_webhook_url.as_deref(),
-        _ => None,
+    let (url, auth_token) = match environment {
+        "staging" => (
+            config.staging_webhook_url.as_deref(),
+            config.staging_webhook_auth_token.as_deref(),
+        ),
+        "production" => (
+            config.production_webhook_url.as_deref(),
+            config.production_webhook_auth_token.as_deref(),
+        ),
+        _ => (None, None),
     };
 
     let url = match url {
@@ -49,7 +55,11 @@ pub async fn fire_webhook(
         triggered_by,
     };
 
-    let resp = client.post(url).json(&payload).send().await?;
+    let mut req = client.post(url).json(&payload);
+    if let Some(token) = auth_token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().await?;
 
     if resp.status().is_success() {
         audit.mark_fired(environment).await?;
