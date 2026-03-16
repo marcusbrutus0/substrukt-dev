@@ -2,32 +2,32 @@
 {% block title %}{{ schema_title }} — Substrukt{% endblock %}
 {% block content %}
 <div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold">{{ schema_title }}</h1>
-  <a href="/content/{{ schema_slug }}/new" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium">New Entry</a>
+  <h1 class="text-2xl font-bold tracking-tight">{{ schema_title }}</h1>
+  <a href="/content/{{ schema_slug }}/new" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">New Entry</a>
 </div>
 
 {% if entries %}
-<div class="bg-white rounded-lg shadow overflow-hidden">
+<div class="bg-card border border-border-light rounded-lg overflow-hidden">
   <table class="w-full">
-    <thead class="bg-gray-50">
+    <thead class="bg-card-alt">
       <tr>
-        <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">ID</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">ID</th>
         {% for col in columns %}
-        <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">{{ col }}</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">{{ col }}</th>
         {% endfor %}
-        <th class="px-4 py-3"></th>
+        <th class="px-4 py-2.5"></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-gray-100">
+    <tbody class="divide-y divide-border-light">
       {% for entry in entries %}
-      <tr class="hover:bg-gray-50">
-        <td class="px-4 py-3 font-mono text-sm text-gray-500">{{ entry.id }}</td>
+      <tr class="hover:bg-card-alt">
+        <td class="px-4 py-2.5 font-mono text-sm text-muted">{{ entry.id }}</td>
         {% for col in entry.columns %}
-        <td class="px-4 py-3 text-sm">{{ col }}</td>
+        <td class="px-4 py-2.5 text-sm">{{ col }}</td>
         {% endfor %}
-        <td class="px-4 py-3 text-right space-x-2">
-          <a href="/content/{{ schema_slug }}/{{ entry.id }}/edit" class="text-blue-600 hover:underline text-sm">Edit</a>
-          <button onclick="deleteEntry('{{ entry.id }}')" class="text-red-500 hover:text-red-700 text-sm">Delete</button>
+        <td class="px-4 py-2.5 text-right space-x-2">
+          <a href="/content/{{ schema_slug }}/{{ entry.id }}/edit" class="text-accent hover:underline text-sm">Edit</a>
+          <button onclick="deleteEntry('{{ entry.id }}')" class="text-danger hover:text-danger text-sm">Delete</button>
         </td>
       </tr>
       {% endfor %}
@@ -35,8 +35,8 @@
   </table>
 </div>
 {% else %}
-<div class="bg-white rounded-lg shadow p-8 text-center text-gray-500">
-  No entries yet. <a href="/content/{{ schema_slug }}/new" class="text-blue-600 hover:underline">Create your first entry</a>.
+<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
+  No entries yet. <a href="/content/{{ schema_slug }}/new" class="text-accent hover:underline">Create your first entry</a>.
 </div>
 {% endif %}
 

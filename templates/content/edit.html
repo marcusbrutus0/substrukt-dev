@@ -2,14 +2,14 @@
 {% block title %}{% if is_single %}{{ schema_title }}{% elif is_new %}New {{ schema_title }}{% else %}Edit {{ schema_title }}{% endif %} — Substrukt{% endblock %}
 {% block content %}
 <div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold">{% if is_single %}{{ schema_title }}{% elif is_new %}New {{ schema_title }}{% else %}Edit {{ schema_title }}{% endif %}</h1>
+  <h1 class="text-2xl font-bold tracking-tight">{% if is_single %}{{ schema_title }}{% elif is_new %}New {{ schema_title }}{% else %}Edit {{ schema_title }}{% endif %}</h1>
   {% if not is_single %}
-  <a href="/content/{{ schema_slug }}" class="text-gray-500 hover:text-gray-700 text-sm">Back to {{ schema_title }}</a>
+  <a href="/content/{{ schema_slug }}" class="text-muted hover:text-primary text-sm">Back to {{ schema_title }}</a>
   {% endif %}
 </div>
 
 {% if errors %}
-<div class="bg-red-50 text-red-700 p-4 rounded mb-4">
+<div class="bg-danger-soft text-danger p-4 rounded mb-4">
   <div class="font-medium mb-1">Validation errors:</div>
   <ul class="list-disc list-inside text-sm">
     {% for error in errors %}
@@ -19,17 +19,17 @@
 </div>
 {% endif %}
 
-<div class="bg-white rounded-lg shadow p-6">
+<div class="bg-card border border-border-light rounded-lg p-6">
   <form method="post" enctype="multipart/form-data"
     action="{% if is_single %}/content/{{ schema_slug }}/_single{% elif is_new %}/content/{{ schema_slug }}/new{% else %}/content/{{ schema_slug }}/{{ entry_id }}{% endif %}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     {{ form_fields|safe }}
-    <div class="flex gap-3 mt-6 pt-4 border-t border-gray-100">
-      <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium">
+    <div class="flex gap-3 mt-6 pt-4 border-t border-border-light">
+      <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
         {% if is_single %}Save{% elif is_new %}Create{% else %}Save Changes{% endif %}
       </button>
       {% if not is_single %}
-      <a href="/content/{{ schema_slug }}" class="px-4 py-2 rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 text-sm font-medium">
+      <a href="/content/{{ schema_slug }}" class="px-4 py-2 rounded-md border border-border text-secondary hover:bg-card-alt text-sm font-medium">
         Cancel
       </a>
       {% endif %}
