@@ -69,8 +69,8 @@ fn render_field(
             let val = value.and_then(|v| v.as_str()).unwrap_or("");
             format!(
                 r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-gray-700 mb-1">{label}{req_star}</label>
-  <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"{req_attr}>{val}</textarea>
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>{val}</textarea>
 </div>
 "#
             )
@@ -85,7 +85,7 @@ fn render_field(
                         .unwrap_or("file");
                     let hash = obj.get("hash").and_then(|h| h.as_str()).unwrap_or("");
                     format!(
-                        r#"<div class="mb-2 text-sm text-gray-600">Current: <a href="/uploads/file/{hash}/{filename}" class="text-blue-600 underline" target="_blank">{filename}</a></div>
+                        r#"<div class="mb-2 text-sm text-secondary">Current: <a href="/uploads/file/{hash}/{filename}" class="text-accent underline" target="_blank">{filename}</a></div>
     <input type="hidden" name="{name}.__current" value='{}'>"#,
                         serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default()
                     )
@@ -93,9 +93,9 @@ fn render_field(
                 .unwrap_or_default();
             format!(
                 r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-gray-700 mb-1">{label}{req_star}</label>
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   {current}
-  <input type="file" id="{name}" name="{name}" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm"{req_attr}>
+  <input type="file" id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md"{req_attr}>
 </div>
 "#
             )
@@ -114,8 +114,8 @@ fn render_field(
                 }
                 format!(
                     r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-gray-700 mb-1">{label}{req_star}</label>
-  <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"{req_attr}>
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
     {options}
   </select>
 </div>
@@ -125,8 +125,8 @@ fn render_field(
                 let val = value.and_then(|v| v.as_str()).unwrap_or("");
                 format!(
                     r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-gray-700 mb-1">{label}{req_star}</label>
-  <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"{req_attr}>
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
 </div>
 "#
                 )
@@ -142,8 +142,8 @@ fn render_field(
             };
             format!(
                 r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-gray-700 mb-1">{label}{req_star}</label>
-  <input type="number" id="{name}" name="{name}" value="{val}"{step} class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"{req_attr}>
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  <input type="number" id="{name}" name="{name}" value="{val}"{step} class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
 </div>
 "#
             )
@@ -155,8 +155,8 @@ fn render_field(
                 r#"<div class="mb-4">
   <label class="flex items-center gap-2">
     <input type="hidden" name="{name}" value="false">
-    <input type="checkbox" name="{name}" value="true" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"{checked_attr}>
-    <span class="text-sm font-medium text-gray-700">{label}</span>
+    <input type="checkbox" name="{name}" value="true" class="rounded border-border text-accent focus:ring-accent"{checked_attr}>
+    <span class="text-sm font-medium text-secondary">{label}</span>
   </label>
 </div>
 "#
@@ -165,8 +165,8 @@ fn render_field(
         ("object", _) => {
             let inner = render_form_fields(schema, value, name);
             format!(
-                r#"<fieldset class="mb-4 p-4 border border-gray-200 rounded-md">
-  <legend class="text-sm font-medium text-gray-700 px-2">{label}</legend>
+                r#"<fieldset class="mb-4 p-4 border border-border-light rounded-md">
+  <legend class="text-sm font-medium text-secondary px-2">{label}</legend>
   {inner}
 </fieldset>
 "#
@@ -184,9 +184,9 @@ fn render_field(
                 for (i, item) in items.iter().enumerate() {
                     let item_name = format!("{name}[{i}]");
                     items_html.push_str(&format!(
-                        r#"<div class="array-item border border-gray-100 p-3 rounded mb-2" data-index="{i}">
+                        r#"<div class="array-item border border-border-light p-3 rounded mb-2" data-index="{i}">
   <div class="flex justify-end mb-1">
-    <button type="button" onclick="this.closest('.array-item').remove()" class="text-red-500 text-sm hover:text-red-700">Remove</button>
+    <button type="button" onclick="this.closest('.array-item').remove()" class="text-danger text-sm hover:text-danger">Remove</button>
   </div>
   {}
 </div>"#,
@@ -201,12 +201,12 @@ fn render_field(
 
             format!(
                 r#"<div class="mb-4">
-  <label class="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+  <label class="block text-sm font-medium text-secondary mb-1">{label}</label>
   <div id="array-{name}" class="array-container">
     {items_html}
   </div>
   <template id="template-{name}">{template_html}</template>
-  <button type="button" onclick="addArrayItem('{name}')" class="mt-2 px-3 py-1 text-sm bg-gray-100 border border-gray-300 rounded hover:bg-gray-200">+ Add Item</button>
+  <button type="button" onclick="addArrayItem('{name}')" class="mt-2 px-3 py-1 text-sm bg-card-alt border border-border rounded hover:bg-card-alt">+ Add Item</button>
 </div>
 "#
             )
@@ -215,8 +215,8 @@ fn render_field(
             let val = value.and_then(|v| v.as_str()).unwrap_or("");
             format!(
                 r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-gray-700 mb-1">{label}{req_star}</label>
-  <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm"{req_attr}>
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-border rounded-md"{req_attr}>
 </div>
 "#
             )
