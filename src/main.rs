@@ -194,6 +194,7 @@ async fn run_server(config: Config) -> eyre::Result<()> {
     );
 
     let app = routes::build_router(state)
+        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50 MB
         .layer(session_layer)
         .layer(tower_http::trace::TraceLayer::new_for_http());
 
