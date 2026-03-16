@@ -7,9 +7,9 @@
     var index = container.querySelectorAll('.array-item').length;
     var html = template.innerHTML.replace(/__INDEX__/g, index);
     var div = document.createElement('div');
-    div.className = 'array-item border border-gray-100 p-3 rounded mb-2';
+    div.className = 'array-item border border-border-light p-3 rounded mb-2';
     div.setAttribute('data-index', index);
-    div.innerHTML = '<div class="flex justify-end mb-1"><button type="button" onclick="this.closest(\'.array-item\').remove()" class="text-red-500 text-sm hover:text-red-700">Remove</button></div>' + html;
+    div.innerHTML = '<div class="flex justify-end mb-1"><button type="button" onclick="this.closest(\x27.array-item\x27).remove()" class="text-danger text-sm hover:text-danger">Remove</button></div>' + html;
     container.appendChild(div);
   }
 </script>
