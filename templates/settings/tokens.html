@@ -1,46 +1,46 @@
 {% extends base_template %}
 {% block title %}API Tokens — Substrukt{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold mb-6">API Tokens</h1>
+<h1 class="text-2xl font-bold tracking-tight mb-6">API Tokens</h1>
 
 {% if new_token %}
-<div class="bg-green-50 border border-green-200 text-green-800 p-4 rounded mb-6">
+<div class="bg-success-soft border border-success text-success p-4 rounded mb-6">
   <div class="font-medium mb-1">Token created! Copy it now — it won't be shown again:</div>
-  <code class="block bg-green-100 p-2 rounded mt-2 text-sm font-mono break-all select-all">{{ new_token }}</code>
+  <code class="block bg-card-alt text-primary p-2 rounded mt-2 text-sm font-mono break-all select-all">{{ new_token }}</code>
 </div>
 {% endif %}
 
-<div class="bg-white rounded-lg shadow p-6 mb-6">
+<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
   <h2 class="text-lg font-medium mb-4">Create New Token</h2>
   <form method="post" action="/settings/tokens" class="flex gap-3">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <input type="text" name="name" placeholder="Token name" required
-      class="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-    <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium">
+      class="flex-1 px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+    <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
       Create Token
     </button>
   </form>
 </div>
 
 {% if tokens %}
-<div class="bg-white rounded-lg shadow overflow-hidden">
+<div class="bg-card border border-border-light rounded-lg overflow-hidden">
   <table class="w-full">
-    <thead class="bg-gray-50">
+    <thead class="bg-card-alt">
       <tr>
-        <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Name</th>
-        <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Created</th>
-        <th class="px-4 py-3"></th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Name</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Created</th>
+        <th class="px-4 py-2.5"></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-gray-100">
+    <tbody class="divide-y divide-border-light">
       {% for token in tokens %}
-      <tr class="hover:bg-gray-50">
-        <td class="px-4 py-3 font-medium">{{ token.name }}</td>
-        <td class="px-4 py-3 text-gray-500 text-sm">{{ token.created_at }}</td>
-        <td class="px-4 py-3 text-right">
+      <tr class="hover:bg-card-alt">
+        <td class="px-4 py-2.5 font-medium">{{ token.name }}</td>
+        <td class="px-4 py-2.5 text-muted text-sm">{{ token.created_at }}</td>
+        <td class="px-4 py-2.5 text-right">
           <form method="post" action="/settings/tokens/{{ token.id }}/delete" class="inline">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <button type="submit" class="text-red-500 hover:text-red-700 text-sm"
+            <button type="submit" class="text-danger hover:text-danger text-sm"
               onclick="return confirm('Delete this token?')">Delete</button>
           </form>
         </td>
@@ -50,7 +50,7 @@
   </table>
 </div>
 {% else %}
-<div class="bg-white rounded-lg shadow p-8 text-center text-gray-500">
+<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
   No API tokens yet.
 </div>
 {% endif %}
