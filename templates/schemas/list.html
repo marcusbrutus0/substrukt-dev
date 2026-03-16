@@ -2,35 +2,35 @@
 {% block title %}Schemas — Substrukt{% endblock %}
 {% block content %}
 <div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold">Schemas</h1>
-  <a href="/schemas/new" class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 text-sm font-medium">New Schema</a>
+  <h1 class="text-2xl font-bold tracking-tight">Schemas</h1>
+  <a href="/schemas/new" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">New Schema</a>
 </div>
 
 {% if schemas %}
-<div class="bg-white rounded-lg shadow overflow-hidden">
+<div class="bg-card border border-border-light rounded-lg overflow-hidden">
   <table class="w-full">
-    <thead class="bg-gray-50">
+    <thead class="bg-card-alt">
       <tr>
-        <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Title</th>
-        <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Slug</th>
-        <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Storage</th>
-        <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Kind</th>
-        <th class="text-left px-4 py-3 text-sm font-medium text-gray-500">Fields</th>
-        <th class="px-4 py-3"></th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Title</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Slug</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Storage</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Kind</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Fields</th>
+        <th class="px-4 py-2.5"></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-gray-100">
+    <tbody class="divide-y divide-border-light">
       {% for schema in schemas %}
-      <tr class="hover:bg-gray-50">
-        <td class="px-4 py-3">
-          <a href="/content/{{ schema.slug }}" class="text-blue-600 hover:underline font-medium">{{ schema.title }}</a>
+      <tr class="hover:bg-card-alt">
+        <td class="px-4 py-2.5">
+          <a href="/content/{{ schema.slug }}" class="text-accent hover:underline font-medium">{{ schema.title }}</a>
         </td>
-        <td class="px-4 py-3 text-gray-500 text-sm font-mono">{{ schema.slug }}</td>
-        <td class="px-4 py-3 text-gray-500 text-sm">{{ schema.storage }}</td>
-        <td class="px-4 py-3 text-gray-500 text-sm">{{ schema.kind }}</td>
-        <td class="px-4 py-3 text-gray-500 text-sm">{{ schema.field_count }}</td>
-        <td class="px-4 py-3 text-right">
-          <a href="/schemas/{{ schema.slug }}/edit" class="text-gray-400 hover:text-blue-600 text-sm">Edit</a>
+        <td class="px-4 py-2.5 text-muted text-sm font-mono">{{ schema.slug }}</td>
+        <td class="px-4 py-2.5 text-muted text-sm">{{ schema.storage }}</td>
+        <td class="px-4 py-2.5 text-muted text-sm">{{ schema.kind }}</td>
+        <td class="px-4 py-2.5 text-muted text-sm">{{ schema.field_count }}</td>
+        <td class="px-4 py-2.5 text-right">
+          <a href="/schemas/{{ schema.slug }}/edit" class="text-muted hover:text-accent text-sm">Edit</a>
         </td>
       </tr>
       {% endfor %}
@@ -38,8 +38,8 @@
   </table>
 </div>
 {% else %}
-<div class="bg-white rounded-lg shadow p-8 text-center text-gray-500">
-  No schemas yet. <a href="/schemas/new" class="text-blue-600 hover:underline">Create your first schema</a>.
+<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
+  No schemas yet. <a href="/schemas/new" class="text-accent hover:underline">Create your first schema</a>.
 </div>
 {% endif %}
 {% endblock %}
