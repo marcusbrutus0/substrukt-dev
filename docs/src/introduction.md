@@ -9,7 +9,7 @@ Most CMS options fall into two camps: heavy database-backed systems that require
 - **Schema-first**: Content types are defined as JSON Schema. The UI, validation, and API are all generated from the schema at runtime. No code changes needed to add a new content type.
 - **Files on disk**: Content lives as JSON files in a directory. You can read them, version them in git, or sync them between environments with a tar.gz bundle. SQLite is only used for infrastructure (users, sessions, API tokens).
 - **Single binary**: One Rust binary handles everything -- the web UI, REST API, file storage, and background jobs. No external services required beyond the filesystem.
-- **Minimal frontend**: The UI is server-rendered with htmx for interactivity and twind for styling. No build step, no node_modules, no bundler.
+- **Minimal frontend**: The UI is server-rendered with htmx for interactivity and twind for styling. No build step, no node_modules, no bundler. Includes dark mode with a theme toggle.
 
 ## What it does
 

@@ -11,7 +11,9 @@ All configuration is passed as CLI flags. There are no config files or environme
 | `-p, --port <PORT>` | `3000` | HTTP listen port |
 | `--secure-cookies` | off | Set the `Secure` flag on session cookies (required for HTTPS) |
 | `--staging-webhook-url <URL>` | none | Webhook URL fired automatically when content changes |
+| `--staging-webhook-auth-token <TOKEN>` | none | Bearer token sent with staging webhook requests |
 | `--production-webhook-url <URL>` | none | Webhook URL fired on manual publish |
+| `--production-webhook-auth-token <TOKEN>` | none | Bearer token sent with production webhook requests |
 | `--webhook-check-interval <SECONDS>` | `300` | How often (in seconds) to check if the staging webhook should fire |
 
 ## Commands

@@ -74,7 +74,7 @@ Uploaded filenames are sanitized:
 
 ## API uploads
 
-Files can also be uploaded via the API:
+Files can also be uploaded via the API. The maximum upload size is 50 MB.
 
 ```sh
 curl -X POST \

@@ -65,7 +65,7 @@ In directory mode, each entry needs a filename. Substrukt generates IDs using th
 
 1. Go to **Schemas** in the sidebar
 2. Click **New Schema** to create, or click a schema's **Edit** button
-3. Edit the JSON Schema in the textarea
+3. Edit the JSON Schema in the interactive editor (powered by vanilla-jsoneditor)
 4. Click **Save**
 
 The schema is validated before saving. Errors are displayed inline.

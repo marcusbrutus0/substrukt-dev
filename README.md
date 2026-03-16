@@ -1,16 +1,23 @@
-# Substrukt
+<p align="center">
+  <img src="website/roundedicon.svg" alt="Substrukt" width="80" height="80">
+</p>
 
-A schema-driven CMS built in Rust. Define content types with JSON Schema, edit data through a web UI, store it as JSON files on disk, and serve it via a REST API.
+<h1 align="center">Substrukt</h1>
+
+<p align="center">A schema-driven CMS built in Rust. Define content types with JSON Schema, edit data through a web UI, store it as JSON files on disk, and serve it via a REST API.</p>
 
 ## Features
 
 - JSON Schema-driven content types with automatic form generation
+- Single and collection schema kinds for settings pages and repeatable entries
 - Content stored as JSON files on disk with in-memory caching
-- Content-addressed file uploads with SHA-256 deduplication
+- Content-addressed file uploads with SHA-256 deduplication and uploads browser
 - REST API with bearer token authentication
+- Webhooks for automatic staging deploys and manual production publishes
 - Export/import bundles for syncing content between environments
-- Server-rendered UI with htmx for interactivity
-- SQLite for users, sessions, and API tokens
+- Server-rendered UI with htmx, dark mode, and theme toggle
+- Interactive JSON Schema editor (vanilla-jsoneditor)
+- SQLite for users, sessions, API tokens, and upload metadata
 - Prometheus metrics endpoint
 - Audit logging to a separate SQLite database
 - File watcher for automatic cache invalidation
@@ -24,8 +31,9 @@ JSON Schema --> UI form generation --> JSON file on disk --> served via API
 
 - **Schemas** define content types. Each schema has a slug, title, storage mode (directory or single-file), and JSON Schema properties. The custom `format: "upload"` extension handles file uploads.
 - **Content** is stored as JSON files under `data/content/<schema-slug>/`. Entries are cached in memory on startup and kept in sync via a file watcher.
-- **Uploads** use content-addressed storage: files are hashed with SHA-256 and stored at `data/uploads/<prefix>/<hash>` with a `.meta.json` sidecar.
-- **SQLite** handles infrastructure: users, sessions, API tokens. Content is never stored in the database.
+- **Uploads** use content-addressed storage: files are hashed with SHA-256 and stored at `data/uploads/<prefix>/<hash>`. Upload metadata is tracked in SQLite.
+- **SQLite** handles infrastructure: users, sessions, API tokens, and upload metadata. Content is never stored in the database.
+- **Webhooks** fire on content changes (staging, automatic) or manual publish (production), enabling CI/CD-driven deploys.
 - **Audit log** writes to a separate `audit.db` asynchronously, tracking all create/update/delete operations.
 
 ## Getting started
@@ -62,6 +70,11 @@ All options are passed as CLI flags:
 | `--db-path <PATH>` | `<data-dir>/substrukt.db` | SQLite database file |
 | `-p, --port <PORT>` | `3000` | HTTP listen port |
 | `--secure-cookies` | off | Set `Secure` flag on session cookies (enable for HTTPS) |
+| `--staging-webhook-url <URL>` | none | Webhook URL fired automatically when content changes |
+| `--staging-webhook-auth-token <TOKEN>` | none | Bearer token sent with staging webhook requests |
+| `--production-webhook-url <URL>` | none | Webhook URL fired on manual publish |
+| `--production-webhook-auth-token <TOKEN>` | none | Bearer token sent with production webhook requests |
+| `--webhook-check-interval <SECONDS>` | `300` | How often to check if the staging webhook should fire |
 
 ### Commands
 
@@ -96,6 +109,8 @@ Authorization: Bearer <token>
 | GET | `/api/v1/content/:schema/:id` | Get a single entry |
 | PUT | `/api/v1/content/:schema/:id` | Update an entry (JSON body) |
 | DELETE | `/api/v1/content/:schema/:id` | Delete an entry |
+| GET | `/api/v1/single/:schema` | Get a single-kind schema's entry |
+| PUT | `/api/v1/single/:schema` | Update a single-kind schema's entry |
 
 ### Uploads
 
@@ -110,6 +125,12 @@ Authorization: Bearer <token>
 |--------|----------|-------------|
 | POST | `/api/v1/export` | Export all data as tar.gz |
 | POST | `/api/v1/import` | Import a tar.gz bundle (multipart) |
+
+### Publish
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/publish/:environment` | Trigger a webhook (`staging` or `production`) |
 
 ### Metrics
 
@@ -126,7 +147,8 @@ Schemas are standard JSON Schema with an `x-substrukt` extension:
   "x-substrukt": {
     "title": "Blog Posts",
     "slug": "blog-posts",
-    "storage": "directory"
+    "storage": "directory",
+    "kind": "collection"
   },
   "type": "object",
   "properties": {
@@ -143,6 +165,11 @@ Schemas are standard JSON Schema with an `x-substrukt` extension:
 
 - `directory` -- one JSON file per entry in `data/content/<slug>/<id>.json`
 - `single-file` -- all entries in `data/content/<slug>.json` as a JSON array
+
+### Schema kinds
+
+- `collection` (default) -- multiple entries, each with its own ID
+- `single` -- exactly one entry per schema, ideal for site settings or configuration
 
 ### Supported field types
 
@@ -187,7 +214,6 @@ data/
   uploads/           # Content-addressed files
     <prefix>/        # First 2 hex chars of SHA-256
       <rest>         # Remaining hash chars (file data)
-      <rest>.meta.json  # Upload metadata (filename, MIME type, size)
 ```
 
 ## License

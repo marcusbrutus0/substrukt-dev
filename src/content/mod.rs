@@ -5,7 +5,7 @@ use std::path::Path;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::schema::models::{SchemaFile, StorageMode};
+use crate::schema::models::{Kind, SchemaFile, StorageMode};
 
 /// A single content entry
 #[derive(Debug, Clone, serde::Serialize)]
@@ -18,7 +18,9 @@ pub fn list_entries(content_dir: &Path, schema: &SchemaFile) -> eyre::Result<Vec
     let slug = &schema.meta.slug;
     match schema.meta.storage {
         StorageMode::Directory => list_directory_entries(content_dir, slug),
-        StorageMode::SingleFile => list_single_file_entries(content_dir, slug),
+        StorageMode::SingleFile => {
+            list_single_file_entries(content_dir, slug, &schema.meta.kind)
+        }
     }
 }
 
@@ -46,14 +48,24 @@ fn list_directory_entries(content_dir: &Path, slug: &str) -> eyre::Result<Vec<Co
     Ok(entries)
 }
 
-fn list_single_file_entries(content_dir: &Path, slug: &str) -> eyre::Result<Vec<ContentEntry>> {
+fn list_single_file_entries(
+    content_dir: &Path,
+    slug: &str,
+    kind: &Kind,
+) -> eyre::Result<Vec<ContentEntry>> {
     let path = content_dir.join(format!("{slug}.json"));
     if !path.exists() {
         return Ok(Vec::new());
     }
     let content = std::fs::read_to_string(&path)?;
-    let arr: Vec<Value> = serde_json::from_str(&content)?;
-    Ok(arr
+    let items: Vec<Value> = match kind {
+        Kind::Single => {
+            let obj: Value = serde_json::from_str(&content)?;
+            vec![obj]
+        }
+        Kind::Collection => serde_json::from_str(&content)?,
+    };
+    Ok(items
         .into_iter()
         .enumerate()
         .map(|(i, data)| {
@@ -87,7 +99,7 @@ pub fn get_entry(
             }))
         }
         StorageMode::SingleFile => {
-            let entries = list_single_file_entries(content_dir, slug)?;
+            let entries = list_single_file_entries(content_dir, slug, &schema.meta.kind)?;
             Ok(entries.into_iter().find(|e| e.id == entry_id))
         }
     }
@@ -114,12 +126,6 @@ pub fn save_entry(
         }
         StorageMode::SingleFile => {
             let path = content_dir.join(format!("{slug}.json"));
-            let mut entries = if path.exists() {
-                let content = std::fs::read_to_string(&path)?;
-                serde_json::from_str::<Vec<Value>>(&content)?
-            } else {
-                Vec::new()
-            };
 
             let id = entry_id
                 .map(|s| s.to_string())
@@ -131,23 +137,34 @@ pub fn save_entry(
                 obj.insert("_id".to_string(), Value::String(id.clone()));
             }
 
-            if let Some(existing_id) = entry_id {
-                // Update existing
-                if let Some(pos) = entries.iter().position(|e| {
-                    e.get("_id")
-                        .and_then(|v| v.as_str())
-                        .is_some_and(|s| s == existing_id)
-                }) {
-                    entries[pos] = data;
+            if schema.meta.kind == Kind::Single {
+                let content = serde_json::to_string_pretty(&data)?;
+                std::fs::write(path, content)?;
+            } else {
+                let mut entries = if path.exists() {
+                    let content = std::fs::read_to_string(&path)?;
+                    serde_json::from_str::<Vec<Value>>(&content)?
+                } else {
+                    Vec::new()
+                };
+
+                if let Some(existing_id) = entry_id {
+                    if let Some(pos) = entries.iter().position(|e| {
+                        e.get("_id")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|s| s == existing_id)
+                    }) {
+                        entries[pos] = data;
+                    } else {
+                        entries.push(data);
+                    }
                 } else {
                     entries.push(data);
                 }
-            } else {
-                entries.push(data);
-            }
 
-            let content = serde_json::to_string_pretty(&entries)?;
-            std::fs::write(path, content)?;
+                let content = serde_json::to_string_pretty(&entries)?;
+                std::fs::write(path, content)?;
+            }
             Ok(id)
         }
     }
@@ -165,15 +182,19 @@ pub fn delete_entry(content_dir: &Path, schema: &SchemaFile, entry_id: &str) -> 
         StorageMode::SingleFile => {
             let path = content_dir.join(format!("{slug}.json"));
             if path.exists() {
-                let content = std::fs::read_to_string(&path)?;
-                let mut entries: Vec<Value> = serde_json::from_str(&content)?;
-                entries.retain(|e| {
-                    e.get("_id")
-                        .and_then(|v| v.as_str())
-                        .is_none_or(|s| s != entry_id)
-                });
-                let content = serde_json::to_string_pretty(&entries)?;
-                std::fs::write(path, content)?;
+                if schema.meta.kind == Kind::Single {
+                    std::fs::remove_file(&path)?;
+                } else {
+                    let content = std::fs::read_to_string(&path)?;
+                    let mut entries: Vec<Value> = serde_json::from_str(&content)?;
+                    entries.retain(|e| {
+                        e.get("_id")
+                            .and_then(|v| v.as_str())
+                            .is_none_or(|s| s != entry_id)
+                    });
+                    let content = serde_json::to_string_pretty(&entries)?;
+                    std::fs::write(path, content)?;
+                }
             }
         }
     }

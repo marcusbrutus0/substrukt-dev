@@ -123,12 +123,7 @@ async fn list_entries(
         Ok(entries) => {
             let data: Vec<serde_json::Value> = entries
                 .iter()
-                .map(|e| {
-                    serde_json::json!({
-                        "id": e.id,
-                        "data": e.data,
-                    })
-                })
+                .map(|e| e.data.clone())
                 .collect();
             Json(serde_json::json!(data)).into_response()
         }
