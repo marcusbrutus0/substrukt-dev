@@ -3,20 +3,104 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <meta name="csrf-token" content="{{ csrf_token }}">
   <title>{% block title %}Substrukt{% endblock %}</title>
+  <style>
+    :root {
+      --surface: #f8fafc;
+      --card: #ffffff;
+      --card-alt: #f1f5f9;
+      --sidebar: #0f172a;
+      --sidebar-hover: #1e293b;
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #94a3b8;
+      --border: #cbd5e1;
+      --border-light: #e2e8f0;
+      --accent: #f59e0b;
+      --accent-hover: #d97706;
+      --accent-soft: #fef3c7;
+      --danger: #ef4444;
+      --danger-soft: #fef2f2;
+      --success: #22c55e;
+      --success-soft: #f0fdf4;
+      --input-bg: #ffffff;
+    }
+    .dark {
+      --surface: #09090b;
+      --card: #18181b;
+      --card-alt: #27272a;
+      --sidebar: #09090b;
+      --sidebar-hover: #27272a;
+      --text-primary: #fafafa;
+      --text-secondary: #a1a1aa;
+      --text-muted: #52525b;
+      --border: #3f3f46;
+      --border-light: #27272a;
+      --accent: #f59e0b;
+      --accent-hover: #fbbf24;
+      --accent-soft: #451a03;
+      --danger: #f87171;
+      --danger-soft: #451a1a;
+      --success: #4ade80;
+      --success-soft: #052e16;
+      --input-bg: #27272a;
+    }
+    *, *::before, *::after {
+      transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+    }
+  </style>
+  <script>
+    (function() {
+      var stored = localStorage.getItem('theme');
+      if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+        document.documentElement.classList.add('dark');
+      }
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+        if (!localStorage.getItem('theme')) {
+          document.documentElement.classList.toggle('dark', e.matches);
+        }
+      });
+    })();
+  </script>
   <script src="https://cdn.twind.style" crossorigin></script>
+  <script>
+    twind.install({
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            surface: 'var(--surface)',
+            card: 'var(--card)',
+            'card-alt': 'var(--card-alt)',
+            sidebar: 'var(--sidebar)',
+            'sidebar-hover': 'var(--sidebar-hover)',
+            primary: 'var(--text-primary)',
+            secondary: 'var(--text-secondary)',
+            muted: 'var(--text-muted)',
+            accent: { DEFAULT: 'var(--accent)', hover: 'var(--accent-hover)', soft: 'var(--accent-soft)' },
+            danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
+            success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
+            border: 'var(--border)',
+            'border-light': 'var(--border-light)',
+            'input-bg': 'var(--input-bg)',
+          }
+        }
+      }
+    });
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
 </head>
-<body class="bg-gray-50 min-h-screen" hx-boost="true" hx-target="#main-content" hx-swap="innerHTML">
+<body class="bg-surface text-primary min-h-screen" hx-boost="true" hx-target="#main-content" hx-swap="innerHTML">
   <div class="flex min-h-screen">
     {% include "_nav.html" %}
     <main id="main-content" class="flex-1 p-8">
       {% if flash_kind %}
       <div class="mb-4 p-4 rounded-md text-sm
-        {% if flash_kind == 'success' %}bg-green-50 text-green-800 border border-green-200
-        {% elif flash_kind == 'error' %}bg-red-50 text-red-800 border border-red-200
-        {% else %}bg-blue-50 text-blue-800 border border-blue-200{% endif %}">
+        {% if flash_kind == 'success' %}bg-success-soft text-success border border-success
+        {% elif flash_kind == 'error' %}bg-danger-soft text-danger border border-danger
+        {% else %}bg-accent-soft text-accent border border-accent{% endif %}">
         {{ flash_message }}
       </div>
       {% endif %}
@@ -31,10 +115,17 @@
       var index = container.querySelectorAll('.array-item').length;
       var html = template.innerHTML.replace(/__INDEX__/g, index);
       var div = document.createElement('div');
-      div.className = 'array-item border border-gray-100 p-3 rounded mb-2';
+      div.className = 'array-item border border-border-light p-3 rounded mb-2';
       div.setAttribute('data-index', index);
-      div.innerHTML = '<div class="flex justify-end mb-1"><button type="button" onclick="this.closest(\'.array-item\').remove()" class="text-red-500 text-sm hover:text-red-700">Remove</button></div>' + html;
+      div.innerHTML = '<div class="flex justify-end mb-1"><button type="button" onclick="this.closest(\'.array-item\').remove()" class="text-danger text-sm hover:text-danger">Remove</button></div>' + html;
       container.appendChild(div);
+    }
+    function toggleTheme() {
+      var isDark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('theme', isDark ? 'dark' : 'light');
+      document.querySelectorAll('.theme-icon').forEach(function(el) {
+        el.textContent = isDark ? '\u2600' : '\u263E';
+      });
     }
   </script>
 </body>
