@@ -60,6 +60,10 @@ struct Cli {
     /// Webhook check interval in seconds
     #[arg(long, global = true, default_value = "300")]
     webhook_check_interval: Option<u64>,
+
+    /// Max API requests per IP per minute (rate limit)
+    #[arg(long, global = true, default_value = "100")]
+    api_rate_limit: usize,
 }
 
 #[derive(Subcommand)]
@@ -94,6 +98,7 @@ async fn main() -> eyre::Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let api_rate_limit = cli.api_rate_limit;
     let config = Config::new(
         cli.data_dir,
         cli.db_path,
@@ -108,7 +113,7 @@ async fn main() -> eyre::Result<()> {
     config.ensure_dirs()?;
 
     match cli.command.unwrap_or(Command::Serve) {
-        Command::Serve => run_server(config).await,
+        Command::Serve => run_server(config, api_rate_limit).await,
         Command::Import { path } => {
             let pool = db::init_pool(&config.db_path).await?;
             let warnings = sync::import_bundle(&config.data_dir, &pool, &path).await?;
@@ -144,7 +149,7 @@ async fn main() -> eyre::Result<()> {
     }
 }
 
-async fn run_server(config: Config) -> eyre::Result<()> {
+async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     let pool = db::init_pool(&config.db_path).await?;
 
     // Session store
@@ -183,7 +188,7 @@ async fn run_server(config: Config) -> eyre::Result<()> {
         templates: reloader,
         cache: content_cache,
         login_limiter: RateLimiter::new(10, std::time::Duration::from_secs(60)),
-        api_limiter: RateLimiter::new(100, std::time::Duration::from_secs(60)),
+        api_limiter: RateLimiter::new(api_rate_limit, std::time::Duration::from_secs(60)),
         metrics_handle,
         audit: audit_logger,
         http_client,
