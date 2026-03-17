@@ -206,6 +206,46 @@ fn build_reference_options(
     opts
 }
 
+fn warn_dangling_references(
+    data: &serde_json::Value,
+    schema: &serde_json::Value,
+    cache: &ContentCache,
+) {
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return;
+    };
+    let Some(obj) = data.as_object() else {
+        return;
+    };
+    for (key, prop) in props {
+        let is_ref = prop.get("type").and_then(|t| t.as_str()) == Some("string")
+            && prop.get("format").and_then(|f| f.as_str()) == Some("reference");
+        if !is_ref {
+            continue;
+        }
+        let Some(target_slug) = prop
+            .get("x-substrukt-reference")
+            .and_then(|r| r.get("schema"))
+            .and_then(|s| s.as_str())
+        else {
+            continue;
+        };
+        if let Some(serde_json::Value::String(ref_id)) = obj.get(key) {
+            if !ref_id.is_empty() {
+                let cache_key = format!("{target_slug}/{ref_id}");
+                if cache.get(&cache_key).is_none() {
+                    tracing::warn!(
+                        field = key,
+                        reference_id = ref_id,
+                        target_schema = target_slug,
+                        "Dangling reference: target entry not found in cache"
+                    );
+                }
+            }
+        }
+    }
+}
+
 async fn new_entry_page(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
@@ -334,6 +374,8 @@ async fn create_entry(
     // Process upload fields
     process_uploads(&state, &mut data, &upload_fields).await;
 
+    warn_dangling_references(&data, &schema_file.schema, &state.cache);
+
     // Validate
     if let Err(errors) = content::validate_content(&schema_file, &data) {
         let ref_options = build_reference_options(&schema_file.schema, &state.cache, "");
@@ -414,6 +456,8 @@ async fn update_entry(
     let mut data = content_form::form_data_to_json(&schema_file.schema, &form_fields, "");
 
     process_uploads(&state, &mut data, &upload_fields).await;
+
+    warn_dangling_references(&data, &schema_file.schema, &state.cache);
 
     if let Err(errors) = content::validate_content(&schema_file, &data) {
         let ref_options = build_reference_options(&schema_file.schema, &state.cache, "");
