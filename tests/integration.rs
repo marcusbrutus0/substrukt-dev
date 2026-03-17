@@ -1544,6 +1544,307 @@ async fn test_dirty_state_tracking() {
     assert_eq!(payload["environment"], "production");
 }
 
+// ── Invitation & Signup tests ────────────────────────────────
+
+#[tokio::test]
+async fn invite_creates_signup_url() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", "user@example.com"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    let invite_url = extract_invite_url(&body).expect("should contain invite URL");
+    assert!(invite_url.starts_with("/signup?token="));
+}
+
+#[tokio::test]
+async fn non_admin_cannot_access_users_page() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create an invitation, sign up as non-admin user
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", "user2@example.com"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let invite_url = extract_invite_url(&body).unwrap();
+
+    // Use a separate client (no admin session)
+    let client2 = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Sign up as second user
+    let resp = client2
+        .get(s.url(&invite_url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let token = extract_hidden_token(&body).unwrap();
+
+    let resp = client2
+        .post(s.url("/signup"))
+        .form(&[
+            ("token", token.as_str()),
+            ("username", "user2"),
+            ("password", "password123"),
+            ("confirm_password", "password123"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Non-admin trying to access /settings/users should get 403
+    let resp = client2.get(s.url("/settings/users")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn signup_with_valid_token_shows_form() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", "newuser@example.com"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let invite_url = extract_invite_url(&body).unwrap();
+
+    // Use a separate client (no session)
+    let client2 = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("newuser@example.com"));
+    assert!(body.contains("Create Account"));
+}
+
+#[tokio::test]
+async fn signup_with_invalid_token_shows_error() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let client2 = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client2
+        .get(s.url("/signup?token=invalidtoken123"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Invalid or expired invitation"));
+}
+
+#[tokio::test]
+async fn signup_creates_user_and_logs_in() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create invitation
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", "newuser@test.com"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let invite_url = extract_invite_url(&body).unwrap();
+
+    // Sign up with separate client
+    let client2 = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let token = extract_hidden_token(&body).unwrap();
+
+    let resp = client2
+        .post(s.url("/signup"))
+        .form(&[
+            ("token", token.as_str()),
+            ("username", "newuser"),
+            ("password", "securepass123"),
+            ("confirm_password", "securepass123"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/");
+
+    // Should be logged in — can access dashboard
+    let resp = client2.get(s.url("/")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn duplicate_email_invitation_rejected() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/users").await;
+    s.client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", "dup@example.com"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+
+    // Try again with same email
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", "dup@example.com"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("already exists"));
+}
+
+#[tokio::test]
+async fn signup_rejects_taken_username() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create invitation
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", "another@test.com"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let invite_url = extract_invite_url(&body).unwrap();
+
+    let client2 = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let token = extract_hidden_token(&body).unwrap();
+
+    // Try to sign up with "admin" username (already taken)
+    let resp = client2
+        .post(s.url("/signup"))
+        .form(&[
+            ("token", token.as_str()),
+            ("username", "admin"),
+            ("password", "password123"),
+            ("confirm_password", "password123"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("already taken"));
+}
+
+#[tokio::test]
+async fn cannot_invite_existing_user_email() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // First invite and sign up
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", "taken@test.com"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let invite_url = extract_invite_url(&body).unwrap();
+
+    let client2 = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let token = extract_hidden_token(&body).unwrap();
+
+    client2
+        .post(s.url("/signup"))
+        .form(&[
+            ("token", token.as_str()),
+            ("username", "takenuser"),
+            ("password", "password123"),
+            ("confirm_password", "password123"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Now try to invite same email again
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", "taken@test.com"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("already exists"));
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /// Extract the first entry ID from a content list page's edit links.
@@ -1583,6 +1884,35 @@ fn extract_new_token(html: &str) -> Option<String> {
             if token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Some(token.to_string());
             }
+        }
+    }
+    None
+}
+
+/// Extract an invite URL from the users page (in select-all code block).
+fn extract_invite_url(html: &str) -> Option<String> {
+    let marker = "select-all\">";
+    if let Some(pos) = html.find(marker) {
+        let rest = &html[pos + marker.len()..];
+        if let Some(end) = rest.find('<') {
+            let url = rest[..end].trim();
+            // minijinja HTML-escapes `/` as `&#x2f;`
+            let url = url.replace("&#x2f;", "/").replace("&#x3d;", "=").replace("&amp;", "&");
+            if url.starts_with("/signup?token=") {
+                return Some(url.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Extract the hidden token input from the signup form.
+fn extract_hidden_token(html: &str) -> Option<String> {
+    let marker = "name=\"token\" value=\"";
+    if let Some(pos) = html.find(marker) {
+        let rest = &html[pos + marker.len()..];
+        if let Some(end) = rest.find('"') {
+            return Some(rest[..end].to_string());
         }
     }
     None

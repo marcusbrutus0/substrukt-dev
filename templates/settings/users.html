@@ -1,0 +1,63 @@
+{% extends base_template %}
+{% block title %}Users — Substrukt{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold tracking-tight mb-6">Users</h1>
+
+{% if invite_url %}
+<div class="bg-success-soft border border-success text-success p-4 rounded mb-6">
+  <div class="font-medium mb-1">Invitation created! Share this link with the user:</div>
+  <code class="block bg-card-alt text-primary p-2 rounded mt-2 text-sm font-mono break-all select-all">{{ invite_url }}</code>
+</div>
+{% endif %}
+
+{% if error %}
+<div class="bg-danger-soft border border-danger text-danger p-4 rounded mb-6 text-sm">{{ error }}</div>
+{% endif %}
+
+<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
+  <h2 class="text-lg font-medium mb-4">Invite User</h2>
+  <form method="post" action="/settings/users/invite" class="flex gap-3">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="email" name="email" placeholder="Email address" required
+      class="flex-1 px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+    <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
+      Send Invite
+    </button>
+  </form>
+</div>
+
+{% if invitations %}
+<div class="bg-card border border-border-light rounded-lg overflow-hidden">
+  <table class="w-full">
+    <thead class="bg-card-alt">
+      <tr>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Email</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Invited</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Expires</th>
+        <th class="px-4 py-2.5"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-border-light">
+      {% for inv in invitations %}
+      <tr class="hover:bg-card-alt">
+        <td class="px-4 py-2.5 font-medium">{{ inv.email }}</td>
+        <td class="px-4 py-2.5 text-muted text-sm">{{ inv.created_at }}</td>
+        <td class="px-4 py-2.5 text-muted text-sm">{{ inv.expires_at }}</td>
+        <td class="px-4 py-2.5 text-right">
+          <form method="post" action="/settings/users/invitations/{{ inv.id }}/delete" class="inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit" class="text-danger hover:text-danger text-sm"
+              onclick="return confirm('Cancel this invitation?')">Cancel</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
+  No pending invitations.
+</div>
+{% endif %}
+{% endblock %}

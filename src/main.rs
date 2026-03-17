@@ -179,6 +179,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
 
     let http_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(5))
         .user_agent("Substrukt/0.1")
         .build()?;
 

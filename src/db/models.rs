@@ -131,3 +131,122 @@ pub async fn find_token_by_hash(
         .await?;
     Ok(token)
 }
+
+// --- Invitations ---
+
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
+pub struct Invitation {
+    pub id: i64,
+    pub email: String,
+    pub token_hash: String,
+    pub invited_by: i64,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+pub async fn create_invitation(
+    pool: &SqlitePool,
+    email: &str,
+    token_hash: &str,
+    invited_by: i64,
+    expires_at: &str,
+) -> eyre::Result<Invitation> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO invitations (email, token_hash, invited_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?) RETURNING id",
+    )
+    .bind(email)
+    .bind(token_hash)
+    .bind(invited_by)
+    .bind(&now)
+    .bind(expires_at)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(Invitation {
+        id,
+        email: email.to_string(),
+        token_hash: token_hash.to_string(),
+        invited_by,
+        created_at: now,
+        expires_at: expires_at.to_string(),
+    })
+}
+
+pub async fn find_invitation_by_token_hash(
+    pool: &SqlitePool,
+    token_hash: &str,
+) -> eyre::Result<Option<Invitation>> {
+    let inv = sqlx::query_as::<_, Invitation>(
+        "SELECT * FROM invitations WHERE token_hash = ? AND expires_at > datetime('now')",
+    )
+    .bind(token_hash)
+    .fetch_optional(pool)
+    .await?;
+    Ok(inv)
+}
+
+pub async fn find_invitation_by_email(
+    pool: &SqlitePool,
+    email: &str,
+) -> eyre::Result<Option<Invitation>> {
+    let inv = sqlx::query_as::<_, Invitation>("SELECT * FROM invitations WHERE email = ?")
+        .bind(email)
+        .fetch_optional(pool)
+        .await?;
+    Ok(inv)
+}
+
+pub async fn list_pending_invitations(pool: &SqlitePool) -> eyre::Result<Vec<Invitation>> {
+    let invitations = sqlx::query_as::<_, Invitation>(
+        "SELECT * FROM invitations WHERE expires_at > datetime('now') ORDER BY created_at DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(invitations)
+}
+
+pub async fn delete_invitation(pool: &SqlitePool, id: i64) -> eyre::Result<()> {
+    sqlx::query("DELETE FROM invitations WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn create_user_with_email(
+    pool: &SqlitePool,
+    username: &str,
+    password: &str,
+    email: &str,
+) -> eyre::Result<User> {
+    let password_hash = User::hash_password(password)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO users (username, password_hash, email, created_at) VALUES (?, ?, ?, ?) RETURNING id",
+    )
+    .bind(username)
+    .bind(&password_hash)
+    .bind(email)
+    .bind(&now)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(User {
+        id,
+        username: username.to_string(),
+        password_hash,
+        created_at: now,
+    })
+}
+
+pub async fn find_user_by_email(
+    pool: &SqlitePool,
+    email: &str,
+) -> eyre::Result<Option<User>> {
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = ?")
+        .bind(email)
+        .fetch_optional(pool)
+        .await?;
+    Ok(user)
+}

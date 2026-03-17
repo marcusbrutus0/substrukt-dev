@@ -149,6 +149,7 @@ pub async fn require_auth(State(state): State<AppState>, request: Request, next:
     // Allow public paths
     if path.starts_with("/login")
         || path.starts_with("/setup")
+        || path.starts_with("/signup")
         || path.starts_with("/api/")
         || path.starts_with("/uploads/file/")
     {

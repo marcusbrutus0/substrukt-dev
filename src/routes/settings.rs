@@ -25,6 +25,12 @@ pub fn routes() -> Router<AppState> {
         .route("/data", get(data_page))
         .route("/data/import", axum::routing::post(import_data))
         .route("/data/export", axum::routing::post(export_data))
+        .route("/users", get(users_page))
+        .route("/users/invite", axum::routing::post(invite_user))
+        .route(
+            "/users/invitations/{id}/delete",
+            axum::routing::post(delete_invitation),
+        )
 }
 
 async fn tokens_page(
@@ -368,4 +374,202 @@ async fn export_data(
             Redirect::to("/settings/data").into_response()
         }
     }
+}
+
+// --- User invitation management (admin only, user_id == 1) ---
+
+async fn require_admin(session: &Session) -> axum::response::Result<i64> {
+    let user_id = auth::current_user_id(session)
+        .await
+        .ok_or(axum::response::ErrorResponse::from(
+            (axum::http::StatusCode::SEE_OTHER, [("location", "/login")]).into_response(),
+        ))?;
+    if user_id != 1 {
+        return Err(axum::response::ErrorResponse::from(
+            (axum::http::StatusCode::FORBIDDEN, "Admin access required").into_response(),
+        ));
+    }
+    Ok(user_id)
+}
+
+async fn users_page(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+) -> axum::response::Result<axum::response::Response> {
+    let _user_id = require_admin(&session).await?;
+
+    let invitations = models::list_pending_invitations(&state.pool)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let csrf_token = auth::ensure_csrf_token(&session).await;
+
+    let inv_data: Vec<minijinja::Value> = invitations
+        .iter()
+        .map(|i| {
+            minijinja::context! {
+                id => i.id,
+                email => i.email,
+                created_at => i.created_at,
+                expires_at => i.expires_at,
+            }
+        })
+        .collect();
+
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("settings/users.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            csrf_token => csrf_token,
+            invitations => inv_data,
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html).into_response())
+}
+
+#[derive(serde::Deserialize)]
+pub struct InviteForm {
+    email: String,
+}
+
+async fn invite_user(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+    Form(form): Form<InviteForm>,
+) -> axum::response::Result<axum::response::Response> {
+    let user_id = require_admin(&session).await?;
+
+    // Basic email validation
+    if !form.email.contains('@') || form.email.len() < 3 {
+        return render_users_with_error(&state, &session, is_htmx, "Invalid email address").await;
+    }
+
+    // Check if email already has an account
+    if let Ok(Some(_)) = models::find_user_by_email(&state.pool, &form.email).await {
+        return render_users_with_error(&state, &session, is_htmx, "A user with this email already exists").await;
+    }
+
+    // Check if already invited
+    if let Ok(Some(_)) = models::find_invitation_by_email(&state.pool, &form.email).await {
+        return render_users_with_error(&state, &session, is_htmx, "An invitation for this email already exists").await;
+    }
+
+    let raw_token = token::generate_token();
+    let token_hash = token::hash_token(&raw_token);
+    let expires_at = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
+
+    let invitation = models::create_invitation(&state.pool, &form.email, &token_hash, user_id, &expires_at)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    state.audit.log(
+        &user_id.to_string(),
+        "invite_create",
+        "invitation",
+        &invitation.id.to_string(),
+        Some(&serde_json::json!({"email": form.email}).to_string()),
+    );
+
+    let invite_url = format!("/signup?token={raw_token}");
+
+    let invitations = models::list_pending_invitations(&state.pool)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let inv_data: Vec<minijinja::Value> = invitations
+        .iter()
+        .map(|i| {
+            minijinja::context! {
+                id => i.id,
+                email => i.email,
+                created_at => i.created_at,
+                expires_at => i.expires_at,
+            }
+        })
+        .collect();
+
+    let csrf_token = auth::ensure_csrf_token(&session).await;
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("settings/users.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            csrf_token => csrf_token,
+            invitations => inv_data,
+            invite_url => invite_url,
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html).into_response())
+}
+
+async fn render_users_with_error(
+    state: &AppState,
+    session: &Session,
+    is_htmx: bool,
+    error: &str,
+) -> axum::response::Result<axum::response::Response> {
+    let invitations = models::list_pending_invitations(&state.pool)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let inv_data: Vec<minijinja::Value> = invitations
+        .iter()
+        .map(|i| {
+            minijinja::context! {
+                id => i.id,
+                email => i.email,
+                created_at => i.created_at,
+                expires_at => i.expires_at,
+            }
+        })
+        .collect();
+
+    let csrf_token = auth::ensure_csrf_token(session).await;
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("settings/users.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            csrf_token => csrf_token,
+            invitations => inv_data,
+            error => error,
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html).into_response())
+}
+
+async fn delete_invitation(
+    State(state): State<AppState>,
+    session: Session,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+) -> axum::response::Result<axum::response::Response> {
+    let user_id = require_admin(&session).await?;
+
+    let _ = models::delete_invitation(&state.pool, id).await;
+    state.audit.log(
+        &user_id.to_string(),
+        "invite_delete",
+        "invitation",
+        &id.to_string(),
+        None,
+    );
+    Ok(Redirect::to("/settings/users").into_response())
 }
