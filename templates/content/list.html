@@ -46,7 +46,7 @@
 </div>
 {% else %}
 <div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
-  No entries yet. <a href="/content/{{ schema_slug }}/new" class="text-accent hover:underline">Create your first entry</a>.
+  {% if q %}No entries match your search.{% else %}No entries yet. <a href="/content/{{ schema_slug }}/new" class="text-accent hover:underline">Create your first entry</a>.{% endif %}
 </div>
 {% endif %}
 
