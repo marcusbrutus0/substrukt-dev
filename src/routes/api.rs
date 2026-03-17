@@ -67,6 +67,39 @@ async fn api_rate_limit(
     next.run(request).await
 }
 
+fn resolve_references(
+    data: &mut serde_json::Value,
+    schema: &serde_json::Value,
+    cache: &crate::state::ContentCache,
+) {
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return;
+    };
+    let Some(obj) = data.as_object_mut() else {
+        return;
+    };
+    for (key, prop) in props {
+        let is_ref = prop.get("type").and_then(|t| t.as_str()) == Some("string")
+            && prop.get("format").and_then(|f| f.as_str()) == Some("reference");
+        if !is_ref {
+            continue;
+        }
+        let target_slug = prop
+            .get("x-substrukt-reference")
+            .and_then(|r| r.get("schema"))
+            .and_then(|s| s.as_str());
+        let Some(target_slug) = target_slug else {
+            continue;
+        };
+        if let Some(serde_json::Value::String(ref_id)) = obj.get(key).cloned() {
+            let cache_key = format!("{target_slug}/{ref_id}");
+            if let Some(entry) = cache.get(&cache_key) {
+                obj.insert(key.clone(), entry.value().clone());
+            }
+        }
+    }
+}
+
 async fn list_schemas(State(state): State<AppState>, _token: BearerToken) -> impl IntoResponse {
     match schema::list_schemas(&state.config.schemas_dir()) {
         Ok(schemas) => {
@@ -136,7 +169,11 @@ async fn list_entries(
             };
             let data: Vec<serde_json::Value> = entries
                 .iter()
-                .map(|e| e.data.clone())
+                .map(|e| {
+                    let mut d = e.data.clone();
+                    resolve_references(&mut d, &schema_file.schema, &state.cache);
+                    d
+                })
                 .collect();
             Json(serde_json::json!(data)).into_response()
         }
@@ -166,7 +203,11 @@ async fn get_entry(
     };
 
     match content::get_entry(&state.config.content_dir(), &schema_file, &entry_id) {
-        Ok(Some(entry)) => Json(entry.data).into_response(),
+        Ok(Some(entry)) => {
+            let mut data = entry.data;
+            resolve_references(&mut data, &schema_file.schema, &state.cache);
+            Json(data).into_response()
+        }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -353,7 +394,11 @@ async fn get_single(
     };
 
     match content::get_entry(&state.config.content_dir(), &schema_file, "_single") {
-        Ok(Some(entry)) => Json(entry.data).into_response(),
+        Ok(Some(entry)) => {
+            let mut data = entry.data;
+            resolve_references(&mut data, &schema_file.schema, &state.cache);
+            Json(data).into_response()
+        }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
