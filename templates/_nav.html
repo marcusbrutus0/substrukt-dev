@@ -22,6 +22,7 @@
   {% endfor %}
   {% endif %}
   <a href="/uploads" class="block px-3 py-2 rounded hover:bg-sidebar-hover mt-3">Uploads</a>
+  <a href="/settings/users" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Users</a>
   <a href="/settings/tokens" class="block px-3 py-2 rounded hover:bg-sidebar-hover">API Tokens</a>
   {% set publish = get_publish_state() %}
   {% if publish.staging_configured or publish.production_configured %}
