@@ -201,6 +201,26 @@ pub fn delete_entry(content_dir: &Path, schema: &SchemaFile, entry_id: &str) -> 
     Ok(())
 }
 
+/// Check if any string value in the JSON data contains the query (case-insensitive).
+/// The query must already be lowercased by the caller.
+pub fn matches_query(data: &Value, query_lower: &str) -> bool {
+    match data {
+        Value::String(s) => s.to_lowercase().contains(query_lower),
+        Value::Object(map) => map.values().any(|v| matches_query(v, query_lower)),
+        Value::Array(arr) => arr.iter().any(|v| matches_query(v, query_lower)),
+        _ => false,
+    }
+}
+
+/// Filter entries by a search query. Case-insensitive substring match on all string values.
+pub fn filter_entries(entries: Vec<ContentEntry>, query: &str) -> Vec<ContentEntry> {
+    let query_lower = query.to_lowercase();
+    entries
+        .into_iter()
+        .filter(|e| matches_query(&e.data, &query_lower))
+        .collect()
+}
+
 pub fn validate_content(schema: &SchemaFile, data: &Value) -> Result<(), Vec<String>> {
     // Patch schema to accept objects for upload fields, since uploads are stored
     // as {hash, filename, mime} objects rather than plain strings.

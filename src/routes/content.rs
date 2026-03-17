@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, Query, State},
     response::{Html, IntoResponse, Redirect},
     routing::get,
 };
@@ -14,6 +14,12 @@ use crate::schema::models::Kind;
 use crate::state::AppState;
 use crate::templates::base_for_htmx;
 use crate::uploads;
+
+#[derive(serde::Deserialize, Default)]
+pub struct ListParams {
+    #[serde(default)]
+    pub q: String,
+}
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -31,6 +37,7 @@ async fn list_entries(
     State(state): State<AppState>,
     session: Session,
     Path(schema_slug): Path<String>,
+    Query(params): Query<ListParams>,
 ) -> axum::response::Result<axum::response::Response> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let schema_file = schema::get_schema(&state.config.schemas_dir(), &schema_slug)
@@ -43,6 +50,15 @@ async fn list_entries(
 
     let entries = content::list_entries(&state.config.content_dir(), &schema_file)
         .map_err(|e| format!("Error: {e}"))?;
+
+    let total = entries.len();
+    let q = params.q.trim().to_string();
+    let entries = if q.is_empty() {
+        entries
+    } else {
+        content::filter_entries(entries, &q)
+    };
+    let filtered = entries.len();
 
     let columns = get_display_columns(&schema_file.schema);
 
@@ -90,6 +106,9 @@ async fn list_entries(
             schema_slug => schema_slug,
             columns => column_headers,
             entries => entry_data,
+            q => q,
+            total => total,
+            filtered => filtered,
             flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
             flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
         })

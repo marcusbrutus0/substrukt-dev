@@ -1845,6 +1845,116 @@ async fn cannot_invite_existing_user_email() {
     assert!(body.contains("already exists"));
 }
 
+// ── Content search tests ─────────────────────────────────────
+
+#[tokio::test]
+async fn content_search_filters_entries() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    // Create two entries with distinct titles
+    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Rust Programming")
+        .text("body", "A post about Rust");
+    s.client
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Python Scripting")
+        .text("body", "A post about Python");
+    s.client
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Unfiltered list shows both
+    let resp = s
+        .client
+        .get(s.url("/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Rust Programming"));
+    assert!(body.contains("Python Scripting"));
+
+    // Search for "rust" (case-insensitive) — UI
+    let resp = s
+        .client
+        .get(s.url("/content/blog-posts?q=rust"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Rust Programming"));
+    assert!(!body.contains("Python Scripting"));
+    assert!(body.contains("Showing 1 of 2 entries"));
+
+    // Search for "python" — UI
+    let resp = s
+        .client
+        .get(s.url("/content/blog-posts?q=python"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Python Scripting"));
+    assert!(!body.contains("Rust Programming"));
+
+    // Search via API
+    let token = s.create_api_token("search-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // API: unfiltered
+    let resp = api
+        .get(s.url("/api/v1/content/blog-posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 2);
+
+    // API: filtered
+    let resp = api
+        .get(s.url("/api/v1/content/blog-posts?q=rust"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1);
+    assert_eq!(entries[0]["title"], "Rust Programming");
+
+    // API: no match
+    let resp = api
+        .get(s.url("/api/v1/content/blog-posts?q=javascript"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 0);
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /// Extract the first entry ID from a content list page's edit links.
