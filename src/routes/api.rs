@@ -304,6 +304,19 @@ async fn update_entry(
             .into_response();
     }
 
+    // Snapshot current version for history
+    if let Ok(Some(current)) =
+        content::get_entry(&state.config.content_dir(), &schema_file, &entry_id)
+    {
+        let _ = crate::history::snapshot_entry(
+            &state.config.data_dir,
+            &schema_slug,
+            &entry_id,
+            &current.data,
+            state.config.version_history_count,
+        );
+    }
+
     let hashes = uploads::extract_upload_hashes(&data);
     match content::save_entry(
         &state.config.content_dir(),
@@ -432,6 +445,19 @@ async fn upsert_single(
             Json(serde_json::json!({"errors": errors})),
         )
             .into_response();
+    }
+
+    // Snapshot current version for history
+    if let Ok(Some(current)) =
+        content::get_entry(&state.config.content_dir(), &schema_file, "_single")
+    {
+        let _ = crate::history::snapshot_entry(
+            &state.config.data_dir,
+            &schema_slug,
+            "_single",
+            &current.data,
+            state.config.version_history_count,
+        );
     }
 
     let hashes = uploads::extract_upload_hashes(&data);

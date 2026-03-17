@@ -64,6 +64,10 @@ struct Cli {
     /// Max API requests per IP per minute (rate limit)
     #[arg(long, global = true, default_value = "100")]
     api_rate_limit: usize,
+
+    /// Maximum number of content versions to keep per entry
+    #[arg(long, global = true, default_value = "10")]
+    version_history_count: usize,
 }
 
 #[derive(Subcommand)]
@@ -109,6 +113,7 @@ async fn main() -> eyre::Result<()> {
         cli.production_webhook_url,
         cli.production_webhook_auth_token,
         cli.webhook_check_interval,
+        cli.version_history_count,
     );
     config.ensure_dirs()?;
 

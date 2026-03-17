@@ -12,6 +12,7 @@ pub struct Config {
     pub production_webhook_url: Option<String>,
     pub production_webhook_auth_token: Option<String>,
     pub webhook_check_interval: u64,
+    pub version_history_count: usize,
 }
 
 impl Config {
@@ -25,6 +26,7 @@ impl Config {
         production_webhook_url: Option<String>,
         production_webhook_auth_token: Option<String>,
         webhook_check_interval: Option<u64>,
+        version_history_count: usize,
     ) -> Self {
         let data_dir = data_dir.unwrap_or_else(|| PathBuf::from("data"));
         let db_path = db_path.unwrap_or_else(|| data_dir.join("substrukt.db"));
@@ -39,6 +41,7 @@ impl Config {
             production_webhook_url,
             production_webhook_auth_token,
             webhook_check_interval: webhook_check_interval.unwrap_or(300),
+            version_history_count,
         }
     }
 
@@ -52,6 +55,10 @@ impl Config {
 
     pub fn uploads_dir(&self) -> PathBuf {
         self.data_dir.join("uploads")
+    }
+
+    pub fn history_dir(&self) -> PathBuf {
+        self.data_dir.join("_history")
     }
 
     pub fn ensure_dirs(&self) -> eyre::Result<()> {
