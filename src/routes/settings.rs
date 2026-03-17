@@ -156,12 +156,16 @@ async fn delete_token(
 
 // --- User invitation management (admin only, user_id == 1) ---
 
-async fn require_admin(session: &Session) -> Result<i64, axum::response::Response> {
+async fn require_admin(session: &Session) -> axum::response::Result<i64> {
     let user_id = auth::current_user_id(session)
         .await
-        .ok_or_else(|| Redirect::to("/login").into_response())?;
+        .ok_or(axum::response::ErrorResponse::from(
+            (axum::http::StatusCode::SEE_OTHER, [("location", "/login")]).into_response(),
+        ))?;
     if user_id != 1 {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Admin access required").into_response());
+        return Err(axum::response::ErrorResponse::from(
+            (axum::http::StatusCode::FORBIDDEN, "Admin access required").into_response(),
+        ));
     }
     Ok(user_id)
 }
@@ -171,9 +175,7 @@ async fn users_page(
     State(state): State<AppState>,
     session: Session,
 ) -> axum::response::Result<axum::response::Response> {
-    let _user_id = require_admin(&session)
-        .await
-        .map_err(|r| format!("{:?}", r))?;
+    let _user_id = require_admin(&session).await?;
 
     let invitations = models::list_pending_invitations(&state.pool)
         .await
@@ -221,9 +223,7 @@ async fn invite_user(
     session: Session,
     Form(form): Form<InviteForm>,
 ) -> axum::response::Result<axum::response::Response> {
-    let user_id = require_admin(&session)
-        .await
-        .map_err(|r| format!("{:?}", r))?;
+    let user_id = require_admin(&session).await?;
 
     // Basic email validation
     if !form.email.contains('@') || form.email.len() < 3 {
@@ -338,11 +338,8 @@ async fn delete_invitation(
     State(state): State<AppState>,
     session: Session,
     axum::extract::Path(id): axum::extract::Path<i64>,
-) -> axum::response::Response {
-    let user_id = match require_admin(&session).await {
-        Ok(id) => id,
-        Err(r) => return r,
-    };
+) -> axum::response::Result<axum::response::Response> {
+    let user_id = require_admin(&session).await?;
 
     let _ = models::delete_invitation(&state.pool, id).await;
     state.audit.log(
@@ -352,5 +349,5 @@ async fn delete_invitation(
         &id.to_string(),
         None,
     );
-    Redirect::to("/settings/users").into_response()
+    Ok(Redirect::to("/settings/users").into_response())
 }
