@@ -1,0 +1,40 @@
+{% extends base_template %}
+{% block title %}History — {{ schema_title }} — Substrukt{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold tracking-tight">History: {{ entry_id }}</h1>
+  <a href="/content/{{ schema_slug }}/{{ entry_id }}/edit" class="text-muted hover:text-primary text-sm">Back to Edit</a>
+</div>
+
+{% if versions %}
+<div class="bg-card border border-border-light rounded-lg overflow-hidden">
+  <table class="w-full">
+    <thead class="bg-card-alt">
+      <tr>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Version</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Size</th>
+        <th class="px-4 py-2.5"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-border-light">
+      {% for v in versions %}
+      <tr class="hover:bg-card-alt">
+        <td class="px-4 py-2.5 font-mono text-sm text-muted">{{ v.timestamp }}</td>
+        <td class="px-4 py-2.5 text-sm text-secondary">{{ v.size }} bytes</td>
+        <td class="px-4 py-2.5 text-right">
+          <form method="post" action="/content/{{ schema_slug }}/{{ entry_id }}/revert/{{ v.timestamp }}" style="display:inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit" onclick="return confirm('Revert to this version?')" class="text-accent hover:underline text-sm">Revert</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
+  No previous versions.
+</div>
+{% endif %}
+{% endblock %}

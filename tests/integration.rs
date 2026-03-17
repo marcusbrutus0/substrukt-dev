@@ -51,6 +51,7 @@ impl TestServer {
             production_webhook_url,
             production_webhook_auth_token,
             Some(3600), // long interval so cron doesn't fire during tests
+            10,         // version_history_count
         );
         config.ensure_dirs().unwrap();
 
@@ -2195,4 +2196,72 @@ fn extract_csrf_token(html: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[tokio::test]
+async fn content_versioning_history_and_revert() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    // Create entry
+    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("title", "Original Title")
+        .text("body", "Original body")
+        .text("_csrf", csrf);
+    s.client
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Find entry ID from list page
+    let resp = s
+        .client
+        .get(s.url("/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let entry_id = extract_entry_id(&body, "blog-posts").expect("should find entry link");
+
+    // Update entry (creates a history snapshot)
+    let csrf = s
+        .get_csrf(&format!("/content/blog-posts/{entry_id}/edit"))
+        .await;
+    let form = reqwest::multipart::Form::new()
+        .text("title", "Updated Title")
+        .text("body", "Updated body")
+        .text("_csrf", csrf);
+    s.client
+        .post(s.url(&format!("/content/blog-posts/{entry_id}")))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Check history page has a version
+    let resp = s
+        .client
+        .get(s.url(&format!("/content/blog-posts/{entry_id}/history")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Revert"));
+
+    // Verify current content is updated via API
+    let token = s.create_api_token("test").await;
+    let resp = s
+        .client
+        .get(s.url(&format!("/api/v1/content/blog-posts/{entry_id}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["title"], "Updated Title");
 }

@@ -32,6 +32,11 @@
       <a href="/content/{{ schema_slug }}" class="px-4 py-2 rounded-md border border-border text-secondary hover:bg-card-alt text-sm font-medium">
         Cancel
       </a>
+      {% if not is_new %}
+      <a href="/content/{{ schema_slug }}/{{ entry_id }}/history" class="px-4 py-2 rounded-md border border-border text-secondary hover:bg-card-alt text-sm font-medium">
+        History
+      </a>
+      {% endif %}
       {% endif %}
     </div>
   </form>

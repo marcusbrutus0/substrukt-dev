@@ -31,6 +31,11 @@ pub fn routes() -> Router<AppState> {
             "/{schema_slug}/{entry_id}",
             axum::routing::post(update_entry).delete(delete_entry),
         )
+        .route("/{schema_slug}/{entry_id}/history", get(entry_history))
+        .route(
+            "/{schema_slug}/{entry_id}/revert/{timestamp}",
+            axum::routing::post(revert_entry),
+        )
 }
 
 async fn list_entries(
@@ -479,6 +484,19 @@ async fn update_entry(
         return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response();
     }
 
+    // Snapshot current version for history
+    if let Ok(Some(current)) =
+        content::get_entry(&state.config.content_dir(), &schema_file, &entry_id)
+    {
+        let _ = crate::history::snapshot_entry(
+            &state.config.data_dir,
+            &schema_slug,
+            &entry_id,
+            &current.data,
+            state.config.version_history_count,
+        );
+    }
+
     let hashes = uploads::extract_upload_hashes(&data);
     match content::save_entry(
         &state.config.content_dir(),
@@ -636,6 +654,126 @@ fn set_nested_field(data: &mut serde_json::Value, path: &str, value: serde_json:
                     .or_insert(serde_json::Value::Object(Default::default()));
                 set_nested_field(entry, parts[1], value);
             }
+        }
+    }
+}
+
+async fn entry_history(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+    Path((schema_slug, entry_id)): Path<(String, String)>,
+) -> axum::response::Result<Html<String>> {
+    let csrf_token = auth::ensure_csrf_token(&session).await;
+    let schema_file = schema::get_schema(&state.config.schemas_dir(), &schema_slug)
+        .map_err(|e| format!("Error: {e}"))?
+        .ok_or("Schema not found")?;
+
+    let versions = crate::history::list_versions(&state.config.data_dir, &schema_slug, &entry_id)
+        .map_err(|e| format!("Error: {e}"))?;
+
+    let version_data: Vec<minijinja::Value> = versions
+        .iter()
+        .map(|v| {
+            minijinja::context! {
+                timestamp => v.timestamp,
+                size => v.size,
+            }
+        })
+        .collect();
+
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("content/history.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            csrf_token => csrf_token,
+            schema_title => schema_file.meta.title,
+            schema_slug => schema_slug,
+            entry_id => entry_id,
+            versions => version_data,
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html))
+}
+
+async fn revert_entry(
+    State(state): State<AppState>,
+    session: Session,
+    Path((schema_slug, entry_id, timestamp)): Path<(String, String, u64)>,
+    axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    // Verify CSRF
+    let csrf_value = form.get("_csrf").map(|s| s.as_str());
+    if !matches!(csrf_value, Some(token) if auth::verify_csrf_token(&session, token).await) {
+        return (axum::http::StatusCode::FORBIDDEN, "Invalid CSRF token").into_response();
+    }
+
+    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+        Ok(Some(s)) => s,
+        _ => return Redirect::to(&format!("/content/{schema_slug}")).into_response(),
+    };
+
+    let version_data = match crate::history::get_version(
+        &state.config.data_dir,
+        &schema_slug,
+        &entry_id,
+        timestamp,
+    ) {
+        Ok(Some(data)) => data,
+        _ => {
+            auth::set_flash(&session, "error", "Version not found").await;
+            return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/history"))
+                .into_response();
+        }
+    };
+
+    // Snapshot current before reverting
+    if let Ok(Some(current)) =
+        content::get_entry(&state.config.content_dir(), &schema_file, &entry_id)
+    {
+        let _ = crate::history::snapshot_entry(
+            &state.config.data_dir,
+            &schema_slug,
+            &entry_id,
+            &current.data,
+            state.config.version_history_count,
+        );
+    }
+
+    match content::save_entry(
+        &state.config.content_dir(),
+        &schema_file,
+        Some(&entry_id),
+        version_data,
+    ) {
+        Ok(_) => {
+            crate::cache::reload_entry(
+                &state.cache,
+                &state.config.content_dir(),
+                &schema_file,
+                &entry_id,
+            );
+            let user_id = auth::current_user_id(&session).await.unwrap_or(0);
+            state.audit.log(
+                &user_id.to_string(),
+                "content_update",
+                "content",
+                &format!("{schema_slug}/{entry_id}"),
+                Some(&format!("reverted to version {timestamp}")),
+            );
+            auth::set_flash(&session, "success", "Entry reverted").await;
+            Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Revert error: {e}");
+            auth::set_flash(&session, "error", "Failed to revert").await;
+            Redirect::to(&format!("/content/{schema_slug}/{entry_id}/history")).into_response()
         }
     }
 }
