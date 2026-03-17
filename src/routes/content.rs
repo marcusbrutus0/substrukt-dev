@@ -126,7 +126,7 @@ fn get_display_columns(schema: &serde_json::Value) -> Vec<(String, String)> {
             let field_type = val.get("type").and_then(|t| t.as_str()).unwrap_or("");
             let format = val.get("format").and_then(|f| f.as_str());
             if matches!(field_type, "string" | "number" | "integer" | "boolean")
-                && format != Some("upload")
+                && !matches!(format, Some("upload") | Some("markdown"))
             {
                 let label = val
                     .get("title")

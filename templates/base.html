@@ -90,6 +90,8 @@
       }
     });
   </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
 </head>
 <body class="bg-surface text-primary min-h-screen" hx-boost="true" hx-target="#main-content" hx-swap="innerHTML">
@@ -119,7 +121,21 @@
       div.setAttribute('data-index', index);
       div.innerHTML = '<div class="flex justify-end mb-1"><button type="button" onclick="this.closest(\'.array-item\').remove()" class="text-danger text-sm hover:text-danger">Remove</button></div>' + html;
       container.appendChild(div);
+      initMarkdownEditors();
     }
+    function initMarkdownEditors() {
+      document.querySelectorAll('[data-markdown]:not(.easymde-attached)').forEach(function(el) {
+        el.classList.add('easymde-attached');
+        new EasyMDE({
+          element: el,
+          spellChecker: false,
+          status: false,
+          forceSync: true
+        });
+      });
+    }
+    initMarkdownEditors();
+    document.body.addEventListener('htmx:afterSwap', initMarkdownEditors);
     function toggleTheme() {
       var isDark = document.documentElement.classList.toggle('dark');
       localStorage.setItem('theme', isDark ? 'dark' : 'light');

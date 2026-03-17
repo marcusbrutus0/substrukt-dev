@@ -65,6 +65,16 @@ fn render_field(
     let req_star = if required { " *" } else { "" };
 
     match (field_type, format) {
+        ("string", Some("markdown")) => {
+            let val = value.and_then(|v| v.as_str()).unwrap_or("");
+            format!(
+                r#"<div class="mb-4">
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  <textarea id="{name}" name="{name}" rows="12" data-markdown class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>{val}</textarea>
+</div>
+"#
+            )
+        }
         ("string", Some("textarea")) => {
             let val = value.and_then(|v| v.as_str()).unwrap_or("");
             format!(
