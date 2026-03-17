@@ -1,6 +1,6 @@
 use axum::{
     Router,
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
     middleware,
     response::{IntoResponse, Json},
@@ -12,6 +12,12 @@ use crate::content;
 use crate::schema;
 use crate::state::AppState;
 use crate::uploads;
+
+#[derive(serde::Deserialize, Default)]
+pub struct ListParams {
+    #[serde(default)]
+    pub q: String,
+}
 
 pub fn routes(state: AppState) -> Router<AppState> {
     Router::new()
@@ -106,6 +112,7 @@ async fn list_entries(
     State(state): State<AppState>,
     _token: BearerToken,
     Path(schema_slug): Path<String>,
+    Query(params): Query<ListParams>,
 ) -> impl IntoResponse {
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
@@ -121,6 +128,12 @@ async fn list_entries(
 
     match content::list_entries(&state.config.content_dir(), &schema_file) {
         Ok(entries) => {
+            let q = params.q.trim().to_string();
+            let entries = if q.is_empty() {
+                entries
+            } else {
+                content::filter_entries(entries, &q)
+            };
             let data: Vec<serde_json::Value> = entries
                 .iter()
                 .map(|e| e.data.clone())
