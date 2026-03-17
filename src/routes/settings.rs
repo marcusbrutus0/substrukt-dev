@@ -272,16 +272,15 @@ async fn import_data(
                 &state.config.schemas_dir(),
                 &state.config.content_dir(),
             );
-            state.audit.log(
-                &user_id.to_string(),
-                "import",
-                "bundle",
-                "",
-                None,
-            );
+            state
+                .audit
+                .log(&user_id.to_string(), "import", "bundle", "", None);
 
             let (status, message) = if warnings.is_empty() {
-                ("success".to_string(), "Bundle imported successfully".to_string())
+                (
+                    "success".to_string(),
+                    "Bundle imported successfully".to_string(),
+                )
             } else {
                 (
                     "warning".to_string(),
@@ -296,15 +295,19 @@ async fn import_data(
                     "status": status,
                     "message": message,
                     "warnings": warnings,
-                }).to_string(),
-            ).await;
+                })
+                .to_string(),
+            )
+            .await;
         }
         Err(e) => {
             auth::set_flash(
                 &session,
                 "data_result",
-                &serde_json::json!({"status": "error", "message": e.to_string(), "warnings": []}).to_string(),
-            ).await;
+                &serde_json::json!({"status": "error", "message": e.to_string(), "warnings": []})
+                    .to_string(),
+            )
+            .await;
         }
     }
 
@@ -321,22 +324,16 @@ async fn export_data(
         None => return Redirect::to("/login").into_response(),
     };
 
-    let tmp = std::env::temp_dir().join(format!(
-        "substrukt-export-{}.tar.gz",
-        uuid::Uuid::new_v4()
-    ));
+    let tmp =
+        std::env::temp_dir().join(format!("substrukt-export-{}.tar.gz", uuid::Uuid::new_v4()));
 
     match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
         Ok(()) => match std::fs::read(&tmp) {
             Ok(data) => {
                 let _ = std::fs::remove_file(&tmp);
-                state.audit.log(
-                    &user_id.to_string(),
-                    "export",
-                    "bundle",
-                    "",
-                    None,
-                );
+                state
+                    .audit
+                    .log(&user_id.to_string(), "export", "bundle", "", None);
 
                 let date = chrono::Utc::now().format("%Y-%m-%d");
                 let filename = format!("substrukt-export-{date}.tar.gz");
@@ -379,11 +376,12 @@ async fn export_data(
 // --- User invitation management (admin only, user_id == 1) ---
 
 async fn require_admin(session: &Session) -> axum::response::Result<i64> {
-    let user_id = auth::current_user_id(session)
-        .await
-        .ok_or(axum::response::ErrorResponse::from(
-            (axum::http::StatusCode::SEE_OTHER, [("location", "/login")]).into_response(),
-        ))?;
+    let user_id =
+        auth::current_user_id(session)
+            .await
+            .ok_or(axum::response::ErrorResponse::from(
+                (axum::http::StatusCode::SEE_OTHER, [("location", "/login")]).into_response(),
+            ))?;
     if user_id != 1 {
         return Err(axum::response::ErrorResponse::from(
             (axum::http::StatusCode::FORBIDDEN, "Admin access required").into_response(),
@@ -454,21 +452,34 @@ async fn invite_user(
 
     // Check if email already has an account
     if let Ok(Some(_)) = models::find_user_by_email(&state.pool, &form.email).await {
-        return render_users_with_error(&state, &session, is_htmx, "A user with this email already exists").await;
+        return render_users_with_error(
+            &state,
+            &session,
+            is_htmx,
+            "A user with this email already exists",
+        )
+        .await;
     }
 
     // Check if already invited
     if let Ok(Some(_)) = models::find_invitation_by_email(&state.pool, &form.email).await {
-        return render_users_with_error(&state, &session, is_htmx, "An invitation for this email already exists").await;
+        return render_users_with_error(
+            &state,
+            &session,
+            is_htmx,
+            "An invitation for this email already exists",
+        )
+        .await;
     }
 
     let raw_token = token::generate_token();
     let token_hash = token::hash_token(&raw_token);
     let expires_at = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
 
-    let invitation = models::create_invitation(&state.pool, &form.email, &token_hash, user_id, &expires_at)
-        .await
-        .map_err(|e| format!("DB error: {e}"))?;
+    let invitation =
+        models::create_invitation(&state.pool, &form.email, &token_hash, user_id, &expires_at)
+            .await
+            .map_err(|e| format!("DB error: {e}"))?;
 
     state.audit.log(
         &user_id.to_string(),

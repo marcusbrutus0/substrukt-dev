@@ -1,7 +1,17 @@
+use std::collections::HashMap;
+
 use serde_json::Value;
 
+/// Map from field name to list of (id, label) pairs for reference dropdowns.
+pub type ReferenceOptions = HashMap<String, Vec<(String, String)>>;
+
 /// Generate HTML form fields from a JSON Schema.
-pub fn render_form_fields(schema: &Value, data: Option<&Value>, prefix: &str) -> String {
+pub fn render_form_fields(
+    schema: &Value,
+    data: Option<&Value>,
+    prefix: &str,
+    ref_options: &ReferenceOptions,
+) -> String {
     let mut html = String::new();
 
     let properties = match schema.get("properties").and_then(|p| p.as_object()) {
@@ -46,6 +56,7 @@ pub fn render_form_fields(schema: &Value, data: Option<&Value>, prefix: &str) ->
             prop_schema,
             field_value,
             is_required,
+            ref_options,
         ));
     }
 
@@ -60,6 +71,7 @@ fn render_field(
     schema: &Value,
     value: Option<&Value>,
     required: bool,
+    ref_options: &ReferenceOptions,
 ) -> String {
     let req_attr = if required { " required" } else { "" };
     let req_star = if required { " *" } else { "" };
@@ -106,6 +118,27 @@ fn render_field(
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   {current}
   <input type="file" id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md"{req_attr}>
+</div>
+"#
+            )
+        }
+        ("string", Some("reference")) => {
+            let val = value.and_then(|v| v.as_str()).unwrap_or("");
+            let empty_opts = Vec::new();
+            let options = ref_options.get(name).unwrap_or(&empty_opts);
+            let mut opts_html = r#"<option value="">-- Select --</option>"#.to_string();
+            for (id, label_text) in options {
+                let selected = if id == val { " selected" } else { "" };
+                opts_html.push_str(&format!(
+                    r#"<option value="{id}"{selected}>{label_text}</option>"#
+                ));
+            }
+            format!(
+                r#"<div class="mb-4">
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
+    {opts_html}
+  </select>
 </div>
 "#
             )
@@ -173,7 +206,7 @@ fn render_field(
             )
         }
         ("object", _) => {
-            let inner = render_form_fields(schema, value, name);
+            let inner = render_form_fields(schema, value, name, ref_options);
             format!(
                 r#"<fieldset class="mb-4 p-4 border border-border-light rounded-md">
   <legend class="text-sm font-medium text-secondary px-2">{label}</legend>
@@ -200,14 +233,15 @@ fn render_field(
   </div>
   {}
 </div>"#,
-                        render_form_fields(&items_schema, Some(item), &item_name)
+                        render_form_fields(&items_schema, Some(item), &item_name, ref_options)
                     ));
                 }
             }
 
             // Template for new items (hidden, used by JS)
             let template_name = format!("{name}[__INDEX__]");
-            let template_html = render_form_fields(&items_schema, None, &template_name);
+            let template_html =
+                render_form_fields(&items_schema, None, &template_name, ref_options);
 
             format!(
                 r#"<div class="mb-4">

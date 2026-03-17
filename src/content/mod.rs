@@ -18,9 +18,7 @@ pub fn list_entries(content_dir: &Path, schema: &SchemaFile) -> eyre::Result<Vec
     let slug = &schema.meta.slug;
     match schema.meta.storage {
         StorageMode::Directory => list_directory_entries(content_dir, slug),
-        StorageMode::SingleFile => {
-            list_single_file_entries(content_dir, slug, &schema.meta.kind)
-        }
+        StorageMode::SingleFile => list_single_file_entries(content_dir, slug, &schema.meta.kind),
     }
 }
 
@@ -271,7 +269,10 @@ fn generate_entry_id(schema: &SchemaFile, data: &Value) -> String {
             .and_then(|props| {
                 props.iter().find_map(|(key, val)| {
                     if val.get("type").and_then(|t| t.as_str()) == Some("string")
-                        && val.get("format").and_then(|f| f.as_str()) != Some("upload")
+                        && !matches!(
+                            val.get("format").and_then(|f| f.as_str()),
+                            Some("upload") | Some("reference")
+                        )
                     {
                         Some(key.clone())
                     } else {

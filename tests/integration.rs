@@ -30,8 +30,7 @@ impl TestServer {
         staging_webhook_url: Option<String>,
         production_webhook_url: Option<String>,
     ) -> Self {
-        Self::start_with_webhook_auth(staging_webhook_url, None, production_webhook_url, None)
-            .await
+        Self::start_with_webhook_auth(staging_webhook_url, None, production_webhook_url, None).await
     }
 
     async fn start_with_webhook_auth(
@@ -1418,18 +1417,16 @@ async fn test_webhook_sends_auth_token() {
     let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<Option<String>>(1);
     let mock_app = axum::Router::new().route(
         "/webhook",
-        axum::routing::post(
-            move |headers: axum::http::HeaderMap, _body: String| {
-                let tx = webhook_tx.clone();
-                async move {
-                    let auth = headers
-                        .get("authorization")
-                        .map(|v| v.to_str().unwrap().to_string());
-                    let _ = tx.send(auth).await;
-                    "ok"
-                }
-            },
-        ),
+        axum::routing::post(move |headers: axum::http::HeaderMap, _body: String| {
+            let tx = webhook_tx.clone();
+            async move {
+                let auth = headers
+                    .get("authorization")
+                    .map(|v| v.to_str().unwrap().to_string());
+                let _ = tx.send(auth).await;
+                "ok"
+            }
+        }),
     );
     let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mock_addr = mock_listener.local_addr().unwrap();
@@ -1480,7 +1477,10 @@ async fn test_webhook_sends_auth_token() {
         .await
         .unwrap()
         .unwrap();
-    assert!(auth_header.is_none(), "production webhook should have no auth header");
+    assert!(
+        auth_header.is_none(),
+        "production webhook should have no auth header"
+    );
 }
 
 #[tokio::test]
@@ -1590,11 +1590,7 @@ async fn non_admin_cannot_access_users_page() {
         .unwrap();
 
     // Sign up as second user
-    let resp = client2
-        .get(s.url(&invite_url))
-        .send()
-        .await
-        .unwrap();
+    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.text().await.unwrap();
     let csrf = extract_csrf_token(&body).unwrap();
@@ -1980,25 +1976,128 @@ async fn content_markdown_field_stored_as_string() {
         .text("title", "Test Article")
         .text("content", md.to_string())
         .text("_csrf", csrf);
-    s.client.post(s.url("/content/articles/new")).multipart(form).send().await.unwrap();
+    s.client
+        .post(s.url("/content/articles/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
 
     // Verify via API that markdown is stored as raw string
     let token = s.create_api_token("test").await;
-    let resp = s.client.get(s.url("/api/v1/content/articles"))
-        .bearer_auth(&token).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/api/v1/content/articles"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
     let data: Vec<serde_json::Value> = resp.json().await.unwrap();
     assert_eq!(data.len(), 1);
     assert_eq!(data[0]["content"], md);
 
     // Find the entry ID from the list page
-    let resp = s.client.get(s.url("/content/articles")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/content/articles"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     let entry_id = extract_entry_id(&body, "articles").expect("should find entry link");
 
     // Verify edit page contains data-markdown attribute
-    let resp = s.client.get(s.url(&format!("/content/articles/{entry_id}/edit"))).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url(&format!("/content/articles/{entry_id}/edit")))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("data-markdown"));
+}
+
+// ── Content reference tests ──────────────────────────────────
+
+const AUTHORS_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Authors", "slug": "authors", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "title": "Name"}
+    },
+    "required": ["name"]
+}"#;
+
+const POSTS_WITH_AUTHOR_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Posts", "slug": "posts", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "title": "Title"},
+        "author": {"type": "string", "title": "Author", "format": "reference", "x-substrukt-reference": {"schema": "authors"}}
+    },
+    "required": ["title"]
+}"#;
+
+#[tokio::test]
+async fn content_references_resolve_in_api() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(AUTHORS_SCHEMA).await;
+    s.create_schema(POSTS_WITH_AUTHOR_SCHEMA).await;
+
+    // Create an author
+    let csrf = s.get_csrf("/content/authors/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("name", "Jane Doe")
+        .text("_csrf", csrf);
+    s.client
+        .post(s.url("/content/authors/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Create a post referencing the author
+    let csrf = s.get_csrf("/content/posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("title", "My Post")
+        .text("author", "jane-doe")
+        .text("_csrf", csrf);
+    s.client
+        .post(s.url("/content/posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // API should return resolved author object
+    let token = s.create_api_token("test").await;
+    let resp = s
+        .client
+        .get(s.url("/api/v1/content/posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let data: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(data.len(), 1);
+    // author should be an object, not a string
+    assert!(
+        data[0]["author"].is_object(),
+        "author should be resolved to object"
+    );
+    assert_eq!(data[0]["author"]["name"], "Jane Doe");
+
+    // Edit page should show reference select
+    let resp = s
+        .client
+        .get(s.url("/content/posts/my-post/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<select"));
+    assert!(body.contains("Jane Doe"));
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -2053,7 +2152,10 @@ fn extract_invite_url(html: &str) -> Option<String> {
         if let Some(end) = rest.find('<') {
             let url = rest[..end].trim();
             // minijinja HTML-escapes `/` as `&#x2f;`
-            let url = url.replace("&#x2f;", "/").replace("&#x3d;", "=").replace("&amp;", "&");
+            let url = url
+                .replace("&#x2f;", "/")
+                .replace("&#x3d;", "=")
+                .replace("&amp;", "&");
             if url.starts_with("/signup?token=") {
                 return Some(url.to_string());
             }

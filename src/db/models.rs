@@ -240,10 +240,7 @@ pub async fn create_user_with_email(
     })
 }
 
-pub async fn find_user_by_email(
-    pool: &SqlitePool,
-    email: &str,
-) -> eyre::Result<Option<User>> {
+pub async fn find_user_by_email(pool: &SqlitePool, email: &str) -> eyre::Result<Option<User>> {
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = ?")
         .bind(email)
         .fetch_optional(pool)

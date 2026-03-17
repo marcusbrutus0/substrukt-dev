@@ -256,29 +256,71 @@ async fn signup_submit(
     let invitation = match invitation {
         Ok(Some(inv)) => inv,
         _ => {
-            return render_signup_error(&state, &session, &form.token, "", "Invalid or expired invitation link").await;
+            return render_signup_error(
+                &state,
+                &session,
+                &form.token,
+                "",
+                "Invalid or expired invitation link",
+            )
+            .await;
         }
     };
 
     if form.username.is_empty() {
-        return render_signup_error(&state, &session, &form.token, &invitation.email, "Username is required").await;
+        return render_signup_error(
+            &state,
+            &session,
+            &form.token,
+            &invitation.email,
+            "Username is required",
+        )
+        .await;
     }
 
     if form.password.len() < 8 {
-        return render_signup_error(&state, &session, &form.token, &invitation.email, "Password must be at least 8 characters").await;
+        return render_signup_error(
+            &state,
+            &session,
+            &form.token,
+            &invitation.email,
+            "Password must be at least 8 characters",
+        )
+        .await;
     }
 
     if form.password != form.confirm_password {
-        return render_signup_error(&state, &session, &form.token, &invitation.email, "Passwords do not match").await;
+        return render_signup_error(
+            &state,
+            &session,
+            &form.token,
+            &invitation.email,
+            "Passwords do not match",
+        )
+        .await;
     }
 
     // Check username uniqueness
     if let Ok(Some(_)) = models::find_user_by_username(&state.pool, &form.username).await {
-        return render_signup_error(&state, &session, &form.token, &invitation.email, "Username is already taken").await;
+        return render_signup_error(
+            &state,
+            &session,
+            &form.token,
+            &invitation.email,
+            "Username is already taken",
+        )
+        .await;
     }
 
     // Create user with email
-    match models::create_user_with_email(&state.pool, &form.username, &form.password, &invitation.email).await {
+    match models::create_user_with_email(
+        &state.pool,
+        &form.username,
+        &form.password,
+        &invitation.email,
+    )
+    .await
+    {
         Ok(user) => {
             // Delete the invitation
             let _ = models::delete_invitation(&state.pool, invitation.id).await;
@@ -295,7 +337,14 @@ async fn signup_submit(
         }
         Err(e) => {
             tracing::error!("Failed to create user: {e}");
-            render_signup_error(&state, &session, &form.token, &invitation.email, "Failed to create account").await
+            render_signup_error(
+                &state,
+                &session,
+                &form.token,
+                &invitation.email,
+                "Failed to create account",
+            )
+            .await
         }
     }
 }
