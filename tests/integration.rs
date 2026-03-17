@@ -1955,6 +1955,52 @@ async fn content_search_filters_entries() {
     assert_eq!(entries.as_array().unwrap().len(), 0);
 }
 
+// ── Markdown field tests ─────────────────────────────────────
+
+const ARTICLE_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Articles", "slug": "articles", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "title": "Title"},
+        "content": {"type": "string", "title": "Content", "format": "markdown"}
+    },
+    "required": ["title"]
+}"#;
+
+#[tokio::test]
+async fn content_markdown_field_stored_as_string() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(ARTICLE_SCHEMA).await;
+
+    // Create entry with markdown content
+    let csrf = s.get_csrf("/content/articles/new").await;
+    let md = "# Hello\n\nThis is **bold** text.";
+    let form = reqwest::multipart::Form::new()
+        .text("title", "Test Article")
+        .text("content", md.to_string())
+        .text("_csrf", csrf);
+    s.client.post(s.url("/content/articles/new")).multipart(form).send().await.unwrap();
+
+    // Verify via API that markdown is stored as raw string
+    let token = s.create_api_token("test").await;
+    let resp = s.client.get(s.url("/api/v1/content/articles"))
+        .bearer_auth(&token).send().await.unwrap();
+    let data: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["content"], md);
+
+    // Find the entry ID from the list page
+    let resp = s.client.get(s.url("/content/articles")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let entry_id = extract_entry_id(&body, "articles").expect("should find entry link");
+
+    // Verify edit page contains data-markdown attribute
+    let resp = s.client.get(s.url(&format!("/content/articles/{entry_id}/edit"))).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("data-markdown"));
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 /// Extract the first entry ID from a content list page's edit links.
