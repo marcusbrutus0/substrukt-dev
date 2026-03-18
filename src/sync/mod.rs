@@ -135,7 +135,13 @@ fn validate_imported_content(data_dir: &Path) -> Vec<String> {
         };
 
         for entry in &entries {
-            if let Err(errors) = crate::content::validate_content(schema, &entry.data) {
+            // Strip _-prefixed keys before validation — _status and _id are
+            // internal metadata that may not be in the JSON Schema
+            let mut data = entry.data.clone();
+            if let Some(obj) = data.as_object_mut() {
+                obj.retain(|k, _| !k.starts_with('_'));
+            }
+            if let Err(errors) = crate::content::validate_content(schema, &data) {
                 for err in errors {
                     warnings.push(format!("{}/{}: {}", schema.meta.slug, entry.id, err));
                 }
