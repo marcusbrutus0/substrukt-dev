@@ -7,7 +7,7 @@ Add an admin-only audit log viewer page at `/settings/audit-log` so admins can a
 ## Current State
 
 - Audit events are logged to a separate `audit.db` SQLite database via `AuditLogger::log()` (fire-and-forget async)
-- 16 action types: `content_create`, `content_update`, `content_delete`, `schema_create`, `schema_update`, `schema_delete`, `login`, `logout`, `signup`, `token_create`, `token_delete`, `invite_create`, `invite_delete`, `import`, `export`, `publish`
+- 14 action types: `content_create`, `content_update`, `content_delete`, `schema_create`, `schema_update`, `schema_delete`, `login`, `logout`, `user_create`, `token_create`, `token_delete`, `invite_create`, `invite_delete`, `import`, `export`
 - Table schema: `id INTEGER PRIMARY KEY`, `timestamp TEXT`, `actor TEXT`, `action TEXT`, `resource_type TEXT`, `resource_id TEXT`, `details TEXT`
 - Indexes on `timestamp` and `action`
 - No existing UI to view these logs — only webhook history has a viewer
@@ -56,10 +56,11 @@ pub struct AuditLogEntry {
 
 **Handler: `audit_log_page`**
 - Admin-only: `auth::require_role(&session, "admin").await?`
+- Extractors: `HxRequest(is_htmx)`, `State(state)`, `Session`, `Query<AuditLogFilter>`
 - Accepts `Query<AuditLogFilter>` with fields: `action: String`, `actor: String`, `page: String`
 - Parses `page` to `u32`, defaults to 1 if missing/invalid/zero
 - Calls `list_audit_log` and `list_audit_actors` on `state.audit`
-- Renders `settings/audit_log.html` with context: entries, filters, page, has_next, has_prev, actors list
+- Renders `settings/audit_log.html` with context: `base_template` (via `base_for_htmx(is_htmx)`), `user_role`, entries, filters, page, has_next, has_prev, actors list
 
 **`AuditLogFilter` struct:**
 ```rust
@@ -80,7 +81,7 @@ pub struct AuditLogFilter {
 
 **Filter bar:**
 Two `<select>` dropdowns with `onchange="applyFilters()"`:
-- Action filter: hardcoded `<option>` list of the 16 known action types, with "All Actions" default
+- Action filter: hardcoded `<option>` list of the 14 known action types, with "All Actions" default
 - Actor filter: populated from `actors` context variable, with "All Actors" default
 - Both preserve selected state via template conditionals
 
