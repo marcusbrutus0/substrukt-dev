@@ -2265,3 +2265,204 @@ async fn content_versioning_history_and_revert() {
     let data: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(data["title"], "Updated Title");
 }
+
+// ── RBAC tests ──────────────────────────────────────────────
+
+/// Helper: admin creates an invitation with a role, a fresh client signs up,
+/// and returns the new client (logged in with the given role).
+async fn signup_user_with_role(s: &TestServer, email: &str, username: &str, role: &str) -> Client {
+    // Admin invites with specified role
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", email), ("role", role), ("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let invite_url = extract_invite_url(&body).expect("should contain invite URL");
+
+    // Fresh client signs up
+    let client = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client.get(s.url(&invite_url)).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let token = extract_hidden_token(&body).unwrap();
+
+    let resp = client
+        .post(s.url("/signup"))
+        .form(&[
+            ("token", token.as_str()),
+            ("username", username),
+            ("password", "password123"),
+            ("confirm_password", "password123"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    client
+}
+
+#[tokio::test]
+async fn rbac_editor_restrictions() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
+
+    // Editor CAN create content
+    let resp = editor.get(s.url("/content/blog-posts/new")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let csrf = extract_csrf_token(&resp.text().await.unwrap()).unwrap();
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Editor Post")
+        .text("body", "Content by editor");
+    let resp = editor
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Editor CANNOT create schemas (403)
+    let resp = editor.get(s.url("/schemas/new")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Editor CANNOT access /settings/users (403)
+    let resp = editor.get(s.url("/settings/users")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Editor CANNOT access /settings/data (403)
+    let resp = editor.get(s.url("/settings/data")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Editor CAN access /settings/tokens (viewer+)
+    let resp = editor.get(s.url("/settings/tokens")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn rbac_viewer_restrictions() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    // Admin creates an entry for the viewer to see
+    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Admin Post")
+        .text("body", "Content");
+    s.client
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    let viewer = signup_user_with_role(&s, "viewer@test.com", "viewer1", "viewer").await;
+
+    // Viewer CAN list content
+    let resp = viewer.get(s.url("/content/blog-posts")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Admin Post"));
+
+    // Viewer CANNOT access new entry page (403)
+    let resp = viewer.get(s.url("/content/blog-posts/new")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Viewer CANNOT create content (403 via multipart POST)
+    let csrf_resp = viewer.get(s.url("/content/blog-posts")).send().await.unwrap();
+    let csrf = extract_csrf_token(&csrf_resp.text().await.unwrap()).unwrap();
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Viewer Post")
+        .text("body", "Nope");
+    let resp = viewer
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Viewer CANNOT create schemas (403)
+    let resp = viewer.get(s.url("/schemas/new")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Viewer CANNOT access /settings/users (403)
+    let resp = viewer.get(s.url("/settings/users")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn rbac_api_token_inherits_role() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    let editor = signup_user_with_role(&s, "apieditor@test.com", "apieditor", "editor").await;
+
+    // Editor creates an API token
+    let resp = editor.get(s.url("/settings/tokens")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let resp = editor
+        .post(s.url("/settings/tokens"))
+        .form(&[("name", "editor-token"), ("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let token = extract_new_token(&body).expect("should get editor token");
+
+    // API client (no cookies)
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Editor token CAN create content via API
+    let resp = api
+        .post(s.url("/api/v1/content/blog-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "API Post", "body": "From editor token"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Editor token CANNOT export (admin-only)
+    let resp = api
+        .post(s.url("/api/v1/export"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Editor token CANNOT import (admin-only)
+    let form = reqwest::multipart::Form::new()
+        .part("bundle", reqwest::multipart::Part::bytes(vec![0u8; 10]).file_name("test.tar.gz"));
+    let resp = api
+        .post(s.url("/api/v1/import"))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
