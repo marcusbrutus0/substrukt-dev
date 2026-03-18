@@ -34,6 +34,17 @@ pub struct WebhookHistoryGroup {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AuditLogEntry {
+    pub id: i64,
+    pub timestamp: String,
+    pub actor: String,
+    pub action: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub details: Option<String>,
+}
+
 impl AuditLogger {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
@@ -195,6 +206,56 @@ impl AuditLogger {
                 },
             )
             .collect())
+    }
+
+    pub async fn list_audit_log(
+        &self,
+        action_filter: Option<&str>,
+        actor_filter: Option<&str>,
+        page: u32,
+    ) -> eyre::Result<(Vec<AuditLogEntry>, bool)> {
+        let page = page.max(1);
+        let offset = (page - 1) as i64 * 100;
+        let base = "SELECT id, timestamp, actor, action, resource_type, resource_id, details FROM audit_log";
+
+        let mut conditions = Vec::new();
+        if action_filter.is_some() {
+            conditions.push("action = ?");
+        }
+        if actor_filter.is_some() {
+            conditions.push("actor = ?");
+        }
+
+        let query = if conditions.is_empty() {
+            format!("{base} ORDER BY timestamp DESC, id DESC LIMIT 101 OFFSET ?")
+        } else {
+            format!(
+                "{base} WHERE {} ORDER BY timestamp DESC, id DESC LIMIT 101 OFFSET ?",
+                conditions.join(" AND ")
+            )
+        };
+
+        let mut q = sqlx::query_as::<_, (i64, String, String, String, String, String, Option<String>)>(&query);
+
+        if let Some(action) = action_filter {
+            q = q.bind(action);
+        }
+        if let Some(actor) = actor_filter {
+            q = q.bind(actor);
+        }
+        q = q.bind(offset);
+
+        let rows = q.fetch_all(self.pool.as_ref()).await?;
+        let has_next = rows.len() > 100;
+        let entries: Vec<AuditLogEntry> = rows
+            .into_iter()
+            .take(100)
+            .map(|(id, timestamp, actor, action, resource_type, resource_id, details)| {
+                AuditLogEntry { id, timestamp, actor, action, resource_type, resource_id, details }
+            })
+            .collect();
+
+        Ok((entries, has_next))
     }
 
     pub fn log(
@@ -396,5 +457,90 @@ mod tests {
         logger.mark_fired("staging").await.unwrap();
         assert!(!logger.is_dirty("staging").await.unwrap());
         assert!(logger.is_dirty("production").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_list_audit_log_order_and_basic() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, details) VALUES ('2026-01-01T00:00:00Z', 'user1', 'content_create', 'content', 'posts/1', '{\"title\":\"Hello\"}')")
+            .await
+            .unwrap();
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, details) VALUES ('2026-01-02T00:00:00Z', 'user2', 'login', 'session', '', NULL)")
+            .await
+            .unwrap();
+
+        let (entries, has_next) = logger.list_audit_log(None, None, 1).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(!has_next);
+        assert_eq!(entries[0].action, "login");
+        assert_eq!(entries[0].actor, "user2");
+        assert_eq!(entries[1].action, "content_create");
+        assert_eq!(entries[1].actor, "user1");
+        assert_eq!(entries[1].details, Some("{\"title\":\"Hello\"}".to_string()));
+        assert_eq!(entries[0].details, None);
+    }
+
+    #[tokio::test]
+    async fn test_list_audit_log_action_filter() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('2026-01-01T00:00:00Z', 'user1', 'content_create', 'content', 'posts/1')")
+            .await
+            .unwrap();
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('2026-01-02T00:00:00Z', 'user1', 'login', 'session', '')")
+            .await
+            .unwrap();
+
+        let (entries, _) = logger.list_audit_log(Some("login"), None, 1).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].action, "login");
+    }
+
+    #[tokio::test]
+    async fn test_list_audit_log_actor_filter() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('2026-01-01T00:00:00Z', 'user1', 'content_create', 'content', 'posts/1')")
+            .await
+            .unwrap();
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('2026-01-02T00:00:00Z', 'user2', 'login', 'session', '')")
+            .await
+            .unwrap();
+
+        let (entries, _) = logger.list_audit_log(None, Some("user1"), 1).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].actor, "user1");
+    }
+
+    #[tokio::test]
+    async fn test_list_audit_log_pagination() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        for i in 0..105 {
+            let ts = format!("2026-01-01T{:02}:{:02}:00Z", i / 60, i % 60);
+            let query = format!(
+                "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{ts}', 'user1', 'login', 'session', '')"
+            );
+            logger.execute_raw(&query).await.unwrap();
+        }
+
+        let (page1, has_next1) = logger.list_audit_log(None, None, 1).await.unwrap();
+        assert_eq!(page1.len(), 100);
+        assert!(has_next1);
+
+        let (page2, has_next2) = logger.list_audit_log(None, None, 2).await.unwrap();
+        assert_eq!(page2.len(), 5);
+        assert!(!has_next2);
     }
 }
