@@ -68,7 +68,11 @@ pub async fn require_role(session: &Session, min_role: &str) -> axum::response::
         Ok(user_id)
     } else {
         Err(axum::response::ErrorResponse::from(
-            (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response(),
+            (
+                axum::http::StatusCode::FORBIDDEN,
+                "Insufficient permissions",
+            )
+                .into_response(),
         ))
     }
 }

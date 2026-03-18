@@ -323,50 +323,52 @@ async fn export_data(
     let tmp =
         std::env::temp_dir().join(format!("substrukt-export-{}.tar.gz", uuid::Uuid::new_v4()));
 
-    Ok(match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
-        Ok(()) => match std::fs::read(&tmp) {
-            Ok(data) => {
-                let _ = std::fs::remove_file(&tmp);
-                state
-                    .audit
-                    .log(&user_id.to_string(), "export", "bundle", "", None);
+    Ok(
+        match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
+            Ok(()) => match std::fs::read(&tmp) {
+                Ok(data) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    state
+                        .audit
+                        .log(&user_id.to_string(), "export", "bundle", "", None);
 
-                let date = chrono::Utc::now().format("%Y-%m-%d");
-                let filename = format!("substrukt-export-{date}.tar.gz");
-                let disposition = format!("attachment; filename=\"{filename}\"");
+                    let date = chrono::Utc::now().format("%Y-%m-%d");
+                    let filename = format!("substrukt-export-{date}.tar.gz");
+                    let disposition = format!("attachment; filename=\"{filename}\"");
 
-                let mut response = Body::from(data).into_response();
-                response.headers_mut().insert(
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_static("application/gzip"),
-                );
-                if let Ok(val) = HeaderValue::from_str(&disposition) {
+                    let mut response = Body::from(data).into_response();
+                    response.headers_mut().insert(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/gzip"),
+                    );
+                    if let Ok(val) = HeaderValue::from_str(&disposition) {
+                        response
+                            .headers_mut()
+                            .insert(header::CONTENT_DISPOSITION, val);
+                    }
                     response
-                        .headers_mut()
-                        .insert(header::CONTENT_DISPOSITION, val);
                 }
-                response
-            }
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                auth::set_flash(
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    auth::set_flash(
                     &session,
                     "data_result",
                     &serde_json::json!({"status": "error", "message": format!("Export failed: {e}"), "warnings": []}).to_string(),
                 ).await;
-                Redirect::to("/settings/data").into_response()
-            }
-        },
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            auth::set_flash(
+                    Redirect::to("/settings/data").into_response()
+                }
+            },
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                auth::set_flash(
                 &session,
                 "data_result",
                 &serde_json::json!({"status": "error", "message": format!("Export failed: {e}"), "warnings": []}).to_string(),
             ).await;
-            Redirect::to("/settings/data").into_response()
-        }
-    })
+                Redirect::to("/settings/data").into_response()
+            }
+        },
+    )
 }
 
 async fn users_page(
@@ -465,10 +467,16 @@ async fn invite_user(
     let token_hash = token::hash_token(&raw_token);
     let expires_at = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
 
-    let invitation =
-        models::create_invitation(&state.pool, &form.email, &token_hash, user_id, &expires_at, role)
-            .await
-            .map_err(|e| format!("DB error: {e}"))?;
+    let invitation = models::create_invitation(
+        &state.pool,
+        &form.email,
+        &token_hash,
+        user_id,
+        &expires_at,
+        role,
+    )
+    .await
+    .map_err(|e| format!("DB error: {e}"))?;
 
     state.audit.log(
         &user_id.to_string(),

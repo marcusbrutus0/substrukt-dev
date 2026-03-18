@@ -94,7 +94,9 @@ async fn dashboard(
         .map(|entries| entries.len())
         .sum();
 
-    let user_role = crate::auth::current_user_role(&session).await.unwrap_or_default();
+    let user_role = crate::auth::current_user_role(&session)
+        .await
+        .unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()

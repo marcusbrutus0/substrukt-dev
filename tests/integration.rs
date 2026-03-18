@@ -1556,7 +1556,11 @@ async fn invite_creates_signup_url() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "user@example.com"), ("role", "editor"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "user@example.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1576,7 +1580,11 @@ async fn non_admin_cannot_access_users_page() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "user2@example.com"), ("role", "editor"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "user2@example.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1625,7 +1633,11 @@ async fn signup_with_valid_token_shows_form() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "newuser@example.com"), ("role", "editor"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "newuser@example.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1677,7 +1689,11 @@ async fn signup_creates_user_and_logs_in() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "newuser@test.com"), ("role", "editor"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "newuser@test.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1724,7 +1740,11 @@ async fn duplicate_email_invitation_rejected() {
     let csrf = s.get_csrf("/settings/users").await;
     s.client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "dup@example.com"), ("role", "editor"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "dup@example.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1734,7 +1754,11 @@ async fn duplicate_email_invitation_rejected() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "dup@example.com"), ("role", "editor"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "dup@example.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1752,7 +1776,11 @@ async fn signup_rejects_taken_username() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "another@test.com"), ("role", "editor"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "another@test.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1798,7 +1826,11 @@ async fn cannot_invite_existing_user_email() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "taken@test.com"), ("role", "editor"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "taken@test.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1834,7 +1866,11 @@ async fn cannot_invite_existing_user_email() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "taken@test.com"), ("role", "editor"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "taken@test.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -2320,7 +2356,11 @@ async fn rbac_editor_restrictions() {
     let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
 
     // Editor CAN create content
-    let resp = editor.get(s.url("/content/blog-posts/new")).send().await.unwrap();
+    let resp = editor
+        .get(s.url("/content/blog-posts/new"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     let csrf = extract_csrf_token(&resp.text().await.unwrap()).unwrap();
@@ -2375,17 +2415,29 @@ async fn rbac_viewer_restrictions() {
     let viewer = signup_user_with_role(&s, "viewer@test.com", "viewer1", "viewer").await;
 
     // Viewer CAN list content
-    let resp = viewer.get(s.url("/content/blog-posts")).send().await.unwrap();
+    let resp = viewer
+        .get(s.url("/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.text().await.unwrap();
     assert!(body.contains("Admin Post"));
 
     // Viewer CANNOT access new entry page (403)
-    let resp = viewer.get(s.url("/content/blog-posts/new")).send().await.unwrap();
+    let resp = viewer
+        .get(s.url("/content/blog-posts/new"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Viewer CANNOT create content (403 via multipart POST)
-    let csrf_resp = viewer.get(s.url("/content/blog-posts")).send().await.unwrap();
+    let csrf_resp = viewer
+        .get(s.url("/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
     let csrf = extract_csrf_token(&csrf_resp.text().await.unwrap()).unwrap();
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
@@ -2455,8 +2507,10 @@ async fn rbac_api_token_inherits_role() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Editor token CANNOT import (admin-only)
-    let form = reqwest::multipart::Form::new()
-        .part("bundle", reqwest::multipart::Part::bytes(vec![0u8; 10]).file_name("test.tar.gz"));
+    let form = reqwest::multipart::Form::new().part(
+        "bundle",
+        reqwest::multipart::Part::bytes(vec![0u8; 10]).file_name("test.tar.gz"),
+    );
     let resp = api
         .post(s.url("/api/v1/import"))
         .bearer_auth(&token)
@@ -2504,7 +2558,12 @@ async fn webhook_fire_records_history() {
         .unwrap();
 
     // Check webhooks page shows history
-    let resp = s.client.get(s.url("/settings/webhooks")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/settings/webhooks"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.text().await.unwrap();
     assert!(body.contains("staging"));
@@ -2557,7 +2616,12 @@ async fn webhook_failure_triggers_retries() {
     assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
 
     // Webhooks page should show the group with multiple attempts
-    let resp = s.client.get(s.url("/settings/webhooks")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/settings/webhooks"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("2 attempts") || body.contains("attempts"));
 }
@@ -2600,7 +2664,12 @@ async fn webhook_retry_button_fires_new_webhook() {
     assert!(call_count.load(std::sync::atomic::Ordering::SeqCst) >= 1);
 
     // History page should show the entry
-    let resp = s.client.get(s.url("/settings/webhooks")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/settings/webhooks"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("staging"));
     assert!(body.contains("Success") || body.contains("success"));
@@ -2612,6 +2681,10 @@ async fn non_admin_cannot_access_webhooks_page() {
     s.setup_admin().await;
 
     let editor = signup_user_with_role(&s, "wheditor@test.com", "wheditor", "editor").await;
-    let resp = editor.get(s.url("/settings/webhooks")).send().await.unwrap();
+    let resp = editor
+        .get(s.url("/settings/webhooks"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }

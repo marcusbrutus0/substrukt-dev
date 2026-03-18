@@ -30,7 +30,12 @@ impl User {
     }
 }
 
-pub async fn create_user(pool: &SqlitePool, username: &str, password: &str, role: &str) -> eyre::Result<User> {
+pub async fn create_user(
+    pool: &SqlitePool,
+    username: &str,
+    password: &str,
+    role: &str,
+) -> eyre::Result<User> {
     let password_hash = User::hash_password(password)?;
     let now = chrono::Utc::now().to_rfc3339();
     let id = sqlx::query_scalar::<_, i64>(

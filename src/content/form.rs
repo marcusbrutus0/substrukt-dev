@@ -301,10 +301,14 @@ fn render_field(
         ("string", Some("upload")) => {
             let mut current_html = String::new();
             if let Some(obj) = value.and_then(|v| v.as_object()) {
-                let filename = obj.get("filename").and_then(|f| f.as_str()).unwrap_or("file");
+                let filename = obj
+                    .get("filename")
+                    .and_then(|f| f.as_str())
+                    .unwrap_or("file");
                 let hash = obj.get("hash").and_then(|h| h.as_str()).unwrap_or("");
                 let mime = obj.get("mime").and_then(|m| m.as_str()).unwrap_or("");
-                let json_val = serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default();
+                let json_val =
+                    serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default();
 
                 // Show image thumbnail for image MIME types
                 let thumbnail = if mime.starts_with("image/") {
@@ -327,9 +331,8 @@ fn render_field(
                 );
             }
 
-            let hint_html = build_hint_line(
-                &get_description(schema).into_iter().collect::<Vec<_>>(),
-            );
+            let hint_html =
+                build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
             format!(
                 r#"<div class="mb-4">
   <label class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
@@ -355,9 +358,8 @@ fn render_field(
                     r#"<option value="{id}"{selected}>{label_text}</option>"#
                 ));
             }
-            let hint_html = build_hint_line(
-                &get_description(schema).into_iter().collect::<Vec<_>>(),
-            );
+            let hint_html =
+                build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
             format!(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
@@ -380,9 +382,8 @@ fn render_field(
                         r#"<option value="{ev_str}"{selected}>{ev_str}</option>"#
                     ));
                 }
-                let hint_html = build_hint_line(
-                    &get_description(schema).into_iter().collect::<Vec<_>>(),
-                );
+                let hint_html =
+                    build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
                 format!(
                     r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
@@ -434,9 +435,8 @@ fn render_field(
         ("boolean", _) => {
             let checked = value.and_then(|v| v.as_bool()).unwrap_or(false);
             let checked_attr = if checked { " checked" } else { "" };
-            let hint_html = build_hint_line(
-                &get_description(schema).into_iter().collect::<Vec<_>>(),
-            );
+            let hint_html =
+                build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
             format!(
                 r#"<div class="mb-4">
   <label class="flex items-center gap-2">
@@ -679,7 +679,10 @@ mod tests {
             }
         });
         let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
-        assert!(html.contains(r#"minlength="3""#), "should have minlength attr");
+        assert!(
+            html.contains(r#"minlength="3""#),
+            "should have minlength attr"
+        );
         assert!(
             html.contains(r#"maxlength="100""#),
             "should have maxlength attr"
@@ -727,7 +730,10 @@ mod tests {
             !html.contains(r#"pattern="#),
             "textarea should not have pattern attr"
         );
-        assert!(html.contains("Pattern:"), "should still show pattern as hint");
+        assert!(
+            html.contains("Pattern:"),
+            "should still show pattern as hint"
+        );
         assert!(
             html.contains(r#"maxlength="500""#),
             "should have maxlength attr"
@@ -750,7 +756,10 @@ mod tests {
             html.contains("Your primary email address"),
             "should show description"
         );
-        assert!(html.contains("text-xs text-muted"), "should use hint styling");
+        assert!(
+            html.contains("text-xs text-muted"),
+            "should use hint styling"
+        );
     }
 
     #[test]
@@ -783,11 +792,23 @@ mod tests {
         });
         let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
         assert!(html.contains("data-upload-zone"), "should have drop zone");
-        assert!(html.contains("data-upload-input"), "should have upload input");
-        assert!(html.contains("Drag a file here or click to browse"), "should have prompt text");
+        assert!(
+            html.contains("data-upload-input"),
+            "should have upload input"
+        );
+        assert!(
+            html.contains("Drag a file here or click to browse"),
+            "should have prompt text"
+        );
         assert!(html.contains("upload-zone-info"), "should have info area");
-        assert!(html.contains("upload-zone-preview"), "should have preview area");
-        assert!(html.contains(r#"opacity-0"#), "file input should be invisible overlay");
+        assert!(
+            html.contains("upload-zone-preview"),
+            "should have preview area"
+        );
+        assert!(
+            html.contains(r#"opacity-0"#),
+            "file input should be invisible overlay"
+        );
     }
 
     #[test]
@@ -809,9 +830,18 @@ mod tests {
             }
         });
         let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new());
-        assert!(html.contains("<img"), "should show image thumbnail for image MIME");
-        assert!(html.contains("/uploads/file/abc123/test.png"), "should link to upload");
-        assert!(html.contains("__current"), "should preserve hidden current field");
+        assert!(
+            html.contains("<img"),
+            "should show image thumbnail for image MIME"
+        );
+        assert!(
+            html.contains("/uploads/file/abc123/test.png"),
+            "should link to upload"
+        );
+        assert!(
+            html.contains("__current"),
+            "should preserve hidden current field"
+        );
     }
 
     #[test]
@@ -833,9 +863,18 @@ mod tests {
             }
         });
         let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new());
-        assert!(!html.contains("<img"), "should NOT show thumbnail for non-image");
-        assert!(html.contains("/uploads/file/def456/readme.pdf"), "should link to upload");
-        assert!(html.contains("__current"), "should preserve hidden current field");
+        assert!(
+            !html.contains("<img"),
+            "should NOT show thumbnail for non-image"
+        );
+        assert!(
+            html.contains("/uploads/file/def456/readme.pdf"),
+            "should link to upload"
+        );
+        assert!(
+            html.contains("__current"),
+            "should preserve hidden current field"
+        );
     }
 
     #[test]
@@ -917,8 +956,14 @@ mod tests {
             }
         });
         let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
-        assert!(html.contains("1–5 items"), "should show item count range hint");
-        assert!(html.contains("text-xs text-muted"), "should use hint styling");
+        assert!(
+            html.contains("1–5 items"),
+            "should show item count range hint"
+        );
+        assert!(
+            html.contains("text-xs text-muted"),
+            "should use hint styling"
+        );
     }
 
     #[test]
