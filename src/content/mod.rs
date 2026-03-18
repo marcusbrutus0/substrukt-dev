@@ -107,9 +107,32 @@ pub fn save_entry(
     content_dir: &Path,
     schema: &SchemaFile,
     entry_id: Option<&str>,
-    data: Value,
+    mut data: Value,
 ) -> eyre::Result<String> {
     let slug = &schema.meta.slug;
+
+    // Determine _status: draft for new entries, preserve existing for updates
+    let status = if let Some(eid) = entry_id {
+        // Update path: try to read existing _status
+        get_entry(content_dir, schema, eid)
+            .ok()
+            .flatten()
+            .and_then(|e| {
+                e.data
+                    .get("_status")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| "draft".to_string())
+    } else {
+        "draft".to_string()
+    };
+
+    // Inject _status into data
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert("_status".to_string(), Value::String(status));
+    }
+
     match schema.meta.storage {
         StorageMode::Directory => {
             let dir = content_dir.join(slug);
@@ -204,7 +227,10 @@ pub fn delete_entry(content_dir: &Path, schema: &SchemaFile, entry_id: &str) -> 
 pub fn matches_query(data: &Value, query_lower: &str) -> bool {
     match data {
         Value::String(s) => s.to_lowercase().contains(query_lower),
-        Value::Object(map) => map.values().any(|v| matches_query(v, query_lower)),
+        Value::Object(map) => map
+            .iter()
+            .filter(|(k, _)| !k.starts_with('_'))
+            .any(|(_, v)| matches_query(v, query_lower)),
         Value::Array(arr) => arr.iter().any(|v| matches_query(v, query_lower)),
         _ => false,
     }
@@ -217,6 +243,15 @@ pub fn filter_entries(entries: Vec<ContentEntry>, query: &str) -> Vec<ContentEnt
         .into_iter()
         .filter(|e| matches_query(&e.data, &query_lower))
         .collect()
+}
+
+/// Strip `_status` from entry data for API responses.
+pub fn strip_internal_status(data: &Value) -> Value {
+    let mut data = data.clone();
+    if let Some(obj) = data.as_object_mut() {
+        obj.remove("_status");
+    }
+    data
 }
 
 pub fn validate_content(schema: &SchemaFile, data: &Value) -> Result<(), Vec<String>> {
@@ -292,4 +327,127 @@ fn generate_entry_id(schema: &SchemaFile, data: &Value) -> String {
     }
 
     Uuid::new_v4().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    fn test_schema(kind: Kind, storage: StorageMode) -> SchemaFile {
+        SchemaFile {
+            meta: crate::schema::models::SubstruktMeta {
+                title: "Test".to_string(),
+                slug: "test".to_string(),
+                kind,
+                storage,
+                id_field: None,
+            },
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string" }
+                }
+            }),
+        }
+    }
+
+    #[test]
+    fn save_entry_create_injects_draft_status() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::Directory);
+        let data = json!({"title": "Hello"});
+        let id = save_entry(tmp.path(), &schema, None, data).unwrap();
+
+        let entry = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
+        assert_eq!(
+            entry.data.get("_status").and_then(|v| v.as_str()),
+            Some("draft"),
+            "new entry should have _status: draft"
+        );
+    }
+
+    #[test]
+    fn save_entry_update_preserves_status() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::Directory);
+
+        // Create entry (gets _status: draft)
+        let data = json!({"title": "Hello"});
+        let id = save_entry(tmp.path(), &schema, None, data).unwrap();
+
+        // Manually set to published
+        let mut entry = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
+        entry
+            .data
+            .as_object_mut()
+            .unwrap()
+            .insert("_status".to_string(), json!("published"));
+        let path = tmp.path().join("test").join(format!("{id}.json"));
+        std::fs::write(&path, serde_json::to_string_pretty(&entry.data).unwrap()).unwrap();
+
+        // Update via save_entry
+        let new_data = json!({"title": "Updated"});
+        save_entry(tmp.path(), &schema, Some(&id), new_data).unwrap();
+
+        let updated = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
+        assert_eq!(
+            updated.data.get("_status").and_then(|v| v.as_str()),
+            Some("published"),
+            "updated entry should preserve _status: published"
+        );
+        assert_eq!(
+            updated.data.get("title").and_then(|v| v.as_str()),
+            Some("Updated")
+        );
+    }
+
+    #[test]
+    fn save_entry_update_no_existing_falls_back_to_draft() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Single, StorageMode::SingleFile);
+
+        // First upsert — no existing entry
+        let data = json!({"title": "Settings"});
+        save_entry(tmp.path(), &schema, Some("_single"), data).unwrap();
+
+        let entry = get_entry(tmp.path(), &schema, "_single").unwrap().unwrap();
+        assert_eq!(
+            entry.data.get("_status").and_then(|v| v.as_str()),
+            Some("draft"),
+            "first upsert with no existing should default to draft"
+        );
+    }
+
+    #[test]
+    fn strip_internal_status_removes_status_only() {
+        let data = json!({"_id": "test", "_status": "draft", "title": "Hello"});
+        let stripped = strip_internal_status(&data);
+        assert!(
+            stripped.get("_status").is_none(),
+            "_status should be stripped"
+        );
+        assert!(stripped.get("_id").is_some(), "_id should remain");
+        assert!(stripped.get("title").is_some(), "title should remain");
+    }
+
+    #[test]
+    fn matches_query_skips_underscore_prefixed_keys() {
+        let data = json!({"_status": "draft", "_id": "my-id", "title": "Hello World"});
+        assert!(!matches_query(&data, "draft"), "should not match _status");
+        assert!(!matches_query(&data, "my-id"), "should not match _id");
+        assert!(matches_query(&data, "hello"), "should match title");
+    }
+
+    #[test]
+    fn missing_status_treated_as_published() {
+        // Entry data without _status (legacy)
+        let data = json!({"title": "Old entry"});
+        let status = data
+            .get("_status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("published");
+        assert_eq!(status, "published");
+    }
 }

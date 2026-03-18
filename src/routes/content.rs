@@ -199,7 +199,7 @@ fn build_reference_options(
                     .as_object()
                     .and_then(|obj| {
                         obj.iter()
-                            .find(|(_, v)| v.is_string())
+                            .find(|(k, v)| !k.starts_with('_') && v.is_string())
                             .and_then(|(_, v)| v.as_str())
                             .map(|s| s.to_string())
                     })
@@ -354,7 +354,11 @@ async fn create_entry(
     multipart: Multipart,
 ) -> impl IntoResponse {
     if auth::require_role(&session, "editor").await.is_err() {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
@@ -444,7 +448,11 @@ async fn update_entry(
     multipart: Multipart,
 ) -> impl IntoResponse {
     if auth::require_role(&session, "editor").await.is_err() {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
@@ -728,7 +736,11 @@ async fn revert_entry(
     axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     if auth::require_role(&session, "editor").await.is_err() {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
     // Verify CSRF
     let csrf_value = form.get("_csrf").map(|s| s.as_str());
