@@ -2968,3 +2968,80 @@ async fn single_schema_draft_published() {
     let data: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(data["site_name"], "Updated Site");
 }
+
+// ── Audit Log Viewer tests ─────────────────────────────────────
+
+#[tokio::test]
+async fn audit_log_page_requires_admin() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Editor cannot access
+    let editor = signup_user_with_role(&s, "audit-editor@test.com", "auditeditor", "editor").await;
+    let resp = editor
+        .get(s.url("/settings/audit-log"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Admin can access
+    let resp = s
+        .client
+        .get(s.url("/settings/audit-log"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Audit Log"));
+}
+
+#[tokio::test]
+async fn audit_log_shows_entries_and_filters() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create a schema (generates schema_create audit entry)
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Audit Test", "slug": "audit-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Small delay to let fire-and-forget audit log write complete
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Unfiltered page shows the entry
+    let resp = s
+        .client
+        .get(s.url("/settings/audit-log"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("schema_create"));
+
+    // Filter by action
+    let resp = s
+        .client
+        .get(s.url("/settings/audit-log?action=schema_create"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("schema_create"));
+
+    // Filter by non-matching action returns no entries in table
+    let resp = s
+        .client
+        .get(s.url("/settings/audit-log?action=content_delete"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("No audit log entries."));
+}
