@@ -20,6 +20,20 @@ pub struct AuditLogger {
     pool: Arc<SqlitePool>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WebhookHistoryGroup {
+    pub id: i64,
+    pub environment: String,
+    pub trigger_source: String,
+    pub status: String,
+    pub http_status: Option<i32>,
+    pub error_message: Option<String>,
+    pub response_time_ms: Option<i64>,
+    pub attempt_count: i32,
+    pub group_id: String,
+    pub created_at: String,
+}
+
 impl AuditLogger {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
@@ -65,6 +79,122 @@ impl AuditLogger {
             .execute(self.pool.as_ref())
             .await?;
         Ok(now)
+    }
+
+    pub async fn record_webhook_attempt(
+        &self,
+        environment: &str,
+        trigger_source: &str,
+        status: &str,
+        http_status: Option<u16>,
+        error_message: Option<&str>,
+        response_time_ms: Option<i64>,
+        attempt: i32,
+        group_id: &str,
+    ) -> eyre::Result<i64> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let result = sqlx::query(
+            "INSERT INTO webhook_history (environment, trigger_source, status, http_status, error_message, response_time_ms, attempt, group_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(environment)
+        .bind(trigger_source)
+        .bind(status)
+        .bind(http_status.map(|s| s as i32))
+        .bind(error_message)
+        .bind(response_time_ms)
+        .bind(attempt)
+        .bind(group_id)
+        .bind(&now)
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(result.last_insert_rowid())
+    }
+
+    pub async fn list_webhook_history(
+        &self,
+        environment_filter: Option<&str>,
+        status_filter: Option<&str>,
+    ) -> eyre::Result<Vec<WebhookHistoryGroup>> {
+        let base = "SELECT h.id, h.environment, h.trigger_source, h.status, h.http_status, h.error_message, h.response_time_ms, g.attempt_count, h.group_id, h.created_at
+            FROM webhook_history h
+            INNER JOIN (
+                SELECT group_id, MAX(id) AS max_id, COUNT(*) AS attempt_count
+                FROM webhook_history
+                GROUP BY group_id
+            ) g ON h.id = g.max_id";
+
+        let mut conditions = Vec::new();
+        if environment_filter.is_some() {
+            conditions.push("h.environment = ?");
+        }
+        if status_filter.is_some() {
+            conditions.push("h.status = ?");
+        }
+
+        let query = if conditions.is_empty() {
+            format!("{base} ORDER BY h.created_at DESC LIMIT 100")
+        } else {
+            format!(
+                "{base} WHERE {} ORDER BY h.created_at DESC LIMIT 100",
+                conditions.join(" AND ")
+            )
+        };
+
+        let mut q = sqlx::query_as::<
+            _,
+            (
+                i64,
+                String,
+                String,
+                String,
+                Option<i32>,
+                Option<String>,
+                Option<i64>,
+                i32,
+                String,
+                String,
+            ),
+        >(&query);
+
+        if let Some(env) = environment_filter {
+            q = q.bind(env);
+        }
+        if let Some(status) = status_filter {
+            q = q.bind(status);
+        }
+
+        let rows = q.fetch_all(self.pool.as_ref()).await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    environment,
+                    trigger_source,
+                    status,
+                    http_status,
+                    error_message,
+                    response_time_ms,
+                    attempt_count,
+                    group_id,
+                    created_at,
+                )| {
+                    WebhookHistoryGroup {
+                        id,
+                        environment,
+                        trigger_source,
+                        status,
+                        http_status,
+                        error_message,
+                        response_time_ms,
+                        attempt_count,
+                        group_id,
+                        created_at,
+                    }
+                },
+            )
+            .collect())
     }
 
     pub fn log(
@@ -159,6 +289,100 @@ mod tests {
             .await
             .unwrap();
         assert!(!logger.is_dirty("staging").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_record_webhook_attempt() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let id = logger
+            .record_webhook_attempt(
+                "staging",
+                "manual",
+                "success",
+                Some(200),
+                None,
+                Some(150),
+                1,
+                "test-group-1",
+            )
+            .await
+            .unwrap();
+        assert!(id > 0);
+    }
+
+    #[tokio::test]
+    async fn test_list_webhook_history_grouped() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        // Two attempts in same group
+        logger
+            .record_webhook_attempt(
+                "staging",
+                "manual",
+                "failed",
+                Some(500),
+                Some("Server error"),
+                Some(200),
+                1,
+                "group-a",
+            )
+            .await
+            .unwrap();
+        logger
+            .record_webhook_attempt(
+                "staging",
+                "retry",
+                "success",
+                Some(200),
+                None,
+                Some(100),
+                2,
+                "group-a",
+            )
+            .await
+            .unwrap();
+
+        // One attempt in different group
+        logger
+            .record_webhook_attempt(
+                "production",
+                "manual",
+                "success",
+                Some(200),
+                None,
+                Some(50),
+                1,
+                "group-b",
+            )
+            .await
+            .unwrap();
+
+        let all = logger.list_webhook_history(None, None).await.unwrap();
+        assert_eq!(all.len(), 2); // two groups
+
+        // Most recent first (group-b then group-a)
+        assert_eq!(all[0].group_id, "group-b");
+        assert_eq!(all[0].attempt_count, 1);
+        assert_eq!(all[1].group_id, "group-a");
+        assert_eq!(all[1].attempt_count, 2);
+        assert_eq!(all[1].status, "success"); // latest attempt
+
+        // Filter by environment
+        let staging = logger
+            .list_webhook_history(Some("staging"), None)
+            .await
+            .unwrap();
+        assert_eq!(staging.len(), 1);
+        assert_eq!(staging[0].environment, "staging");
+
+        // Filter by status
+        let successful = logger
+            .list_webhook_history(None, Some("success"))
+            .await
+            .unwrap();
+        assert_eq!(successful.len(), 2); // both groups ended in success
     }
 
     #[tokio::test]
