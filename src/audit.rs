@@ -258,6 +258,14 @@ impl AuditLogger {
         Ok((entries, has_next))
     }
 
+    pub async fn list_audit_actors(&self) -> eyre::Result<Vec<String>> {
+        let rows: Vec<(String,)> =
+            sqlx::query_as("SELECT DISTINCT actor FROM audit_log ORDER BY actor")
+                .fetch_all(self.pool.as_ref())
+                .await?;
+        Ok(rows.into_iter().map(|(actor,)| actor).collect())
+    }
+
     pub fn log(
         &self,
         actor: &str,
@@ -542,5 +550,27 @@ mod tests {
         let (page2, has_next2) = logger.list_audit_log(None, None, 2).await.unwrap();
         assert_eq!(page2.len(), 5);
         assert!(!has_next2);
+    }
+
+    #[tokio::test]
+    async fn test_list_audit_actors() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('2026-01-01T00:00:00Z', 'zara', 'login', 'session', '')")
+            .await
+            .unwrap();
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('2026-01-02T00:00:00Z', 'alice', 'login', 'session', '')")
+            .await
+            .unwrap();
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('2026-01-03T00:00:00Z', 'alice', 'logout', 'session', '')")
+            .await
+            .unwrap();
+
+        let actors = logger.list_audit_actors().await.unwrap();
+        assert_eq!(actors, vec!["alice", "zara"]);
     }
 }
