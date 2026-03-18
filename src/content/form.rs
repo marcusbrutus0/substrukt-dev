@@ -486,6 +486,22 @@ fn render_field(
             let template_html =
                 render_form_fields(&items_schema, None, &template_name, ref_options);
 
+            // Array constraints (hint only)
+            let mut hints = Vec::new();
+            let min_items = schema.get("minItems").and_then(|v| v.as_u64());
+            let max_items = schema.get("maxItems").and_then(|v| v.as_u64());
+            match (min_items, max_items) {
+                (Some(min), Some(max)) => hints.push(format!("{min}–{max} items")),
+                (Some(1), None) => hints.push("Min 1 item".to_string()),
+                (Some(min), None) => hints.push(format!("Min {min} items")),
+                (None, Some(max)) => hints.push(format!("Max {max} items")),
+                _ => {}
+            }
+            if let Some(desc) = get_description(schema) {
+                hints.push(desc);
+            }
+            let hint_html = build_hint_line(&hints);
+
             format!(
                 r#"<div class="mb-4">
   <label class="block text-sm font-medium text-secondary mb-1">{label}</label>
@@ -494,7 +510,7 @@ fn render_field(
   </div>
   <template id="template-{name}">{template_html}</template>
   <button type="button" onclick="addArrayItem('{name}')" class="mt-2 px-3 py-1 text-sm bg-card-alt border border-border rounded hover:bg-card-alt">+ Add Item</button>
-</div>
+{hint_html}</div>
 "#
             )
         }
@@ -880,6 +896,46 @@ mod tests {
             "no min attr for exclusive float bound"
         );
         assert!(html.contains("&gt; 0"), "should show > 0 hint");
+    }
+
+    #[test]
+    fn array_field_min_max_items_renders_hint() {
+        let schema = json!({
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "title": "Tags",
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "title": "Name" }
+                        }
+                    }
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(html.contains("1–5 items"), "should show item count range hint");
+        assert!(html.contains("text-xs text-muted"), "should use hint styling");
+    }
+
+    #[test]
+    fn array_field_min_items_singular() {
+        let schema = json!({
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "title": "Items",
+                    "minItems": 1,
+                    "items": { "type": "object", "properties": { "v": { "type": "string" } } }
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(html.contains("Min 1 item"), "should use singular 'item'");
+        assert!(!html.contains("Min 1 items"), "should not use plural for 1");
     }
 
     #[test]
