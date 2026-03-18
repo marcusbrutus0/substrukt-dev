@@ -2466,3 +2466,152 @@ async fn rbac_api_token_inherits_role() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
+
+#[tokio::test]
+async fn webhook_fire_records_history() {
+    // Start a mock webhook receiver
+    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<String>(10);
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move |body: String| {
+            let tx = webhook_tx.clone();
+            async move {
+                tx.send(body).await.ok();
+                "ok"
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(mock_listener, mock_app).into_future());
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
+    s.setup_admin().await;
+
+    // Trigger staging publish
+    let csrf = s.get_csrf("/").await;
+    s.client
+        .post(s.url("/publish/staging"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    // Wait for webhook to arrive
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
+        .await
+        .unwrap();
+
+    // Check webhooks page shows history
+    let resp = s.client.get(s.url("/settings/webhooks")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("staging"));
+    assert!(body.contains("Success") || body.contains("success"));
+}
+
+#[tokio::test]
+async fn webhook_failure_triggers_retries() {
+    // Mock server that fails the first request, succeeds on 2nd (first retry at 5s)
+    let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let count_clone = call_count.clone();
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move || {
+            let count = count_clone.clone();
+            async move {
+                let n = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n < 1 {
+                    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "fail")
+                } else {
+                    (axum::http::StatusCode::OK, "ok")
+                }
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(mock_listener, mock_app).into_future());
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), None).await;
+    s.setup_admin().await;
+
+    // Trigger publish (first attempt will fail)
+    let csrf = s.get_csrf("/").await;
+    let resp = s
+        .client
+        .post(s.url("/publish/staging"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    // Should redirect (flash says failed)
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Wait for first retry to complete (5s delay + margin)
+    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+
+    // Should have 2 total calls (initial + first retry at 5s which succeeds)
+    assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+    // Webhooks page should show the group with multiple attempts
+    let resp = s.client.get(s.url("/settings/webhooks")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("2 attempts") || body.contains("attempts"));
+}
+
+#[tokio::test]
+async fn webhook_retry_button_fires_new_webhook() {
+    // Mock server that always succeeds
+    let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let count_clone = call_count.clone();
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move || {
+            let count = count_clone.clone();
+            async move {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                "ok"
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(mock_listener, mock_app).into_future());
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
+    s.setup_admin().await;
+
+    // Use the retry button to fire a webhook
+    let csrf = s.get_csrf("/settings/webhooks").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/webhooks/retry"))
+        .form(&[("_csrf", csrf.as_str()), ("environment", "staging")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Webhook should have been called
+    assert!(call_count.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+
+    // History page should show the entry
+    let resp = s.client.get(s.url("/settings/webhooks")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("staging"));
+    assert!(body.contains("Success") || body.contains("success"));
+}
+
+#[tokio::test]
+async fn non_admin_cannot_access_webhooks_page() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let editor = signup_user_with_role(&s, "wheditor@test.com", "wheditor", "editor").await;
+    let resp = editor.get(s.url("/settings/webhooks")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
