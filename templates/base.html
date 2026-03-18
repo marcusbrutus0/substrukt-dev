@@ -122,6 +122,7 @@
       div.innerHTML = '<div class="flex justify-end mb-1"><button type="button" onclick="this.closest(\'.array-item\').remove()" class="text-danger text-sm hover:text-danger">Remove</button></div>' + html;
       container.appendChild(div);
       initMarkdownEditors();
+      initUploadZones();
     }
     function initMarkdownEditors() {
       document.querySelectorAll('[data-markdown]:not(.easymde-attached)').forEach(function(el) {
