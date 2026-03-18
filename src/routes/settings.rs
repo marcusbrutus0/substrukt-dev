@@ -33,6 +33,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/webhooks", get(webhooks_page))
         .route("/webhooks/retry", axum::routing::post(retry_webhook))
+        .route("/audit-log", get(audit_log_page))
 }
 
 async fn tokens_page(
@@ -698,4 +699,100 @@ async fn retry_webhook(
     }
 
     Ok(Redirect::to("/settings/webhooks").into_response())
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct AuditLogFilter {
+    #[serde(default)]
+    action: String,
+    #[serde(default)]
+    actor: String,
+    #[serde(default)]
+    page: String,
+}
+
+async fn audit_log_page(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+    axum::extract::Query(filter): axum::extract::Query<AuditLogFilter>,
+) -> axum::response::Result<Html<String>> {
+    auth::require_role(&session, "admin").await?;
+
+    let page: u32 = filter.page.parse().unwrap_or(1).max(1);
+
+    let action_filter = if filter.action.is_empty() {
+        None
+    } else {
+        Some(filter.action.as_str())
+    };
+    let actor_filter = if filter.actor.is_empty() {
+        None
+    } else {
+        Some(filter.actor.as_str())
+    };
+
+    let (entries, has_next) = state
+        .audit
+        .list_audit_log(action_filter, actor_filter, page)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let actors = state
+        .audit
+        .list_audit_actors()
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let entry_data: Vec<minijinja::Value> = entries
+        .iter()
+        .map(|e| {
+            minijinja::context! {
+                id => e.id,
+                timestamp => e.timestamp,
+                actor => e.actor,
+                action => e.action,
+                resource_type => e.resource_type,
+                resource_id => e.resource_id,
+                details => e.details,
+            }
+        })
+        .collect();
+
+    let mut pagination_params = Vec::new();
+    if !filter.action.is_empty() {
+        pagination_params.push(format!("action={}", filter.action));
+    }
+    if !filter.actor.is_empty() {
+        pagination_params.push(format!("actor={}", filter.actor));
+    }
+    let pagination_qs = if pagination_params.is_empty() {
+        String::new()
+    } else {
+        format!("{}&", pagination_params.join("&"))
+    };
+
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("settings/audit_log.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            user_role => user_role,
+            entries => entry_data,
+            actors => actors,
+            filter_action => filter.action,
+            filter_actor => filter.actor,
+            pagination_qs => pagination_qs,
+            page => page,
+            has_next => has_next,
+            has_prev => page > 1,
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html))
 }

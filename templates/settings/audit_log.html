@@ -1,0 +1,102 @@
+{% extends base_template %}
+{% block title %}Audit Log — Substrukt{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold tracking-tight mb-6">Audit Log</h1>
+
+<div class="flex gap-3 mb-6">
+  <select onchange="applyFilters()" id="filter-action"
+    class="px-3 py-2 border border-border rounded-md bg-input-bg text-sm">
+    <option value="">All Actions</option>
+    <option value="content_create" {% if filter_action == "content_create" %}selected{% endif %}>content_create</option>
+    <option value="content_update" {% if filter_action == "content_update" %}selected{% endif %}>content_update</option>
+    <option value="content_delete" {% if filter_action == "content_delete" %}selected{% endif %}>content_delete</option>
+    <option value="schema_create" {% if filter_action == "schema_create" %}selected{% endif %}>schema_create</option>
+    <option value="schema_update" {% if filter_action == "schema_update" %}selected{% endif %}>schema_update</option>
+    <option value="schema_delete" {% if filter_action == "schema_delete" %}selected{% endif %}>schema_delete</option>
+    <option value="login" {% if filter_action == "login" %}selected{% endif %}>login</option>
+    <option value="logout" {% if filter_action == "logout" %}selected{% endif %}>logout</option>
+    <option value="user_create" {% if filter_action == "user_create" %}selected{% endif %}>user_create</option>
+    <option value="token_create" {% if filter_action == "token_create" %}selected{% endif %}>token_create</option>
+    <option value="token_delete" {% if filter_action == "token_delete" %}selected{% endif %}>token_delete</option>
+    <option value="invite_create" {% if filter_action == "invite_create" %}selected{% endif %}>invite_create</option>
+    <option value="invite_delete" {% if filter_action == "invite_delete" %}selected{% endif %}>invite_delete</option>
+    <option value="import" {% if filter_action == "import" %}selected{% endif %}>import</option>
+    <option value="export" {% if filter_action == "export" %}selected{% endif %}>export</option>
+  </select>
+  <select onchange="applyFilters()" id="filter-actor"
+    class="px-3 py-2 border border-border rounded-md bg-input-bg text-sm">
+    <option value="">All Actors</option>
+    {% for a in actors %}
+    <option value="{{ a }}" {% if filter_actor == a %}selected{% endif %}>{{ a }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+{% if entries %}
+<div class="bg-card border border-border-light rounded-lg overflow-hidden">
+  <table class="w-full">
+    <thead class="bg-card-alt">
+      <tr>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Time</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Actor</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Action</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Resource</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Details</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-border-light">
+      {% for entry in entries %}
+      <tr class="hover:bg-card-alt">
+        <td class="px-4 py-2.5 text-sm text-muted font-mono">{{ entry.timestamp[:19] }}</td>
+        <td class="px-4 py-2.5 text-sm">{{ entry.actor }}</td>
+        <td class="px-4 py-2.5 text-sm">
+          <span class="px-2 py-0.5 rounded text-xs font-medium
+            {% if entry.action is startingwith("content_") or entry.action is startingwith("schema_") %}bg-accent-soft text-accent
+            {% elif entry.action in ["login", "logout", "user_create"] %}bg-success-soft text-success
+            {% else %}bg-card-alt text-muted{% endif %}">
+            {{ entry.action }}
+          </span>
+        </td>
+        <td class="px-4 py-2.5 text-sm text-muted">
+          {% if entry.resource_id %}{{ entry.resource_type }} / {{ entry.resource_id }}{% else %}{{ entry.resource_type }}{% endif %}
+        </td>
+        <td class="px-4 py-2.5 text-sm text-muted font-mono">
+          {% if entry.details %}{{ entry.details[:80] }}{% if entry.details|length > 80 %}…{% endif %}{% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="flex items-center justify-center gap-4 mt-4">
+  {% if has_prev %}
+  <a href="/settings/audit-log?{{ pagination_qs }}page={{ page - 1 }}" class="text-sm text-accent hover:underline">← Previous</a>
+  {% else %}
+  <span class="text-sm text-muted">← Previous</span>
+  {% endif %}
+  <span class="text-sm text-muted">Page {{ page }}</span>
+  {% if has_next %}
+  <a href="/settings/audit-log?{{ pagination_qs }}page={{ page + 1 }}" class="text-sm text-accent hover:underline">Next →</a>
+  {% else %}
+  <span class="text-sm text-muted">Next →</span>
+  {% endif %}
+</div>
+{% else %}
+<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
+  No audit log entries.
+</div>
+{% endif %}
+
+<script>
+function applyFilters() {
+  var action = document.getElementById('filter-action').value;
+  var actor = document.getElementById('filter-actor').value;
+  var params = new URLSearchParams();
+  if (action) params.set('action', action);
+  if (actor) params.set('actor', actor);
+  var qs = params.toString();
+  window.location.href = '/settings/audit-log' + (qs ? '?' + qs : '');
+}
+</script>
+{% endblock %}
