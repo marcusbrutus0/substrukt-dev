@@ -705,7 +705,7 @@ async fn api_schema_and_content_crud() {
 
     // List entries via API
     let resp = api
-        .get(s.url("/api/v1/content/blog-posts"))
+        .get(s.url("/api/v1/content/blog-posts?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -807,7 +807,7 @@ async fn api_export_import() {
 
     // Verify imported content
     let resp = api2
-        .get(s2.url("/api/v1/content/blog-posts"))
+        .get(s2.url("/api/v1/content/blog-posts?status=all"))
         .bearer_auth(&token2)
         .send()
         .await
@@ -1151,7 +1151,7 @@ async fn api_single_crud() {
 
     // GET /single returns the data
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/content/site-settings/single?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1172,7 +1172,7 @@ async fn api_single_crud() {
 
     // Verify update
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/content/site-settings/single?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1271,7 +1271,7 @@ async fn single_full_workflow() {
 
     // 4. API: GET /single returns data
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/content/site-settings/single?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1955,7 +1955,7 @@ async fn content_search_filters_entries() {
 
     // API: unfiltered
     let resp = api
-        .get(s.url("/api/v1/content/blog-posts"))
+        .get(s.url("/api/v1/content/blog-posts?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1966,7 +1966,7 @@ async fn content_search_filters_entries() {
 
     // API: filtered
     let resp = api
-        .get(s.url("/api/v1/content/blog-posts?q=rust"))
+        .get(s.url("/api/v1/content/blog-posts?q=rust&status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1978,7 +1978,7 @@ async fn content_search_filters_entries() {
 
     // API: no match
     let resp = api
-        .get(s.url("/api/v1/content/blog-posts?q=javascript"))
+        .get(s.url("/api/v1/content/blog-posts?q=javascript&status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2024,7 +2024,7 @@ async fn content_markdown_field_stored_as_string() {
     let token = s.create_api_token("test").await;
     let resp = s
         .client
-        .get(s.url("/api/v1/content/articles"))
+        .get(s.url("/api/v1/content/articles?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2111,7 +2111,7 @@ async fn content_references_resolve_in_api() {
     let token = s.create_api_token("test").await;
     let resp = s
         .client
-        .get(s.url("/api/v1/content/posts"))
+        .get(s.url("/api/v1/content/posts?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2687,4 +2687,284 @@ async fn non_admin_cannot_access_webhooks_page() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+// ── Draft / Published tests ────────────────────────────────────
+
+const DRAFT_TEST_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Draft Posts", "slug": "draft-posts", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"}
+    },
+    "required": ["title"]
+}"#;
+
+#[tokio::test]
+async fn content_draft_published_lifecycle() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(DRAFT_TEST_SCHEMA).await;
+    let token = s.create_api_token("draft-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Create entry via API — should be draft
+    let resp = api
+        .post(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "My Post"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created: serde_json::Value = resp.json().await.unwrap();
+    let entry_id = created["id"].as_str().unwrap().to_string();
+
+    // API list (default) should return empty — no published entries
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 0, "default should return published only");
+
+    // API list with ?status=all should return the draft
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1, "status=all should return draft");
+    assert!(entries[0].get("_status").is_none(), "_status should be stripped from response");
+
+    // API list with ?status=draft
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1, "status=draft should return draft entry");
+
+    // Get single entry by ID — should work regardless of status
+    let resp = api
+        .get(s.url(&format!("/api/v1/content/draft-posts/{entry_id}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entry: serde_json::Value = resp.json().await.unwrap();
+    assert!(entry.get("_status").is_none(), "_status should be stripped");
+
+    // Update entry — status should stay draft
+    let resp = api
+        .put(s.url(&format!("/api/v1/content/draft-posts/{entry_id}")))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Updated Post"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Still no published entries
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 0, "updated draft should still not appear in published");
+}
+
+#[tokio::test]
+async fn production_publish_flips_drafts() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(DRAFT_TEST_SCHEMA).await;
+    let token = s.create_api_token("publish-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Create two entries
+    api.post(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Article 1"}))
+        .send()
+        .await
+        .unwrap();
+    api.post(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Article 2"}))
+        .send()
+        .await
+        .unwrap();
+
+    // Verify both are draft
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 2);
+
+    // Publish to production
+    let resp = api
+        .post(s.url("/api/v1/publish/production"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let _ = resp.status();
+
+    // Now default API should return both entries (published)
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 2, "both entries should now be published");
+
+    // No more drafts
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 0, "no drafts should remain");
+}
+
+#[tokio::test]
+async fn staging_publish_does_not_flip_drafts() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(DRAFT_TEST_SCHEMA).await;
+    let token = s.create_api_token("staging-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    api.post(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Page 1"}))
+        .send()
+        .await
+        .unwrap();
+
+    // Staging publish
+    let _ = api
+        .post(s.url("/api/v1/publish/staging"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+
+    // Entry should still be draft
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1, "staging publish should not flip drafts");
+}
+
+#[tokio::test]
+async fn single_schema_draft_published() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(SETTINGS_SCHEMA).await;
+    let token = s.create_api_token("single-draft-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // PUT /single creates — should be draft
+    let resp = api
+        .put(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "Test Site", "tagline": "Hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // GET /single (default) returns 404 — draft entry, published-only filter
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "draft single should return 404 by default");
+
+    // GET /single?status=all returns the entry
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["site_name"], "Test Site");
+    assert!(data.get("_status").is_none(), "_status should be stripped");
+
+    // Publish production — flips draft to published
+    let _ = api
+        .post(s.url("/api/v1/publish/production"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+
+    // GET /single (default) now returns 200 — published
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "published single should return 200");
+
+    // PUT /single update — should preserve published status
+    let resp = api
+        .put(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "Updated Site", "tagline": "World"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Still published after update
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "published single should stay published after update");
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["site_name"], "Updated Site");
 }
