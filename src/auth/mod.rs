@@ -12,12 +12,17 @@ use crate::db::models;
 use crate::state::AppState;
 
 const USER_ID_KEY: &str = "user_id";
+const USER_ROLE_KEY: &str = "user_role";
 const FLASH_KEY: &str = "_flash";
 const CSRF_KEY: &str = "_csrf";
 
-pub async fn login_user(session: &Session, user_id: i64) -> eyre::Result<()> {
+pub async fn login_user(session: &Session, user_id: i64, role: &str) -> eyre::Result<()> {
     session
         .insert(USER_ID_KEY, user_id)
+        .await
+        .map_err(|e| eyre::eyre!("Session insert error: {e}"))?;
+    session
+        .insert(USER_ROLE_KEY, role)
         .await
         .map_err(|e| eyre::eyre!("Session insert error: {e}"))?;
     Ok(())
@@ -33,6 +38,39 @@ pub async fn logout_user(session: &Session) -> eyre::Result<()> {
 
 pub async fn current_user_id(session: &Session) -> Option<i64> {
     session.get::<i64>(USER_ID_KEY).await.ok().flatten()
+}
+
+pub async fn current_user_role(session: &Session) -> Option<String> {
+    session.get::<String>(USER_ROLE_KEY).await.ok().flatten()
+}
+
+/// Check that the current user has at least the given role level.
+/// Role hierarchy: admin > editor > viewer.
+/// Returns the user_id on success, or a 403 response on failure.
+pub async fn require_role(session: &Session, min_role: &str) -> axum::response::Result<i64> {
+    let user_id = current_user_id(session)
+        .await
+        .ok_or(axum::response::ErrorResponse::from(
+            Redirect::to("/login").into_response(),
+        ))?;
+
+    let user_role = current_user_role(session).await.unwrap_or_default();
+    let role_level = |r: &str| -> u8 {
+        match r {
+            "admin" => 3,
+            "editor" => 2,
+            "viewer" => 1,
+            _ => 0,
+        }
+    };
+
+    if role_level(&user_role) >= role_level(min_role) {
+        Ok(user_id)
+    } else {
+        Err(axum::response::ErrorResponse::from(
+            (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response(),
+        ))
+    }
 }
 
 /// Store a flash message in the session. It will be consumed on next page load.
