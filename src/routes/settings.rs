@@ -87,9 +87,7 @@ async fn create_token(
     session: Session,
     Form(form): Form<CreateTokenForm>,
 ) -> axum::response::Result<Html<String>> {
-    let user_id = auth::current_user_id(&session)
-        .await
-        .ok_or("Not authenticated")?;
+    let user_id = auth::require_role(&session, "editor").await?;
 
     let raw_token = token::generate_token();
     let token_hash = token::hash_token(&raw_token);
@@ -142,11 +140,8 @@ async fn delete_token(
     State(state): State<AppState>,
     session: Session,
     axum::extract::Path(token_id): axum::extract::Path<i64>,
-) -> impl IntoResponse {
-    let user_id = match auth::current_user_id(&session).await {
-        Some(id) => id,
-        None => return Redirect::to("/login"),
-    };
+) -> axum::response::Result<Redirect> {
+    let user_id = auth::require_role(&session, "editor").await?;
 
     let _ = models::delete_api_token(&state.pool, token_id, user_id).await;
     state.audit.log(
@@ -156,7 +151,7 @@ async fn delete_token(
         &token_id.to_string(),
         None,
     );
-    Redirect::to("/settings/tokens")
+    Ok(Redirect::to("/settings/tokens"))
 }
 
 async fn data_page(
@@ -164,6 +159,7 @@ async fn data_page(
     State(state): State<AppState>,
     session: Session,
 ) -> axum::response::Result<Html<String>> {
+    auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
 
     // Consume flash message if present
@@ -209,11 +205,8 @@ async fn import_data(
     State(state): State<AppState>,
     session: Session,
     mut multipart: Multipart,
-) -> impl IntoResponse {
-    let user_id = match auth::current_user_id(&session).await {
-        Some(id) => id,
-        None => return Redirect::to("/login").into_response(),
-    };
+) -> axum::response::Result<axum::response::Response> {
+    let user_id = auth::require_role(&session, "admin").await?;
 
     // Extract CSRF token and bundle from multipart fields
     let mut csrf_token = None;
@@ -248,7 +241,7 @@ async fn import_data(
             "data_result",
             &serde_json::json!({"status": "error", "message": "Invalid CSRF token", "warnings": []}).to_string(),
         ).await;
-        return Redirect::to("/settings/data").into_response();
+        return Ok(Redirect::to("/settings/data").into_response());
     }
 
     // Validate bundle present
@@ -260,7 +253,7 @@ async fn import_data(
                 "data_result",
                 &serde_json::json!({"status": "error", "message": "No file provided", "warnings": []}).to_string(),
             ).await;
-            return Redirect::to("/settings/data").into_response();
+            return Ok(Redirect::to("/settings/data").into_response());
         }
     };
 
@@ -311,23 +304,20 @@ async fn import_data(
         }
     }
 
-    Redirect::to("/settings/data").into_response()
+    Ok(Redirect::to("/settings/data").into_response())
 }
 
 async fn export_data(
     State(state): State<AppState>,
     session: Session,
     Form(_form): Form<std::collections::HashMap<String, String>>,
-) -> impl IntoResponse {
-    let user_id = match auth::current_user_id(&session).await {
-        Some(id) => id,
-        None => return Redirect::to("/login").into_response(),
-    };
+) -> axum::response::Result<axum::response::Response> {
+    let user_id = auth::require_role(&session, "admin").await?;
 
     let tmp =
         std::env::temp_dir().join(format!("substrukt-export-{}.tar.gz", uuid::Uuid::new_v4()));
 
-    match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
+    Ok(match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
         Ok(()) => match std::fs::read(&tmp) {
             Ok(data) => {
                 let _ = std::fs::remove_file(&tmp);
@@ -370,24 +360,7 @@ async fn export_data(
             ).await;
             Redirect::to("/settings/data").into_response()
         }
-    }
-}
-
-// --- User invitation management (admin only, user_id == 1) ---
-
-async fn require_admin(session: &Session) -> axum::response::Result<i64> {
-    let user_id =
-        auth::current_user_id(session)
-            .await
-            .ok_or(axum::response::ErrorResponse::from(
-                (axum::http::StatusCode::SEE_OTHER, [("location", "/login")]).into_response(),
-            ))?;
-    if user_id != 1 {
-        return Err(axum::response::ErrorResponse::from(
-            (axum::http::StatusCode::FORBIDDEN, "Admin access required").into_response(),
-        ));
-    }
-    Ok(user_id)
+    })
 }
 
 async fn users_page(
@@ -395,7 +368,7 @@ async fn users_page(
     State(state): State<AppState>,
     session: Session,
 ) -> axum::response::Result<axum::response::Response> {
-    let _user_id = require_admin(&session).await?;
+    let _user_id = auth::require_role(&session, "admin").await?;
 
     let invitations = models::list_pending_invitations(&state.pool)
         .await
@@ -409,6 +382,7 @@ async fn users_page(
             minijinja::context! {
                 id => i.id,
                 email => i.email,
+                role => i.role,
                 created_at => i.created_at,
                 expires_at => i.expires_at,
             }
@@ -435,6 +409,7 @@ async fn users_page(
 #[derive(serde::Deserialize)]
 pub struct InviteForm {
     email: String,
+    role: String,
 }
 
 async fn invite_user(
@@ -443,7 +418,7 @@ async fn invite_user(
     session: Session,
     Form(form): Form<InviteForm>,
 ) -> axum::response::Result<axum::response::Response> {
-    let user_id = require_admin(&session).await?;
+    let user_id = auth::require_role(&session, "admin").await?;
 
     // Basic email validation
     if !form.email.contains('@') || form.email.len() < 3 {
@@ -472,12 +447,18 @@ async fn invite_user(
         .await;
     }
 
+    // Validate role
+    let role = match form.role.as_str() {
+        "admin" | "editor" | "viewer" => &form.role,
+        _ => return render_users_with_error(&state, &session, is_htmx, "Invalid role").await,
+    };
+
     let raw_token = token::generate_token();
     let token_hash = token::hash_token(&raw_token);
     let expires_at = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
 
     let invitation =
-        models::create_invitation(&state.pool, &form.email, &token_hash, user_id, &expires_at)
+        models::create_invitation(&state.pool, &form.email, &token_hash, user_id, &expires_at, role)
             .await
             .map_err(|e| format!("DB error: {e}"))?;
 
@@ -501,6 +482,7 @@ async fn invite_user(
             minijinja::context! {
                 id => i.id,
                 email => i.email,
+                role => i.role,
                 created_at => i.created_at,
                 expires_at => i.expires_at,
             }
@@ -542,6 +524,7 @@ async fn render_users_with_error(
             minijinja::context! {
                 id => i.id,
                 email => i.email,
+                role => i.role,
                 created_at => i.created_at,
                 expires_at => i.expires_at,
             }
@@ -572,7 +555,7 @@ async fn delete_invitation(
     session: Session,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> axum::response::Result<axum::response::Response> {
-    let user_id = require_admin(&session).await?;
+    let user_id = auth::require_role(&session, "admin").await?;
 
     let _ = models::delete_invitation(&state.pool, id).await;
     state.audit.log(

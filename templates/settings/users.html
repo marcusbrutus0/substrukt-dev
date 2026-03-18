@@ -20,6 +20,11 @@
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <input type="email" name="email" placeholder="Email address" required
       class="flex-1 px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+    <select name="role" class="px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent">
+      <option value="editor">Editor</option>
+      <option value="viewer">Viewer</option>
+      <option value="admin">Admin</option>
+    </select>
     <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
       Send Invite
     </button>
@@ -32,6 +37,7 @@
     <thead class="bg-card-alt">
       <tr>
         <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Email</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Role</th>
         <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Invited</th>
         <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Expires</th>
         <th class="px-4 py-2.5"></th>
@@ -41,6 +47,10 @@
       {% for inv in invitations %}
       <tr class="hover:bg-card-alt">
         <td class="px-4 py-2.5 font-medium">{{ inv.email }}</td>
+        <td class="px-4 py-2.5 text-sm"><span class="px-2 py-0.5 rounded-full text-xs font-medium
+          {% if inv.role == 'admin' %}bg-danger-soft text-danger
+          {% elif inv.role == 'editor' %}bg-accent-soft text-accent
+          {% else %}bg-card-alt text-muted{% endif %}">{{ inv.role }}</span></td>
         <td class="px-4 py-2.5 text-muted text-sm">{{ inv.created_at }}</td>
         <td class="px-4 py-2.5 text-muted text-sm">{{ inv.expires_at }}</td>
         <td class="px-4 py-2.5 text-right">
