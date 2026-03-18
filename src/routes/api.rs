@@ -67,6 +67,28 @@ async fn api_rate_limit(
     next.run(request).await
 }
 
+fn require_api_role(
+    bearer: &BearerToken,
+    min_role: &str,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let role_level = |r: &str| -> u8 {
+        match r {
+            "admin" => 3,
+            "editor" => 2,
+            "viewer" => 1,
+            _ => 0,
+        }
+    };
+    if role_level(&bearer.role) >= role_level(min_role) {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Insufficient permissions"})),
+        ))
+    }
+}
+
 fn resolve_references(
     data: &mut serde_json::Value,
     schema: &serde_json::Value,
@@ -219,10 +241,13 @@ async fn get_entry(
 
 async fn create_entry(
     State(state): State<AppState>,
-    _token: BearerToken,
+    token: BearerToken,
     Path(schema_slug): Path<String>,
     Json(data): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
@@ -280,10 +305,13 @@ async fn create_entry(
 
 async fn update_entry(
     State(state): State<AppState>,
-    _token: BearerToken,
+    token: BearerToken,
     Path((schema_slug, entry_id)): Path<(String, String)>,
     Json(data): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
@@ -354,9 +382,12 @@ async fn update_entry(
 
 async fn delete_entry(
     State(state): State<AppState>,
-    _token: BearerToken,
+    token: BearerToken,
     Path((schema_slug, entry_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
@@ -426,10 +457,13 @@ async fn get_single(
 
 async fn upsert_single(
     State(state): State<AppState>,
-    _token: BearerToken,
+    token: BearerToken,
     Path(schema_slug): Path<String>,
     Json(data): Json<serde_json::Value>,
 ) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
@@ -500,9 +534,12 @@ async fn upsert_single(
 
 async fn delete_single(
     State(state): State<AppState>,
-    _token: BearerToken,
+    token: BearerToken,
     Path(schema_slug): Path<String>,
 ) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
@@ -540,9 +577,12 @@ async fn delete_single(
 
 async fn upload_file(
     State(state): State<AppState>,
-    _token: BearerToken,
+    token: BearerToken,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
     while let Ok(Some(field)) = multipart.next_field().await {
         let filename = field.file_name().unwrap_or("file").to_string();
         let content_type = field
@@ -607,7 +647,10 @@ async fn get_upload(
     crate::routes::uploads::serve_upload_by_hash(&state, &hash).await
 }
 
-async fn export_bundle(State(state): State<AppState>, _token: BearerToken) -> impl IntoResponse {
+async fn export_bundle(State(state): State<AppState>, token: BearerToken) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "admin") {
+        return e.into_response();
+    }
     let tmp =
         std::env::temp_dir().join(format!("substrukt-export-{}.tar.gz", uuid::Uuid::new_v4()));
     match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
@@ -645,9 +688,12 @@ async fn export_bundle(State(state): State<AppState>, _token: BearerToken) -> im
 
 async fn import_bundle(
     State(state): State<AppState>,
-    _token: BearerToken,
+    token: BearerToken,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "admin") {
+        return e.into_response();
+    }
     while let Ok(Some(field)) = multipart.next_field().await {
         let data = match field.bytes().await {
             Ok(d) => d,
@@ -700,9 +746,12 @@ async fn import_bundle(
 
 async fn publish(
     State(state): State<AppState>,
-    _token: BearerToken,
+    token: BearerToken,
     Path(environment): Path<String>,
 ) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
     if !matches!(environment.as_str(), "staging" | "production") {
         return (
             StatusCode::NOT_FOUND,
