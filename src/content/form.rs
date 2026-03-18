@@ -5,6 +5,78 @@ use serde_json::Value;
 /// Map from field name to list of (id, label) pairs for reference dropdowns.
 pub type ReferenceOptions = HashMap<String, Vec<(String, String)>>;
 
+fn escape_html_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn build_hint_line(hints: &[String]) -> String {
+    if hints.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"  <p class="text-xs text-muted mt-1">{}</p>
+"#,
+            hints.join(" · ")
+        )
+    }
+}
+
+/// Extract `description` from a schema property, HTML-escaped.
+fn get_description(schema: &Value) -> Option<String> {
+    schema
+        .get("description")
+        .and_then(|d| d.as_str())
+        .filter(|d| !d.is_empty())
+        .map(|d| escape_html_attr(d))
+}
+
+/// Build string constraint HTML attrs and hint parts.
+/// `is_textarea` controls whether `pattern` becomes an HTML attr or hint-only.
+fn string_constraints(schema: &Value, is_textarea: bool) -> (String, Vec<String>) {
+    let mut attrs = String::new();
+    let mut hints = Vec::new();
+
+    let min_len = schema
+        .get("minLength")
+        .and_then(|v| v.as_u64())
+        .filter(|&v| v > 0);
+    let max_len = schema.get("maxLength").and_then(|v| v.as_u64());
+
+    if let Some(min) = min_len {
+        attrs.push_str(&format!(r#" minlength="{min}""#));
+    }
+    if let Some(max) = max_len {
+        attrs.push_str(&format!(r#" maxlength="{max}""#));
+    }
+
+    match (min_len, max_len) {
+        (Some(min), Some(max)) => hints.push(format!("{min}–{max} characters")),
+        (Some(min), None) => hints.push(format!("Min {min} characters")),
+        (None, Some(max)) => hints.push(format!("Max {max} characters")),
+        _ => {}
+    }
+
+    let pattern = schema
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .filter(|p| !p.is_empty());
+    if let Some(pat) = pattern {
+        if !is_textarea {
+            attrs.push_str(&format!(r#" pattern="{}""#, escape_html_attr(pat)));
+        }
+        hints.push(format!("Pattern: <code>{}</code>", escape_html_attr(pat)));
+    }
+
+    if let Some(desc) = get_description(schema) {
+        hints.push(desc);
+    }
+
+    (attrs, hints)
+}
+
 /// Generate HTML form fields from a JSON Schema.
 pub fn render_form_fields(
     schema: &Value,
@@ -79,21 +151,25 @@ fn render_field(
     match (field_type, format) {
         ("string", Some("markdown")) => {
             let val = value.and_then(|v| v.as_str()).unwrap_or("");
+            let (constraint_attrs, hints) = string_constraints(schema, true);
+            let hint_html = build_hint_line(&hints);
             format!(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <textarea id="{name}" name="{name}" rows="12" data-markdown class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>{val}</textarea>
-</div>
+  <textarea id="{name}" name="{name}" rows="12" data-markdown class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
+{hint_html}</div>
 "#
             )
         }
         ("string", Some("textarea")) => {
             let val = value.and_then(|v| v.as_str()).unwrap_or("");
+            let (constraint_attrs, hints) = string_constraints(schema, true);
+            let hint_html = build_hint_line(&hints);
             format!(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>{val}</textarea>
-</div>
+  <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
+{hint_html}</div>
 "#
             )
         }
@@ -126,6 +202,9 @@ fn render_field(
                 );
             }
 
+            let hint_html = build_hint_line(
+                &get_description(schema).into_iter().collect::<Vec<_>>(),
+            );
             format!(
                 r#"<div class="mb-4">
   <label class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
@@ -136,7 +215,7 @@ fn render_field(
     <div class="upload-zone-preview hidden mt-2 flex justify-center"></div>
     <input type="file" id="{name}" name="{name}" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" data-upload-input{req_attr}>
   </div>
-</div>
+{hint_html}</div>
 "#
             )
         }
@@ -151,13 +230,16 @@ fn render_field(
                     r#"<option value="{id}"{selected}>{label_text}</option>"#
                 ));
             }
+            let hint_html = build_hint_line(
+                &get_description(schema).into_iter().collect::<Vec<_>>(),
+            );
             format!(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
     {opts_html}
   </select>
-</div>
+{hint_html}</div>
 "#
             )
         }
@@ -173,22 +255,27 @@ fn render_field(
                         r#"<option value="{ev_str}"{selected}>{ev_str}</option>"#
                     ));
                 }
+                let hint_html = build_hint_line(
+                    &get_description(schema).into_iter().collect::<Vec<_>>(),
+                );
                 format!(
                     r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
     {options}
   </select>
-</div>
+{hint_html}</div>
 "#
                 )
             } else {
                 let val = value.and_then(|v| v.as_str()).unwrap_or("");
+                let (constraint_attrs, hints) = string_constraints(schema, false);
+                let hint_html = build_hint_line(&hints);
                 format!(
                     r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
-</div>
+  <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>
+{hint_html}</div>
 "#
                 )
             }
@@ -212,6 +299,9 @@ fn render_field(
         ("boolean", _) => {
             let checked = value.and_then(|v| v.as_bool()).unwrap_or(false);
             let checked_attr = if checked { " checked" } else { "" };
+            let hint_html = build_hint_line(
+                &get_description(schema).into_iter().collect::<Vec<_>>(),
+            );
             format!(
                 r#"<div class="mb-4">
   <label class="flex items-center gap-2">
@@ -219,7 +309,7 @@ fn render_field(
     <input type="checkbox" name="{name}" value="true" class="rounded border-border text-accent focus:ring-accent"{checked_attr}>
     <span class="text-sm font-medium text-secondary">{label}</span>
   </label>
-</div>
+{hint_html}</div>
 "#
             )
         }
@@ -424,6 +514,110 @@ fn parse_array_form_data(schema: &Value, form: &[(String, String)], prefix: &str
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn string_field_minlength_maxlength_renders_attrs_and_hint() {
+        let schema = json!({
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "title": "Name",
+                    "minLength": 3,
+                    "maxLength": 100
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(html.contains(r#"minlength="3""#), "should have minlength attr");
+        assert!(
+            html.contains(r#"maxlength="100""#),
+            "should have maxlength attr"
+        );
+        assert!(
+            html.contains("3–100 characters"),
+            "should show combined hint"
+        );
+    }
+
+    #[test]
+    fn string_field_pattern_renders_attr_and_hint() {
+        let schema = json!({
+            "properties": {
+                "slug": {
+                    "type": "string",
+                    "title": "Slug",
+                    "pattern": "^[a-z0-9-]+$"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains(r#"pattern="^[a-z0-9-]+$""#),
+            "should have pattern attr"
+        );
+        assert!(html.contains("Pattern:"), "should show pattern hint");
+    }
+
+    #[test]
+    fn textarea_field_no_pattern_attr_but_shows_hint() {
+        let schema = json!({
+            "properties": {
+                "bio": {
+                    "type": "string",
+                    "format": "textarea",
+                    "title": "Bio",
+                    "pattern": "^[A-Z]",
+                    "maxLength": 500
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            !html.contains(r#"pattern="#),
+            "textarea should not have pattern attr"
+        );
+        assert!(html.contains("Pattern:"), "should still show pattern as hint");
+        assert!(
+            html.contains(r#"maxlength="500""#),
+            "should have maxlength attr"
+        );
+    }
+
+    #[test]
+    fn field_description_renders_as_hint() {
+        let schema = json!({
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "title": "Email",
+                    "description": "Your primary email address"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains("Your primary email address"),
+            "should show description"
+        );
+        assert!(html.contains("text-xs text-muted"), "should use hint styling");
+    }
+
+    #[test]
+    fn no_constraints_no_hint_line() {
+        let schema = json!({
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "title": "Title"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            !html.contains("text-xs text-muted"),
+            "should not have hint line"
+        );
+    }
 
     #[test]
     fn upload_field_renders_drop_zone() {
