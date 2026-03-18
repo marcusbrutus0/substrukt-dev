@@ -59,6 +59,7 @@ async fn tokens_page(
         })
         .collect();
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -70,6 +71,7 @@ async fn tokens_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             tokens => token_data,
         })
         .map_err(|e| format!("Render error: {e}"))?;
@@ -182,6 +184,7 @@ async fn data_page(
         }
     }
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -193,6 +196,7 @@ async fn data_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             import_status => import_status,
             import_message => import_message,
             import_warnings => import_warnings,
@@ -389,6 +393,7 @@ async fn users_page(
         })
         .collect();
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -400,6 +405,7 @@ async fn users_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             invitations => inv_data,
         })
         .map_err(|e| format!("Render error: {e}"))?;

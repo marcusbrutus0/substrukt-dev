@@ -96,6 +96,7 @@ async fn list_entries(
 
     let column_headers: Vec<&str> = columns.iter().map(|(_, label)| label.as_str()).collect();
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let flash = auth::take_flash(&session).await;
     let tmpl = state
         .templates
@@ -108,6 +109,7 @@ async fn list_entries(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             columns => column_headers,
@@ -320,6 +322,7 @@ async fn edit_entry_page(
         &ref_options,
     );
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -332,6 +335,7 @@ async fn edit_entry_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             entry_id => entry_id,
@@ -695,6 +699,7 @@ async fn entry_history(
         })
         .collect();
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -706,6 +711,7 @@ async fn entry_history(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             entry_id => entry_id,

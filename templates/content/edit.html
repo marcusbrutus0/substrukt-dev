@@ -24,6 +24,11 @@
     action="{% if is_single %}/content/{{ schema_slug }}/_single{% elif is_new %}/content/{{ schema_slug }}/new{% else %}/content/{{ schema_slug }}/{{ entry_id }}{% endif %}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     {{ form_fields|safe }}
+    {% if user_role == "viewer" %}
+    <div class="mt-6 pt-4 border-t border-border-light text-sm text-muted">
+      You have view-only access. Contact an admin to request editor permissions.
+    </div>
+    {% else %}
     <div class="flex gap-3 mt-6 pt-4 border-t border-border-light">
       <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
         {% if is_single %}Save{% elif is_new %}Create{% else %}Save Changes{% endif %}
@@ -39,6 +44,7 @@
       {% endif %}
       {% endif %}
     </div>
+    {% endif %}
   </form>
 </div>
 {% endblock %}

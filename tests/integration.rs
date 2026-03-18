@@ -1556,7 +1556,7 @@ async fn invite_creates_signup_url() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "user@example.com"), ("_csrf", &csrf)])
+        .form(&[("email", "user@example.com"), ("role", "editor"), ("_csrf", &csrf)])
         .send()
         .await
         .unwrap();
@@ -1576,7 +1576,7 @@ async fn non_admin_cannot_access_users_page() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "user2@example.com"), ("_csrf", &csrf)])
+        .form(&[("email", "user2@example.com"), ("role", "editor"), ("_csrf", &csrf)])
         .send()
         .await
         .unwrap();
@@ -1625,7 +1625,7 @@ async fn signup_with_valid_token_shows_form() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "newuser@example.com"), ("_csrf", &csrf)])
+        .form(&[("email", "newuser@example.com"), ("role", "editor"), ("_csrf", &csrf)])
         .send()
         .await
         .unwrap();
@@ -1677,7 +1677,7 @@ async fn signup_creates_user_and_logs_in() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "newuser@test.com"), ("_csrf", &csrf)])
+        .form(&[("email", "newuser@test.com"), ("role", "editor"), ("_csrf", &csrf)])
         .send()
         .await
         .unwrap();
@@ -1724,7 +1724,7 @@ async fn duplicate_email_invitation_rejected() {
     let csrf = s.get_csrf("/settings/users").await;
     s.client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "dup@example.com"), ("_csrf", &csrf)])
+        .form(&[("email", "dup@example.com"), ("role", "editor"), ("_csrf", &csrf)])
         .send()
         .await
         .unwrap();
@@ -1734,7 +1734,7 @@ async fn duplicate_email_invitation_rejected() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "dup@example.com"), ("_csrf", &csrf)])
+        .form(&[("email", "dup@example.com"), ("role", "editor"), ("_csrf", &csrf)])
         .send()
         .await
         .unwrap();
@@ -1752,7 +1752,7 @@ async fn signup_rejects_taken_username() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "another@test.com"), ("_csrf", &csrf)])
+        .form(&[("email", "another@test.com"), ("role", "editor"), ("_csrf", &csrf)])
         .send()
         .await
         .unwrap();
@@ -1798,7 +1798,7 @@ async fn cannot_invite_existing_user_email() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "taken@test.com"), ("_csrf", &csrf)])
+        .form(&[("email", "taken@test.com"), ("role", "editor"), ("_csrf", &csrf)])
         .send()
         .await
         .unwrap();
@@ -1834,7 +1834,7 @@ async fn cannot_invite_existing_user_email() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "taken@test.com"), ("_csrf", &csrf)])
+        .form(&[("email", "taken@test.com"), ("role", "editor"), ("_csrf", &csrf)])
         .send()
         .await
         .unwrap();

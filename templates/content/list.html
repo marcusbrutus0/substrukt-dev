@@ -3,7 +3,9 @@
 {% block content %}
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-2xl font-bold tracking-tight">{{ schema_title }}</h1>
+  {% if user_role != "viewer" %}
   <a href="/content/{{ schema_slug }}/new" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">New Entry</a>
+  {% endif %}
 </div>
 
 <div class="mb-4">
@@ -36,8 +38,10 @@
         <td class="px-4 py-2.5 text-sm">{{ col }}</td>
         {% endfor %}
         <td class="px-4 py-2.5 text-right space-x-2">
-          <a href="/content/{{ schema_slug }}/{{ entry.id }}/edit" class="text-accent hover:underline text-sm">Edit</a>
+          <a href="/content/{{ schema_slug }}/{{ entry.id }}/edit" class="text-accent hover:underline text-sm">{% if user_role == "viewer" %}View{% else %}Edit{% endif %}</a>
+          {% if user_role != "viewer" %}
           <button onclick="deleteEntry('{{ entry.id }}')" class="text-danger hover:text-danger text-sm">Delete</button>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

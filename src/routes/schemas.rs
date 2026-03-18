@@ -48,6 +48,7 @@ async fn list_schemas(
 
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let flash = auth::take_flash(&session).await;
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -59,6 +60,7 @@ async fn list_schemas(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             schemas => schema_data,
             flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
             flash_message => flash.as_ref().map(|(_, m)| m.as_str()),

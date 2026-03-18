@@ -182,6 +182,7 @@ async fn list_uploads(
         })
         .collect();
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let env = state
         .templates
         .acquire_env()
@@ -193,6 +194,7 @@ async fn list_uploads(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             uploads => upload_rows,
             schemas => schemas,
             filter_q => filter.q.unwrap_or_default(),

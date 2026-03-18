@@ -94,6 +94,7 @@ async fn dashboard(
         .map(|entries| entries.len())
         .sum();
 
+    let user_role = crate::auth::current_user_role(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -105,6 +106,7 @@ async fn dashboard(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             schema_count => schemas.len(),
             entry_count => entry_count,
         })
