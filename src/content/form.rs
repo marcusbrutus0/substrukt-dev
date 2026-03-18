@@ -98,26 +98,44 @@ fn render_field(
             )
         }
         ("string", Some("upload")) => {
-            let current = value
-                .and_then(|v| v.as_object())
-                .map(|obj| {
-                    let filename = obj
-                        .get("filename")
-                        .and_then(|f| f.as_str())
-                        .unwrap_or("file");
-                    let hash = obj.get("hash").and_then(|h| h.as_str()).unwrap_or("");
+            let mut current_html = String::new();
+            if let Some(obj) = value.and_then(|v| v.as_object()) {
+                let filename = obj.get("filename").and_then(|f| f.as_str()).unwrap_or("file");
+                let hash = obj.get("hash").and_then(|h| h.as_str()).unwrap_or("");
+                let mime = obj.get("mime").and_then(|m| m.as_str()).unwrap_or("");
+                let json_val = serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default();
+
+                // Show image thumbnail for image MIME types
+                let thumbnail = if mime.starts_with("image/") {
                     format!(
-                        r#"<div class="mb-2 text-sm text-secondary">Current: <a href="/uploads/file/{hash}/{filename}" class="text-accent underline" target="_blank">{filename}</a></div>
-    <input type="hidden" name="{name}.__current" value='{}'>"#,
-                        serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default()
+                        r#"<img src="/uploads/file/{hash}/{filename}" alt="{filename}" class="h-16 w-16 object-cover rounded border border-border-light">"#
                     )
-                })
-                .unwrap_or_default();
+                } else {
+                    String::new()
+                };
+
+                current_html = format!(
+                    r#"<div class="mb-2 text-sm text-secondary flex items-center gap-3">
+    {thumbnail}
+    <div>
+      <div>Current: <a href="/uploads/file/{hash}/{filename}" class="text-accent underline" target="_blank">{filename}</a></div>
+      <div class="text-muted text-xs">{mime}</div>
+    </div>
+  </div>
+  <input type="hidden" name="{name}.__current" value='{json_val}'>"#
+                );
+            }
+
             format!(
                 r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  {current}
-  <input type="file" id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md"{req_attr}>
+  <label class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  {current_html}
+  <div class="upload-zone border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-accent transition-colors relative" data-upload-zone>
+    <div class="upload-zone-prompt text-muted text-sm">Drag a file here or click to browse</div>
+    <div class="upload-zone-info hidden text-sm text-secondary mt-2"></div>
+    <div class="upload-zone-preview hidden mt-2 flex justify-center"></div>
+    <input type="file" id="{name}" name="{name}" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" data-upload-input{req_attr}>
+  </div>
 </div>
 "#
             )
@@ -400,4 +418,78 @@ fn parse_array_form_data(schema: &Value, form: &[(String, String)], prefix: &str
         .collect();
 
     Value::Array(items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn upload_field_renders_drop_zone() {
+        let schema = json!({
+            "properties": {
+                "photo": {
+                    "type": "string",
+                    "format": "upload",
+                    "title": "Photo"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(html.contains("data-upload-zone"), "should have drop zone");
+        assert!(html.contains("data-upload-input"), "should have upload input");
+        assert!(html.contains("Drag a file here or click to browse"), "should have prompt text");
+        assert!(html.contains("upload-zone-info"), "should have info area");
+        assert!(html.contains("upload-zone-preview"), "should have preview area");
+        assert!(html.contains(r#"opacity-0"#), "file input should be invisible overlay");
+    }
+
+    #[test]
+    fn upload_field_existing_image_shows_thumbnail() {
+        let schema = json!({
+            "properties": {
+                "photo": {
+                    "type": "string",
+                    "format": "upload",
+                    "title": "Photo"
+                }
+            }
+        });
+        let data = json!({
+            "photo": {
+                "hash": "abc123",
+                "filename": "test.png",
+                "mime": "image/png"
+            }
+        });
+        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new());
+        assert!(html.contains("<img"), "should show image thumbnail for image MIME");
+        assert!(html.contains("/uploads/file/abc123/test.png"), "should link to upload");
+        assert!(html.contains("__current"), "should preserve hidden current field");
+    }
+
+    #[test]
+    fn upload_field_existing_non_image_no_thumbnail() {
+        let schema = json!({
+            "properties": {
+                "doc": {
+                    "type": "string",
+                    "format": "upload",
+                    "title": "Document"
+                }
+            }
+        });
+        let data = json!({
+            "doc": {
+                "hash": "def456",
+                "filename": "readme.pdf",
+                "mime": "application/pdf"
+            }
+        });
+        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new());
+        assert!(!html.contains("<img"), "should NOT show thumbnail for non-image");
+        assert!(html.contains("/uploads/file/def456/readme.pdf"), "should link to upload");
+        assert!(html.contains("__current"), "should preserve hidden current field");
+    }
 }
