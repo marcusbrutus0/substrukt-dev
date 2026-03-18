@@ -31,6 +31,8 @@ pub fn routes() -> Router<AppState> {
             "/users/invitations/{id}/delete",
             axum::routing::post(delete_invitation),
         )
+        .route("/webhooks", get(webhooks_page))
+        .route("/webhooks/retry", axum::routing::post(retry_webhook))
 }
 
 async fn tokens_page(
@@ -572,4 +574,120 @@ async fn delete_invitation(
         None,
     );
     Ok(Redirect::to("/settings/users").into_response())
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct WebhookFilter {
+    #[serde(default)]
+    environment: String,
+    #[serde(default)]
+    status: String,
+}
+
+async fn webhooks_page(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+    axum::extract::Query(filter): axum::extract::Query<WebhookFilter>,
+) -> axum::response::Result<Html<String>> {
+    auth::require_role(&session, "admin").await?;
+    let csrf_token = auth::ensure_csrf_token(&session).await;
+
+    let env_filter = if filter.environment.is_empty() {
+        None
+    } else {
+        Some(filter.environment.as_str())
+    };
+    let status_filter = if filter.status.is_empty() {
+        None
+    } else {
+        Some(filter.status.as_str())
+    };
+
+    let history = state
+        .audit
+        .list_webhook_history(env_filter, status_filter)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let history_data: Vec<minijinja::Value> = history
+        .iter()
+        .map(|h| {
+            minijinja::context! {
+                id => h.id,
+                environment => h.environment,
+                trigger_source => h.trigger_source,
+                status => h.status,
+                http_status => h.http_status,
+                error_message => h.error_message,
+                response_time_ms => h.response_time_ms,
+                attempt_count => h.attempt_count,
+                group_id => h.group_id,
+                created_at => h.created_at,
+            }
+        })
+        .collect();
+
+    let flash = auth::take_flash(&session).await;
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("settings/webhooks.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            csrf_token => csrf_token,
+            user_role => user_role,
+            history => history_data,
+            filter_environment => filter.environment,
+            filter_status => filter.status,
+            flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
+            flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RetryForm {
+    environment: String,
+}
+
+async fn retry_webhook(
+    State(state): State<AppState>,
+    session: Session,
+    Form(form): Form<RetryForm>,
+) -> axum::response::Result<axum::response::Response> {
+    auth::require_role(&session, "admin").await?;
+
+    if !matches!(form.environment.as_str(), "staging" | "production") {
+        auth::set_flash(&session, "error", "Invalid environment").await;
+        return Ok(Redirect::to("/settings/webhooks").into_response());
+    }
+
+    match crate::webhooks::fire_webhook(
+        &state.http_client,
+        &state.audit,
+        &state.config,
+        &form.environment,
+        crate::webhooks::TriggerSource::Manual,
+    )
+    .await
+    {
+        Ok(true) => {
+            auth::set_flash(&session, "success", "Webhook triggered").await;
+        }
+        Ok(false) => {
+            auth::set_flash(&session, "error", "Webhook URL not configured").await;
+        }
+        Err(_) => {
+            auth::set_flash(&session, "error", "Webhook failed — retries in progress").await;
+        }
+    }
+
+    Ok(Redirect::to("/settings/webhooks").into_response())
 }

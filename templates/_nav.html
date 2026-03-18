@@ -27,6 +27,7 @@
   {% endif %}
   <a href="/settings/tokens" class="block px-3 py-2 rounded hover:bg-sidebar-hover">API Tokens</a>
   {% if user_role == "admin" %}
+  <a href="/settings/webhooks" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Webhooks</a>
   <a href="/settings/data" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Data</a>
   {% endif %}
   {% if user_role != "viewer" %}
