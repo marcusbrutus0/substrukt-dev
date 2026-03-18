@@ -817,7 +817,7 @@ async fn webhook_fire_records_history() {
 ```rust
 #[tokio::test]
 async fn webhook_failure_triggers_retries() {
-    // Mock server that fails the first 2 requests, succeeds on 3rd
+    // Mock server that fails the first request, succeeds on 2nd (first retry at 5s)
     let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
     let count_clone = call_count.clone();
     let mock_app = axum::Router::new().route(
@@ -826,7 +826,7 @@ async fn webhook_failure_triggers_retries() {
             let count = count_clone.clone();
             async move {
                 let n = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if n < 2 {
+                if n < 1 {
                     (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "fail")
                 } else {
                     (axum::http::StatusCode::OK, "ok")
@@ -854,20 +854,68 @@ async fn webhook_failure_triggers_retries() {
     // Should redirect (flash says failed)
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
-    // Wait for retries to complete (5s + 30s = 35s max, but 3rd attempt succeeds at ~5s)
+    // Wait for first retry to complete (5s delay + margin)
     tokio::time::sleep(std::time::Duration::from_secs(8)).await;
 
-    // Should have 3 total calls
-    assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 3);
+    // Should have 2 total calls (initial + first retry at 5s which succeeds)
+    assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
 
     // Webhooks page should show the group with multiple attempts
     let resp = s.client.get(s.url("/settings/webhooks")).send().await.unwrap();
     let body = resp.text().await.unwrap();
-    assert!(body.contains("3 attempts") || body.contains("attempts"));
+    assert!(body.contains("2 attempts") || body.contains("attempts"));
 }
 ```
 
-- [ ] **Step 3: Add non-admin access test**
+- [ ] **Step 3: Add retry button test**
+
+```rust
+#[tokio::test]
+async fn webhook_retry_button_fires_new_webhook() {
+    // Mock server that always succeeds
+    let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let count_clone = call_count.clone();
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move || {
+            let count = count_clone.clone();
+            async move {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                "ok"
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(mock_listener, mock_app).into_future());
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
+    s.setup_admin().await;
+
+    // Use the retry button to fire a webhook
+    let csrf = s.get_csrf("/settings/webhooks").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/webhooks/retry"))
+        .form(&[("_csrf", csrf.as_str()), ("environment", "staging")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Webhook should have been called
+    assert!(call_count.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+
+    // History page should show the entry
+    let resp = s.client.get(s.url("/settings/webhooks")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("staging"));
+    assert!(body.contains("Success") || body.contains("success"));
+}
+```
+
+- [ ] **Step 4: Add non-admin access test**
 
 ```rust
 #[tokio::test]
@@ -881,18 +929,18 @@ async fn non_admin_cannot_access_webhooks_page() {
 }
 ```
 
-- [ ] **Step 4: Run all tests**
+- [ ] **Step 5: Run all tests**
 
 Run: `eval "$(direnv export bash 2>/dev/null)" && cargo test`
 Expected: All tests pass. Note: `webhook_failure_triggers_retries` takes ~8 seconds due to retry delays.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 eval "$(direnv export bash 2>/dev/null)" && git add tests/integration.rs && git commit -m "test: add integration tests for webhook history and retry
 
 Tests cover: history recording on fire, background retry on failure
-(mock server fails twice then succeeds), admin-only access gate.
+(mock server fails once then succeeds), retry button, admin-only access.
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 ```
