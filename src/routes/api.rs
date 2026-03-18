@@ -17,6 +17,8 @@ use crate::uploads;
 pub struct ListParams {
     #[serde(default)]
     pub q: String,
+    #[serde(default)]
+    pub status: String,
 }
 
 pub fn routes(state: AppState) -> Router<AppState> {
@@ -183,6 +185,14 @@ async fn list_entries(
 
     match content::list_entries(&state.config.content_dir(), &schema_file) {
         Ok(entries) => {
+            // Filter by status (default: published only)
+            let status = if params.status.is_empty() {
+                "published"
+            } else {
+                &params.status
+            };
+            let entries = content::filter_by_status(entries, status);
+
             let q = params.q.trim().to_string();
             let entries = if q.is_empty() {
                 entries
@@ -192,7 +202,7 @@ async fn list_entries(
             let data: Vec<serde_json::Value> = entries
                 .iter()
                 .map(|e| {
-                    let mut d = e.data.clone();
+                    let mut d = content::strip_internal_status(&e.data);
                     resolve_references(&mut d, &schema_file.schema, &state.cache);
                     d
                 })
@@ -226,7 +236,7 @@ async fn get_entry(
 
     match content::get_entry(&state.config.content_dir(), &schema_file, &entry_id) {
         Ok(Some(entry)) => {
-            let mut data = entry.data;
+            let mut data = content::strip_internal_status(&entry.data);
             resolve_references(&mut data, &schema_file.schema, &state.cache);
             Json(data).into_response()
         }
@@ -427,6 +437,7 @@ async fn get_single(
     State(state): State<AppState>,
     _token: BearerToken,
     Path(schema_slug): Path<String>,
+    Query(params): Query<ListParams>,
 ) -> impl IntoResponse {
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
@@ -442,7 +453,17 @@ async fn get_single(
 
     match content::get_entry(&state.config.content_dir(), &schema_file, "_single") {
         Ok(Some(entry)) => {
-            let mut data = entry.data;
+            // Check status filter
+            let status = if params.status.is_empty() {
+                "published"
+            } else {
+                &params.status
+            };
+            if status != "all" && content::get_entry_status(&entry.data) != status {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+
+            let mut data = content::strip_internal_status(&entry.data);
             resolve_references(&mut data, &schema_file.schema, &state.cache);
             Json(data).into_response()
         }
@@ -758,6 +779,31 @@ async fn publish(
             Json(serde_json::json!({"error": "Unknown environment"})),
         )
             .into_response();
+    }
+
+    // For production: flip all drafts to published before firing webhook
+    if environment == "production" {
+        match content::publish_all_drafts(&state.config.schemas_dir(), &state.config.content_dir())
+        {
+            Ok(count) => {
+                if count > 0 {
+                    // Rebuild cache to pick up status changes
+                    crate::cache::rebuild(
+                        &state.cache,
+                        &state.config.schemas_dir(),
+                        &state.config.content_dir(),
+                    );
+                    tracing::info!("Published {count} draft entries");
+                }
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"error": format!("Failed to publish drafts: {e}")})),
+                )
+                    .into_response();
+            }
+        }
     }
 
     match crate::webhooks::fire_webhook(
