@@ -77,6 +77,131 @@ fn string_constraints(schema: &Value, is_textarea: bool) -> (String, Vec<String>
     (attrs, hints)
 }
 
+/// Build number/integer constraint HTML attrs and hint parts.
+fn number_constraints(schema: &Value, is_integer: bool) -> (String, Vec<String>) {
+    let mut attrs = String::new();
+    let mut hints = Vec::new();
+
+    let minimum = schema.get("minimum").and_then(|v| v.as_f64());
+    let maximum = schema.get("maximum").and_then(|v| v.as_f64());
+    let exc_min = schema.get("exclusiveMinimum").and_then(|v| v.as_f64());
+    let exc_max = schema.get("exclusiveMaximum").and_then(|v| v.as_f64());
+
+    // Resolve effective min: tighter of minimum and exclusiveMinimum
+    let (effective_min, min_exclusive) = match (minimum, exc_min) {
+        (Some(m), Some(e)) => {
+            let adj = if is_integer { e + 1.0 } else { e };
+            if adj > m {
+                (Some(adj), !is_integer)
+            } else {
+                (Some(m), false)
+            }
+        }
+        (Some(m), None) => (Some(m), false),
+        (None, Some(e)) => {
+            if is_integer {
+                (Some(e + 1.0), false)
+            } else {
+                (Some(e), true)
+            }
+        }
+        (None, None) => (None, false),
+    };
+
+    // Resolve effective max: tighter of maximum and exclusiveMaximum
+    let (effective_max, max_exclusive) = match (maximum, exc_max) {
+        (Some(m), Some(e)) => {
+            let adj = if is_integer { e - 1.0 } else { e };
+            if adj < m {
+                (Some(adj), !is_integer)
+            } else {
+                (Some(m), false)
+            }
+        }
+        (Some(m), None) => (Some(m), false),
+        (None, Some(e)) => {
+            if is_integer {
+                (Some(e - 1.0), false)
+            } else {
+                (Some(e), true)
+            }
+        }
+        (None, None) => (None, false),
+    };
+
+    fn fmt_num(n: f64) -> String {
+        if n.fract() == 0.0 {
+            format!("{}", n as i64)
+        } else {
+            format!("{n}")
+        }
+    }
+
+    if let Some(min) = effective_min {
+        if !min_exclusive {
+            attrs.push_str(&format!(r#" min="{}""#, fmt_num(min)));
+        }
+    }
+    if let Some(max) = effective_max {
+        if !max_exclusive {
+            attrs.push_str(&format!(r#" max="{}""#, fmt_num(max)));
+        }
+    }
+
+    // Hint text
+    let min_hint = effective_min.map(|v| {
+        if min_exclusive {
+            format!("&gt; {}", fmt_num(v))
+        } else {
+            fmt_num(v)
+        }
+    });
+    let max_hint = effective_max.map(|v| {
+        if max_exclusive {
+            format!("&lt; {}", fmt_num(v))
+        } else {
+            fmt_num(v)
+        }
+    });
+
+    match (min_hint, max_hint) {
+        (Some(min), Some(max)) => {
+            if !min_exclusive && !max_exclusive {
+                hints.push(format!("{min}–{max}"));
+            } else {
+                hints.push(format!("{min} to {max}"));
+            }
+        }
+        (Some(min), None) => {
+            if min_exclusive {
+                hints.push(min);
+            } else {
+                hints.push(format!("Min {min}"));
+            }
+        }
+        (None, Some(max)) => {
+            if max_exclusive {
+                hints.push(max);
+            } else {
+                hints.push(format!("Max {max}"));
+            }
+        }
+        _ => {}
+    }
+
+    // multipleOf -> step
+    if let Some(step) = schema.get("multipleOf").and_then(|v| v.as_f64()) {
+        attrs.push_str(&format!(r#" step="{}""#, fmt_num(step)));
+        hints.push(format!("Step: {}", fmt_num(step)));
+    }
+
+    if let Some(desc) = get_description(schema) {
+        hints.push(desc);
+    }
+
+    (attrs, hints)
+}
+
 /// Generate HTML form fields from a JSON Schema.
 pub fn render_form_fields(
     schema: &Value,
@@ -283,16 +408,26 @@ fn render_field(
         ("number" | "integer", _) => {
             let val = value.map(|v| v.to_string()).unwrap_or_default();
             let val = val.trim_matches('"');
-            let step = if field_type == "integer" {
-                r#" step="1""#
+            let is_integer = field_type == "integer";
+
+            let (constraint_attrs, hints) = number_constraints(schema, is_integer);
+            let hint_html = build_hint_line(&hints);
+
+            // Default step if multipleOf not specified
+            let has_step = constraint_attrs.contains("step=");
+            let step = if has_step {
+                String::new()
+            } else if is_integer {
+                r#" step="1""#.to_string()
             } else {
-                r#" step="any""#
+                r#" step="any""#.to_string()
             };
+
             format!(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <input type="number" id="{name}" name="{name}" value="{val}"{step} class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
-</div>
+  <input type="number" id="{name}" name="{name}" value="{val}"{step}{constraint_attrs} class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
+{hint_html}</div>
 "#
             )
         }
@@ -685,5 +820,84 @@ mod tests {
         assert!(!html.contains("<img"), "should NOT show thumbnail for non-image");
         assert!(html.contains("/uploads/file/def456/readme.pdf"), "should link to upload");
         assert!(html.contains("__current"), "should preserve hidden current field");
+    }
+
+    #[test]
+    fn number_field_min_max_renders_attrs_and_hint() {
+        let schema = json!({
+            "properties": {
+                "price": {
+                    "type": "number",
+                    "title": "Price",
+                    "minimum": 0.01,
+                    "maximum": 9999.99
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(html.contains(r#"min="0.01""#), "should have min attr");
+        assert!(html.contains(r#"max="9999.99""#), "should have max attr");
+        assert!(html.contains("0.01–9999.99"), "should show range hint");
+    }
+
+    #[test]
+    fn integer_field_exclusive_bounds_adjusted() {
+        let schema = json!({
+            "properties": {
+                "age": {
+                    "type": "integer",
+                    "title": "Age",
+                    "exclusiveMinimum": 0,
+                    "exclusiveMaximum": 150
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains(r#"min="1""#),
+            "exclusive min 0 -> min 1 for integer"
+        );
+        assert!(
+            html.contains(r#"max="149""#),
+            "exclusive max 150 -> max 149 for integer"
+        );
+    }
+
+    #[test]
+    fn number_field_exclusive_bounds_hint_only() {
+        let schema = json!({
+            "properties": {
+                "rate": {
+                    "type": "number",
+                    "title": "Rate",
+                    "exclusiveMinimum": 0
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            !html.contains(r#"min="#),
+            "no min attr for exclusive float bound"
+        );
+        assert!(html.contains("&gt; 0"), "should show > 0 hint");
+    }
+
+    #[test]
+    fn number_field_multiple_of_renders_step() {
+        let schema = json!({
+            "properties": {
+                "quantity": {
+                    "type": "integer",
+                    "title": "Quantity",
+                    "multipleOf": 5
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains(r#"step="5""#),
+            "should override step with multipleOf"
+        );
+        assert!(html.contains("Step: 5"), "should show step hint");
     }
 }
