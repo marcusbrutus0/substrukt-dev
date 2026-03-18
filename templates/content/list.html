@@ -33,7 +33,12 @@
     <tbody class="divide-y divide-border-light">
       {% for entry in entries %}
       <tr class="hover:bg-card-alt">
-        <td class="px-4 py-2.5 font-mono text-sm text-muted">{{ entry.id }}</td>
+        <td class="px-4 py-2.5 font-mono text-sm text-muted">
+          {{ entry.id }}
+          {% if entry.status == "draft" %}
+          <span class="ml-2 px-2 py-0.5 rounded text-xs font-medium bg-accent-soft text-accent">Draft</span>
+          {% endif %}
+        </td>
         {% for col in entry.columns %}
         <td class="px-4 py-2.5 text-sm">{{ col }}</td>
         {% endfor %}

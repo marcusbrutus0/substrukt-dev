@@ -87,9 +87,11 @@ async fn list_entries(
                     minijinja::Value::from(val)
                 })
                 .collect();
+            let status = content::get_entry_status(&e.data);
             minijinja::context! {
                 id => e.id,
                 columns => cols,
+                status => status,
             }
         })
         .collect();
@@ -314,6 +316,11 @@ async fn edit_entry_page(
         return Err("Entry not found".into());
     };
 
+    let entry_status = existing_data
+        .as_ref()
+        .map(|d| content::get_entry_status(d).to_string())
+        .unwrap_or_else(|| "draft".to_string());
+
     let ref_options = build_reference_options(&schema_file.schema, &state.cache, "");
     let form_html = content_form::render_form_fields(
         &schema_file.schema,
@@ -342,6 +349,7 @@ async fn edit_entry_page(
             is_new => is_new,
             is_single => is_single,
             form_fields => form_html,
+            entry_status => entry_status,
         })
         .map_err(|e| format!("Render error: {e}"))?;
     Ok(Html(html))
