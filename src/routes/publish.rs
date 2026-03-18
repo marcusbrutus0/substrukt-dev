@@ -14,6 +14,9 @@ async fn publish(
     session: Session,
     Path(environment): Path<String>,
 ) -> impl IntoResponse {
+    if auth::require_role(&session, "editor").await.is_err() {
+        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+    }
     if !matches!(environment.as_str(), "staging" | "production") {
         return Redirect::to("/").into_response();
     }

@@ -213,7 +213,10 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-async fn upload_file(State(state): State<AppState>, mut multipart: Multipart) -> impl IntoResponse {
+async fn upload_file(State(state): State<AppState>, session: Session, mut multipart: Multipart) -> impl IntoResponse {
+    if auth::require_role(&session, "editor").await.is_err() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": "Insufficient permissions"}))).into_response();
+    }
     while let Ok(Some(field)) = multipart.next_field().await {
         let filename = field.file_name().unwrap_or("file").to_string();
         let content_type = field

@@ -257,6 +257,7 @@ async fn new_entry_page(
     session: Session,
     Path(schema_slug): Path<String>,
 ) -> axum::response::Result<axum::response::Response> {
+    auth::require_role(&session, "editor").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let schema_file = schema::get_schema(&state.config.schemas_dir(), &schema_slug)
         .map_err(|e| format!("Error: {e}"))?
@@ -348,6 +349,9 @@ async fn create_entry(
     Path(schema_slug): Path<String>,
     multipart: Multipart,
 ) -> impl IntoResponse {
+    if auth::require_role(&session, "editor").await.is_err() {
+        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+    }
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
         _ => return Redirect::to("/schemas").into_response(),
@@ -435,6 +439,9 @@ async fn update_entry(
     Path((schema_slug, entry_id)): Path<(String, String)>,
     multipart: Multipart,
 ) -> impl IntoResponse {
+    if auth::require_role(&session, "editor").await.is_err() {
+        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+    }
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
         _ => return Redirect::to("/schemas").into_response(),
@@ -543,6 +550,9 @@ async fn delete_entry(
     session: Session,
     Path((schema_slug, entry_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
+    if auth::require_role(&session, "editor").await.is_err() {
+        return axum::http::StatusCode::FORBIDDEN;
+    }
     let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
         Ok(Some(s)) => s,
         _ => return axum::http::StatusCode::NOT_FOUND,
@@ -711,6 +721,9 @@ async fn revert_entry(
     Path((schema_slug, entry_id, timestamp)): Path<(String, String, u64)>,
     axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
+    if auth::require_role(&session, "editor").await.is_err() {
+        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+    }
     // Verify CSRF
     let csrf_value = form.get("_csrf").map(|s| s.as_str());
     if !matches!(csrf_value, Some(token) if auth::verify_csrf_token(&session, token).await) {

@@ -72,6 +72,7 @@ async fn new_schema_page(
     State(state): State<AppState>,
     session: Session,
 ) -> axum::response::Result<Html<String>> {
+    auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let default_schema = serde_json::json!({
         "x-substrukt": {
@@ -112,7 +113,7 @@ async fn create_schema(
     session: Session,
     Form(form): Form<SchemaForm>,
 ) -> impl IntoResponse {
-    let user_id = auth::current_user_id(&session).await.unwrap_or(0);
+    let user_id = auth::require_role(&session, "admin").await.unwrap_or(0);
     let schema_value: serde_json::Value = match serde_json::from_str(&form.schema_json) {
         Ok(v) => v,
         Err(e) => {
@@ -171,6 +172,7 @@ async fn edit_schema_page(
     session: Session,
     Path(slug): Path<String>,
 ) -> axum::response::Result<impl IntoResponse> {
+    auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let schema = schema::get_schema(&state.config.schemas_dir(), &slug)
         .map_err(|e| format!("Error: {e}"))?
@@ -201,7 +203,7 @@ async fn update_schema(
     Path(slug): Path<String>,
     Form(form): Form<SchemaForm>,
 ) -> impl IntoResponse {
-    let user_id = auth::current_user_id(&session).await.unwrap_or(0);
+    let user_id = auth::require_role(&session, "admin").await.unwrap_or(0);
     let schema_value: serde_json::Value = match serde_json::from_str(&form.schema_json) {
         Ok(v) => v,
         Err(e) => {
@@ -245,7 +247,7 @@ async fn delete_schema(
     session: Session,
     Path(slug): Path<String>,
 ) -> impl IntoResponse {
-    let user_id = auth::current_user_id(&session).await.unwrap_or(0);
+    let user_id = auth::require_role(&session, "admin").await.unwrap_or(0);
     let _ = schema::delete_schema(&state.config.schemas_dir(), &slug);
     state
         .audit
