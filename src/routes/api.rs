@@ -308,13 +308,15 @@ async fn update_entry(
     if let Ok(Some(current)) =
         content::get_entry(&state.config.content_dir(), &schema_file, &entry_id)
     {
-        let _ = crate::history::snapshot_entry(
+        if let Err(e) = crate::history::snapshot_entry(
             &state.config.data_dir,
             &schema_slug,
             &entry_id,
             &current.data,
             state.config.version_history_count,
-        );
+        ) {
+            tracing::warn!("Failed to snapshot version: {e}");
+        }
     }
 
     let hashes = uploads::extract_upload_hashes(&data);
@@ -370,6 +372,7 @@ async fn delete_entry(
     let _ = uploads::db_delete_references(&state.pool, &schema_slug, &entry_id).await;
     match content::delete_entry(&state.config.content_dir(), &schema_file, &entry_id) {
         Ok(()) => {
+            crate::history::delete_history(&state.config.data_dir, &schema_slug, &entry_id);
             let key = format!("{schema_slug}/{entry_id}");
             state.cache.remove(&key);
             state.audit.log(
@@ -451,13 +454,15 @@ async fn upsert_single(
     if let Ok(Some(current)) =
         content::get_entry(&state.config.content_dir(), &schema_file, "_single")
     {
-        let _ = crate::history::snapshot_entry(
+        if let Err(e) = crate::history::snapshot_entry(
             &state.config.data_dir,
             &schema_slug,
             "_single",
             &current.data,
             state.config.version_history_count,
-        );
+        ) {
+            tracing::warn!("Failed to snapshot version: {e}");
+        }
     }
 
     let hashes = uploads::extract_upload_hashes(&data);
@@ -513,6 +518,7 @@ async fn delete_single(
     let _ = uploads::db_delete_references(&state.pool, &schema_slug, "_single").await;
     match content::delete_entry(&state.config.content_dir(), &schema_file, "_single") {
         Ok(()) => {
+            crate::history::delete_history(&state.config.data_dir, &schema_slug, "_single");
             let key = format!("{schema_slug}/_single");
             state.cache.remove(&key);
             state.audit.log(

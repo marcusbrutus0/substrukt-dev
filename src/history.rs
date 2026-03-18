@@ -31,7 +31,7 @@ pub fn snapshot_entry(
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs();
+        .as_millis() as u64;
     let path = dir.join(format!("{timestamp}.json"));
     let content = serde_json::to_string_pretty(current_data)?;
     std::fs::write(path, content)?;
@@ -87,6 +87,14 @@ pub fn get_version(
     let content = std::fs::read_to_string(&path)?;
     let data: Value = serde_json::from_str(&content)?;
     Ok(Some(data))
+}
+
+/// Remove all history for an entry (call when the entry is deleted).
+pub fn delete_history(data_dir: &Path, schema_slug: &str, entry_id: &str) {
+    let dir = history_dir(data_dir, schema_slug, entry_id);
+    if dir.exists() {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 fn prune_versions(dir: &Path, max_versions: usize) -> eyre::Result<()> {

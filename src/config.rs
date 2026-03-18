@@ -57,10 +57,6 @@ impl Config {
         self.data_dir.join("uploads")
     }
 
-    pub fn history_dir(&self) -> PathBuf {
-        self.data_dir.join("_history")
-    }
-
     pub fn ensure_dirs(&self) -> eyre::Result<()> {
         std::fs::create_dir_all(self.schemas_dir())?;
         std::fs::create_dir_all(self.content_dir())?;

@@ -488,13 +488,15 @@ async fn update_entry(
     if let Ok(Some(current)) =
         content::get_entry(&state.config.content_dir(), &schema_file, &entry_id)
     {
-        let _ = crate::history::snapshot_entry(
+        if let Err(e) = crate::history::snapshot_entry(
             &state.config.data_dir,
             &schema_slug,
             &entry_id,
             &current.data,
             state.config.version_history_count,
-        );
+        ) {
+            tracing::warn!("Failed to snapshot version: {e}");
+        }
     }
 
     let hashes = uploads::extract_upload_hashes(&data);
@@ -548,6 +550,7 @@ async fn delete_entry(
 
     let _ = uploads::db_delete_references(&state.pool, &schema_slug, &entry_id).await;
     let _ = content::delete_entry(&state.config.content_dir(), &schema_file, &entry_id);
+    crate::history::delete_history(&state.config.data_dir, &schema_slug, &entry_id);
     let key = format!("{schema_slug}/{entry_id}");
     state.cache.remove(&key);
 
@@ -737,13 +740,15 @@ async fn revert_entry(
     if let Ok(Some(current)) =
         content::get_entry(&state.config.content_dir(), &schema_file, &entry_id)
     {
-        let _ = crate::history::snapshot_entry(
+        if let Err(e) = crate::history::snapshot_entry(
             &state.config.data_dir,
             &schema_slug,
             &entry_id,
             &current.data,
             state.config.version_history_count,
-        );
+        ) {
+            tracing::warn!("Failed to snapshot version: {e}");
+        }
     }
 
     match content::save_entry(
