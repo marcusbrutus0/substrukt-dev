@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use serde::Deserialize;
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub data_dir: PathBuf,
@@ -12,6 +14,30 @@ pub struct Config {
     pub production_webhook_url: Option<String>,
     pub production_webhook_auth_token: Option<String>,
     pub webhook_check_interval: u64,
+    pub serve_llms_txt: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct TomlConfig {
+    #[serde(default)]
+    features: FeaturesConfig,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct FeaturesConfig {
+    #[serde(default)]
+    serve_llms_txt: bool,
+}
+
+fn load_toml_config() -> TomlConfig {
+    let path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("substrukt.toml")))
+        .unwrap_or_else(|| std::path::PathBuf::from("substrukt.toml"));
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return TomlConfig::default();
+    };
+    toml::from_str(&contents).unwrap_or_default()
 }
 
 impl Config {
@@ -26,6 +52,7 @@ impl Config {
         production_webhook_auth_token: Option<String>,
         webhook_check_interval: Option<u64>,
     ) -> Self {
+        let toml = load_toml_config();
         let data_dir = data_dir.unwrap_or_else(|| PathBuf::from("data"));
         let db_path = db_path.unwrap_or_else(|| data_dir.join("substrukt.db"));
         Self {
@@ -39,6 +66,7 @@ impl Config {
             production_webhook_url,
             production_webhook_auth_token,
             webhook_check_interval: webhook_check_interval.unwrap_or(300),
+            serve_llms_txt: toml.features.serve_llms_txt,
         }
     }
 

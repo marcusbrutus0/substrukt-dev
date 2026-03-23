@@ -58,11 +58,21 @@ fn handle_panic(_err: Box<dyn std::any::Any + Send + 'static>) -> axum::response
         .into_response()
 }
 
-async fn serve_llms_txt() -> impl IntoResponse {
+async fn serve_llms_txt(State(state): State<AppState>) -> impl IntoResponse {
+    if !state.config.serve_llms_txt {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            [("content-type", "text/plain; charset=utf-8")],
+            "",
+        )
+            .into_response();
+    }
     (
+        axum::http::StatusCode::OK,
         [("content-type", "text/plain; charset=utf-8")],
         include_str!("../../llms.txt"),
     )
+        .into_response()
 }
 
 async fn not_found(
