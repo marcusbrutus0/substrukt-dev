@@ -70,6 +70,11 @@ impl Config {
         }
     }
 
+    pub fn with_serve_llms_txt(mut self, value: bool) -> Self {
+        self.serve_llms_txt = value;
+        self
+    }
+
     pub fn schemas_dir(&self) -> PathBuf {
         self.data_dir.join("schemas")
     }

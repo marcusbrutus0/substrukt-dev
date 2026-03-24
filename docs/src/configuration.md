@@ -1,6 +1,21 @@
 # Configuration
 
-All configuration is passed as CLI flags. There are no config files or environment variables for server settings.
+Most configuration is passed as CLI flags. Optional features are controlled via a `substrukt.toml` file placed next to the binary.
+
+## substrukt.toml
+
+Place a `substrukt.toml` file in the same directory as the `substrukt` binary to enable optional features. If the file is absent, all features default to off.
+
+```toml
+[features]
+serve_llms_txt = true  # Serve /llms.txt — AI agent instructions for this CMS instance
+```
+
+### Features
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `serve_llms_txt` | `false` | Serve the built-in `/llms.txt` file describing the Substrukt API for AI agents |
 
 ## CLI flags
 

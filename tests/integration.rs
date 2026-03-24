@@ -34,6 +34,23 @@ impl TestServer {
             .await
     }
 
+    async fn start_with_config(config_override: impl FnOnce(Config) -> Config) -> Self {
+        let data_dir = tempfile::tempdir().unwrap();
+        let db_path = data_dir.path().join("test.db");
+        let config = config_override(Config::new(
+            Some(data_dir.path().to_path_buf()),
+            Some(db_path),
+            Some(0),
+            false,
+            None,
+            None,
+            None,
+            None,
+            Some(3600),
+        ));
+        Self::boot(config, data_dir).await
+    }
+
     async fn start_with_webhook_auth(
         staging_webhook_url: Option<String>,
         staging_webhook_auth_token: Option<String>,
@@ -53,6 +70,10 @@ impl TestServer {
             production_webhook_auth_token,
             Some(3600), // long interval so cron doesn't fire during tests
         );
+        Self::boot(config, data_dir).await
+    }
+
+    async fn boot(config: Config, data_dir: tempfile::TempDir) -> Self {
         config.ensure_dirs().unwrap();
 
         let pool = db::init_pool(&config.db_path).await.unwrap();
@@ -1937,4 +1958,30 @@ fn extract_csrf_token(html: &str) -> Option<String> {
         }
     }
     None
+}
+
+// ── llms.txt tests ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn llms_txt_returns_404_when_flag_is_off() {
+    let s = TestServer::start_with_config(|c| c.with_serve_llms_txt(false)).await;
+    let resp = s.client.get(s.url("/llms.txt")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn llms_txt_returns_200_with_content_when_flag_is_on() {
+    let s = TestServer::start_with_config(|c| c.with_serve_llms_txt(true)).await;
+    let resp = s.client.get(s.url("/llms.txt")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .contains("text/plain"),
+        "expected content-type: text/plain"
+    );
+    let body = resp.text().await.unwrap();
+    assert!(!body.is_empty(), "llms.txt body should not be empty");
 }
