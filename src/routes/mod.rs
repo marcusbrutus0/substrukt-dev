@@ -41,6 +41,7 @@ pub fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn(verify_csrf))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .nest("/api/v1", api_routes)
+        .route("/healthz", axum::routing::get(healthz))
         .route("/metrics", axum::routing::get(metrics::metrics_handler))
         .fallback(not_found)
         .layer(middleware::from_fn(metrics::track_metrics))
@@ -79,6 +80,10 @@ pub fn render_error(state: &AppState, status: u16, message: &str, is_htmx: bool)
         return html;
     }
     format!("<h1>{status}</h1><p>{message}</p>")
+}
+
+async fn healthz() -> &'static str {
+    "ok"
 }
 
 async fn dashboard(

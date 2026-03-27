@@ -27,23 +27,25 @@ RUN touch src/main.rs src/lib.rs && cargo build --release
 # Stage 2: Runtime
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates curl gosu && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --shell /bin/bash substrukt
 
 COPY --from=builder /build/target/release/substrukt /usr/local/bin/substrukt
 COPY --from=builder /build/templates /opt/substrukt/templates
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /opt/substrukt
 
 # Create data directories as mount points
 RUN mkdir -p /data/schemas /data/content /data/uploads && chown -R substrukt:substrukt /data
 
-USER substrukt
-
 EXPOSE 3000
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/healthz || exit 1
 
 VOLUME ["/data"]
 
-ENTRYPOINT ["substrukt"]
-CMD ["serve", "--data-dir", "/data", "--db-path", "/data/substrukt.db", "--port", "3000"]
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["substrukt", "serve", "--data-dir", "/data", "--db-path", "/data/substrukt.db", "--port", "3000"]
