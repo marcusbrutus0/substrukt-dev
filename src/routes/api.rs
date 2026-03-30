@@ -907,31 +907,6 @@ async fn publish(
             .into_response();
     }
 
-    // For production: flip all drafts to published before firing webhook
-    if environment == "production" {
-        match content::publish_all_drafts(&state.config.schemas_dir(), &state.config.content_dir())
-        {
-            Ok(count) => {
-                if count > 0 {
-                    // Rebuild cache to pick up status changes
-                    crate::cache::rebuild(
-                        &state.cache,
-                        &state.config.schemas_dir(),
-                        &state.config.content_dir(),
-                    );
-                    tracing::info!("Published {count} draft entries");
-                }
-            }
-            Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": format!("Failed to publish drafts: {e}")})),
-                )
-                    .into_response();
-            }
-        }
-    }
-
     match crate::webhooks::fire_webhook(
         &state.http_client,
         &state.audit,

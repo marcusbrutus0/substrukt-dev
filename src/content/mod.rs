@@ -343,75 +343,6 @@ pub fn filter_by_status(entries: Vec<ContentEntry>, status: &str) -> Vec<Content
     }
 }
 
-/// Flip all draft entries to published across all schemas. Returns count of entries published.
-/// Bypasses save_entry to avoid validation/snapshot overhead (metadata-only change).
-pub fn publish_all_drafts(schemas_dir: &Path, content_dir: &Path) -> eyre::Result<usize> {
-    let schemas = crate::schema::list_schemas(schemas_dir)?;
-    let mut count = 0;
-
-    for schema in &schemas {
-        let entries = list_entries(content_dir, schema)?;
-        let draft_entries: Vec<&ContentEntry> = entries
-            .iter()
-            .filter(|e| get_entry_status(&e.data) == "draft")
-            .collect();
-
-        if draft_entries.is_empty() {
-            continue;
-        }
-
-        match schema.meta.storage {
-            StorageMode::Directory => {
-                let dir = content_dir.join(&schema.meta.slug);
-                for entry in &draft_entries {
-                    let mut data = entry.data.clone();
-                    if let Some(obj) = data.as_object_mut() {
-                        obj.insert("_status".to_string(), Value::String("published".to_string()));
-                    }
-                    let path = dir.join(format!("{}.json", entry.id));
-                    std::fs::write(&path, serde_json::to_string_pretty(&data)?)?;
-                    count += 1;
-                }
-            }
-            StorageMode::SingleFile => {
-                let path = content_dir.join(format!("{}.json", schema.meta.slug));
-                if schema.meta.kind == Kind::Single {
-                    // Single entry
-                    if let Some(entry) = draft_entries.first() {
-                        let mut data = entry.data.clone();
-                        if let Some(obj) = data.as_object_mut() {
-                            obj.insert(
-                                "_status".to_string(),
-                                Value::String("published".to_string()),
-                            );
-                        }
-                        std::fs::write(&path, serde_json::to_string_pretty(&data)?)?;
-                        count += 1;
-                    }
-                } else {
-                    // Collection in single file — rewrite entire file
-                    let content = std::fs::read_to_string(&path)?;
-                    let mut all: Vec<Value> = serde_json::from_str(&content)?;
-                    for item in &mut all {
-                        if get_entry_status(item) == "draft" {
-                            if let Some(obj) = item.as_object_mut() {
-                                obj.insert(
-                                    "_status".to_string(),
-                                    Value::String("published".to_string()),
-                                );
-                            }
-                            count += 1;
-                        }
-                    }
-                    std::fs::write(&path, serde_json::to_string_pretty(&all)?)?;
-                }
-            }
-        }
-    }
-
-    Ok(count)
-}
-
 /// Strip `_status` from entry data for API responses.
 pub fn strip_internal_status(data: &Value) -> Value {
     let mut data = data.clone();
@@ -650,52 +581,6 @@ mod tests {
         ];
         let filtered = filter_by_status(entries, "all");
         assert_eq!(filtered.len(), 2);
-    }
-
-    #[test]
-    fn publish_all_drafts_flips_status() {
-        let tmp = TempDir::new().unwrap();
-        let schema = test_schema(Kind::Collection, StorageMode::Directory);
-
-        // Create two entries (both draft)
-        save_entry(tmp.path(), &schema, None, json!({"title": "A"})).unwrap();
-        save_entry(tmp.path(), &schema, None, json!({"title": "B"})).unwrap();
-
-        let schemas_dir = tmp.path().join("schemas");
-        std::fs::create_dir_all(&schemas_dir).unwrap();
-        // Write schema JSON so list_schemas can find it
-        let schema_json = json!({
-            "x-substrukt": {
-                "title": "Test",
-                "slug": "test",
-                "storage": "directory"
-            },
-            "type": "object",
-            "properties": {
-                "title": { "type": "string" }
-            }
-        });
-        std::fs::write(
-            schemas_dir.join("test.json"),
-            serde_json::to_string_pretty(&schema_json).unwrap(),
-        ).unwrap();
-
-        let count = publish_all_drafts(&schemas_dir, tmp.path()).unwrap();
-        assert_eq!(count, 2, "should publish 2 draft entries");
-
-        let entries = list_entries(tmp.path(), &schema).unwrap();
-        for entry in &entries {
-            assert_eq!(
-                entry.data.get("_status").and_then(|v| v.as_str()),
-                Some("published"),
-                "entry {} should be published",
-                entry.id
-            );
-        }
-
-        // Running again should publish 0
-        let count = publish_all_drafts(&schemas_dir, tmp.path()).unwrap();
-        assert_eq!(count, 0, "no drafts left to publish");
     }
 
     #[test]
