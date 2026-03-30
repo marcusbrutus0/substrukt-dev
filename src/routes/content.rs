@@ -28,6 +28,14 @@ pub fn routes() -> Router<AppState> {
         .route("/{schema_slug}/new", get(new_entry_page).post(create_entry))
         .route("/{schema_slug}/{entry_id}/edit", get(edit_entry_page))
         .route(
+            "/{schema_slug}/{entry_id}/publish",
+            axum::routing::post(publish_entry),
+        )
+        .route(
+            "/{schema_slug}/{entry_id}/unpublish",
+            axum::routing::post(unpublish_entry),
+        )
+        .route(
             "/{schema_slug}/{entry_id}",
             axum::routing::post(update_entry).delete(delete_entry),
         )
@@ -594,6 +602,160 @@ async fn delete_entry(
     );
 
     axum::http::StatusCode::NO_CONTENT
+}
+
+async fn publish_entry(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+    Path((schema_slug, entry_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if auth::require_role(&session, "editor").await.is_err() {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
+    }
+    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+        Ok(Some(s)) => s,
+        _ => {
+            auth::set_flash(&session, "error", "Schema not found").await;
+            return Redirect::to("/").into_response();
+        }
+    };
+
+    if let Err(e) = content::set_entry_status(
+        &state.config.content_dir(),
+        &schema_file,
+        &entry_id,
+        "published",
+    ) {
+        tracing::error!("Publish failed: {e}");
+        auth::set_flash(&session, "error", "Failed to publish entry").await;
+        return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response();
+    }
+
+    crate::cache::reload_entry(
+        &state.cache,
+        &state.config.content_dir(),
+        &schema_file,
+        &entry_id,
+    );
+
+    let user_id = auth::current_user_id(&session).await.unwrap_or(0);
+    state.audit.log(
+        &user_id.to_string(),
+        "entry_published",
+        "content",
+        &format!("{schema_slug}/{entry_id}"),
+        None,
+    );
+
+    if is_htmx {
+        let csrf_token = auth::ensure_csrf_token(&session).await;
+        let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+        let tmpl = state
+            .templates
+            .acquire_env()
+            .map_err(|e| format!("Template env error: {e}"))
+            .unwrap();
+        let template = tmpl
+            .get_template("content/_status_control.html")
+            .map_err(|e| format!("Template error: {e}"))
+            .unwrap();
+        let html = template
+            .render(minijinja::context! {
+                csrf_token => csrf_token,
+                user_role => user_role,
+                schema_slug => schema_slug,
+                entry_id => entry_id,
+                entry_status => "published",
+            })
+            .map_err(|e| format!("Render error: {e}"))
+            .unwrap();
+        return Html(html).into_response();
+    }
+
+    auth::set_flash(&session, "success", "Entry published").await;
+    Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response()
+}
+
+async fn unpublish_entry(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+    Path((schema_slug, entry_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if auth::require_role(&session, "editor").await.is_err() {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
+    }
+    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+        Ok(Some(s)) => s,
+        _ => {
+            auth::set_flash(&session, "error", "Schema not found").await;
+            return Redirect::to("/").into_response();
+        }
+    };
+
+    if let Err(e) = content::set_entry_status(
+        &state.config.content_dir(),
+        &schema_file,
+        &entry_id,
+        "draft",
+    ) {
+        tracing::error!("Unpublish failed: {e}");
+        auth::set_flash(&session, "error", "Failed to unpublish entry").await;
+        return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response();
+    }
+
+    crate::cache::reload_entry(
+        &state.cache,
+        &state.config.content_dir(),
+        &schema_file,
+        &entry_id,
+    );
+
+    let user_id = auth::current_user_id(&session).await.unwrap_or(0);
+    state.audit.log(
+        &user_id.to_string(),
+        "entry_unpublished",
+        "content",
+        &format!("{schema_slug}/{entry_id}"),
+        None,
+    );
+
+    if is_htmx {
+        let csrf_token = auth::ensure_csrf_token(&session).await;
+        let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+        let tmpl = state
+            .templates
+            .acquire_env()
+            .map_err(|e| format!("Template env error: {e}"))
+            .unwrap();
+        let template = tmpl
+            .get_template("content/_status_control.html")
+            .map_err(|e| format!("Template error: {e}"))
+            .unwrap();
+        let html = template
+            .render(minijinja::context! {
+                csrf_token => csrf_token,
+                user_role => user_role,
+                schema_slug => schema_slug,
+                entry_id => entry_id,
+                entry_status => "draft",
+            })
+            .map_err(|e| format!("Render error: {e}"))
+            .unwrap();
+        return Html(html).into_response();
+    }
+
+    auth::set_flash(&session, "success", "Entry unpublished").await;
+    Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response()
 }
 
 struct UploadField {
