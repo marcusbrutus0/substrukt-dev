@@ -34,6 +34,14 @@ pub fn routes(state: AppState) -> Router<AppState> {
             get(get_single).put(upsert_single).delete(delete_single),
         )
         .route(
+            "/content/{schema_slug}/{entry_id}/publish",
+            post(api_publish_entry),
+        )
+        .route(
+            "/content/{schema_slug}/{entry_id}/unpublish",
+            post(api_unpublish_entry),
+        )
+        .route(
             "/content/{schema_slug}/{entry_id}",
             get(get_entry).put(update_entry).delete(delete_entry),
         )
@@ -594,6 +602,124 @@ async fn delete_single(
         )
             .into_response(),
     }
+}
+
+async fn api_publish_entry(
+    State(state): State<AppState>,
+    token: BearerToken,
+    Path((schema_slug, entry_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
+    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(e) = content::set_entry_status(
+        &state.config.content_dir(),
+        &schema_file,
+        &entry_id,
+        "published",
+    ) {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": msg})),
+            )
+                .into_response();
+        }
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": msg})),
+        )
+            .into_response();
+    }
+
+    crate::cache::reload_entry(
+        &state.cache,
+        &state.config.content_dir(),
+        &schema_file,
+        &entry_id,
+    );
+
+    state.audit.log(
+        "api",
+        "entry_published",
+        "content",
+        &format!("{schema_slug}/{entry_id}"),
+        None,
+    );
+
+    Json(serde_json::json!({"status": "published", "entry_id": entry_id})).into_response()
+}
+
+async fn api_unpublish_entry(
+    State(state): State<AppState>,
+    token: BearerToken,
+    Path((schema_slug, entry_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
+    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(e) = content::set_entry_status(
+        &state.config.content_dir(),
+        &schema_file,
+        &entry_id,
+        "draft",
+    ) {
+        let msg = e.to_string();
+        if msg.contains("not found") {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": msg})),
+            )
+                .into_response();
+        }
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": msg})),
+        )
+            .into_response();
+    }
+
+    crate::cache::reload_entry(
+        &state.cache,
+        &state.config.content_dir(),
+        &schema_file,
+        &entry_id,
+    );
+
+    state.audit.log(
+        "api",
+        "entry_unpublished",
+        "content",
+        &format!("{schema_slug}/{entry_id}"),
+        None,
+    );
+
+    Json(serde_json::json!({"status": "draft", "entry_id": entry_id})).into_response()
 }
 
 async fn upload_file(
