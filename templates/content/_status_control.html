@@ -1,0 +1,31 @@
+<span id="entry-status" class="ml-2 align-middle inline-flex items-center gap-2">
+  {% if entry_status == "draft" %}
+    <span class="px-2 py-0.5 rounded text-xs font-medium bg-accent-soft text-accent">Draft</span>
+    {% if user_role != "viewer" %}
+    <form method="post" action="/content/{{ schema_slug }}/{{ entry_id }}/publish"
+          hx-post="/content/{{ schema_slug }}/{{ entry_id }}/publish"
+          hx-target="#entry-status" hx-swap="outerHTML"
+          class="inline">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit"
+              class="px-3 py-1 rounded text-xs font-medium bg-success text-white hover:bg-success-hover">
+        Publish
+      </button>
+    </form>
+    {% endif %}
+  {% else %}
+    <span class="px-2 py-0.5 rounded text-xs font-medium bg-success-soft text-success">Published</span>
+    {% if user_role != "viewer" %}
+    <form method="post" action="/content/{{ schema_slug }}/{{ entry_id }}/unpublish"
+          hx-post="/content/{{ schema_slug }}/{{ entry_id }}/unpublish"
+          hx-target="#entry-status" hx-swap="outerHTML"
+          class="inline">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit"
+              class="px-3 py-1 rounded text-xs font-medium border border-border text-secondary hover:bg-card-alt">
+        Unpublish
+      </button>
+    </form>
+    {% endif %}
+  {% endif %}
+</span>
