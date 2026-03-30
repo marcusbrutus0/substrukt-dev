@@ -111,9 +111,15 @@ pub fn save_entry(
 ) -> eyre::Result<String> {
     let slug = &schema.meta.slug;
 
-    // Determine _status: draft for new entries, preserve existing for updates
-    let status = if let Some(eid) = entry_id {
-        // Update path: try to read existing _status
+    // Determine _status: respect explicit value, else preserve existing, else draft
+    let status = if let Some(explicit) = data.get("_status").and_then(|v| v.as_str()) {
+        // Caller explicitly set _status (API use case) — respect it
+        match explicit {
+            "draft" | "published" => explicit.to_string(),
+            _ => "draft".to_string(), // invalid values fall back to draft
+        }
+    } else if let Some(eid) = entry_id {
+        // Update path: preserve existing status from disk
         get_entry(content_dir, schema, eid)
             .ok()
             .flatten()
@@ -125,6 +131,7 @@ pub fn save_entry(
             })
             .unwrap_or_else(|| "draft".to_string())
     } else {
+        // Create path: default to draft
         "draft".to_string()
     };
 
@@ -700,6 +707,57 @@ mod tests {
         assert_eq!(get_entry_status(&data_draft), "draft");
         assert_eq!(get_entry_status(&data_published), "published");
         assert_eq!(get_entry_status(&data_legacy), "published");
+    }
+
+    #[test]
+    fn save_entry_explicit_status_published_on_create() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::Directory);
+        let data = json!({"title": "Hello", "_status": "published"});
+        let id = save_entry(tmp.path(), &schema, None, data).unwrap();
+
+        let entry = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
+        assert_eq!(
+            entry.data.get("_status").and_then(|v| v.as_str()),
+            Some("published"),
+            "explicit _status in data should be respected on create"
+        );
+    }
+
+    #[test]
+    fn save_entry_explicit_status_draft_on_update() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::Directory);
+        let id = save_entry(tmp.path(), &schema, None, json!({"title": "Hello"})).unwrap();
+
+        // Publish the entry via set_entry_status
+        set_entry_status(tmp.path(), &schema, &id, "published").unwrap();
+
+        // Update with explicit _status: "draft" — should override existing published status
+        let data = json!({"title": "Updated", "_status": "draft"});
+        save_entry(tmp.path(), &schema, Some(&id), data).unwrap();
+
+        let entry = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
+        assert_eq!(
+            entry.data.get("_status").and_then(|v| v.as_str()),
+            Some("draft"),
+            "explicit _status: draft should override existing published"
+        );
+    }
+
+    #[test]
+    fn save_entry_explicit_invalid_status_falls_back_to_draft() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::Directory);
+        let data = json!({"title": "Hello", "_status": "archived"});
+        let id = save_entry(tmp.path(), &schema, None, data).unwrap();
+
+        let entry = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
+        assert_eq!(
+            entry.data.get("_status").and_then(|v| v.as_str()),
+            Some("draft"),
+            "invalid _status value should normalize to draft"
+        );
     }
 
     #[test]
