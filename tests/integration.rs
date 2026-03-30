@@ -2788,7 +2788,7 @@ async fn content_draft_published_lifecycle() {
 }
 
 #[tokio::test]
-async fn production_publish_flips_drafts() {
+async fn production_publish_does_not_flip_drafts() {
     let s = TestServer::start().await;
     s.setup_admin().await;
     s.create_schema(DRAFT_TEST_SCHEMA).await;
@@ -2799,12 +2799,16 @@ async fn production_publish_flips_drafts() {
         .unwrap();
 
     // Create two entries
-    api.post(s.url("/api/v1/content/draft-posts"))
+    let resp = api
+        .post(s.url("/api/v1/content/draft-posts"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Article 1"}))
         .send()
         .await
         .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let id1 = body["id"].as_str().unwrap().to_string();
+
     api.post(s.url("/api/v1/content/draft-posts"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Article 2"}))
@@ -2822,26 +2826,15 @@ async fn production_publish_flips_drafts() {
     let entries: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(entries.as_array().unwrap().len(), 2);
 
-    // Publish to production
-    let resp = api
+    // Fire production publish — should NOT flip drafts
+    let _ = api
         .post(s.url("/api/v1/publish/production"))
         .bearer_auth(&token)
         .send()
         .await
         .unwrap();
-    let _ = resp.status();
 
-    // Now default API should return both entries (published)
-    let resp = api
-        .get(s.url("/api/v1/content/draft-posts"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    let entries: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 2, "both entries should now be published");
-
-    // No more drafts
+    // Drafts should still be draft
     let resp = api
         .get(s.url("/api/v1/content/draft-posts?status=draft"))
         .bearer_auth(&token)
@@ -2849,7 +2842,35 @@ async fn production_publish_flips_drafts() {
         .await
         .unwrap();
     let entries: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 0, "no drafts should remain");
+    assert_eq!(entries.as_array().unwrap().len(), 2, "production publish should NOT flip drafts");
+
+    // Publish one entry individually
+    let resp = api
+        .post(s.url(&format!("/api/v1/content/draft-posts/{id1}/publish")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Now one published, one draft
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1, "only the individually published entry should appear");
+
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1, "one entry should still be draft");
 }
 
 #[tokio::test]
@@ -2931,13 +2952,14 @@ async fn single_schema_draft_published() {
     assert_eq!(data["site_name"], "Test Site");
     assert!(data.get("_status").is_none(), "_status should be stripped");
 
-    // Publish production — flips draft to published
-    let _ = api
-        .post(s.url("/api/v1/publish/production"))
+    // Publish the single entry via dedicated endpoint
+    let resp = api
+        .post(s.url("/api/v1/content/site-settings/_single/publish"))
         .bearer_auth(&token)
         .send()
         .await
         .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 
     // GET /single (default) now returns 200 — published
     let resp = api
@@ -3045,4 +3067,621 @@ async fn audit_log_shows_entries_and_filters() {
         .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("No audit log entries."));
+}
+
+// ── Per-Entry Publish/Unpublish tests ──────────────────────────
+
+#[tokio::test]
+async fn api_publish_entry() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("publish-test").await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Create schema
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Pub Test", "slug": "pub-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Create entry via API (starts as draft)
+    let resp = api
+        .post(s.url("/api/v1/content/pub-test"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Draft Post"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let entry_id = body["id"].as_str().unwrap().to_string();
+
+    // Entry is draft — default list (published only) should be empty
+    let resp = api
+        .get(s.url("/api/v1/content/pub-test"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(entries.len(), 0, "draft entry should not appear in published-only list");
+
+    // Publish the entry
+    let resp = api
+        .post(s.url(&format!("/api/v1/content/pub-test/{entry_id}/publish")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "published");
+    assert_eq!(body["entry_id"], entry_id);
+
+    // Entry now visible in default list
+    let resp = api
+        .get(s.url("/api/v1/content/pub-test"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(entries.len(), 1, "published entry should appear in default list");
+
+    // Unpublish the entry
+    let resp = api
+        .post(s.url(&format!("/api/v1/content/pub-test/{entry_id}/unpublish")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "draft");
+
+    // Entry no longer in default list
+    let resp = api
+        .get(s.url("/api/v1/content/pub-test"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(entries.len(), 0, "unpublished entry should not appear in default list");
+}
+
+#[tokio::test]
+async fn api_publish_idempotent() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("idempotent-test").await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Idemp Test", "slug": "idemp-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    let resp = api
+        .post(s.url("/api/v1/content/idemp-test"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Hello"}))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let entry_id = body["id"].as_str().unwrap().to_string();
+
+    // Unpublish a draft (idempotent) — should succeed
+    let resp = api
+        .post(s.url(&format!("/api/v1/content/idemp-test/{entry_id}/unpublish")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Publish twice (idempotent) — should succeed
+    api.post(s.url(&format!("/api/v1/content/idemp-test/{entry_id}/publish")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let resp = api
+        .post(s.url(&format!("/api/v1/content/idemp-test/{entry_id}/publish")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "published");
+}
+
+#[tokio::test]
+async fn api_publish_unauthenticated() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Auth Test", "slug": "auth-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    let admin_token = s.create_api_token("admin-token").await;
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Create entry as admin
+    let resp = api
+        .post(s.url("/api/v1/content/auth-test"))
+        .bearer_auth(&admin_token)
+        .json(&serde_json::json!({"title": "Test"}))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let entry_id = body["id"].as_str().unwrap().to_string();
+
+    // Unauthenticated request (no bearer token) — should fail with 401
+    let resp = api
+        .post(s.url(&format!("/api/v1/content/auth-test/{entry_id}/publish")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Request with invalid bearer token — should also fail with 401
+    let resp = api
+        .post(s.url(&format!("/api/v1/content/auth-test/{entry_id}/publish")))
+        .bearer_auth("invalid-token-value")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn api_publish_nonexistent_entry() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("notfound-test").await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "NF Test", "slug": "nf-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    let resp = api
+        .post(s.url("/api/v1/content/nf-test/nonexistent/publish"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn api_publish_nonexistent_schema() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("noschema-test").await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/content/nonexistent-schema/some-id/publish"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn api_put_with_explicit_status() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("put-status-test").await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Put Status", "slug": "put-status", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Create with explicit _status: "published"
+    let resp = api
+        .post(s.url("/api/v1/content/put-status"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Published", "_status": "published"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let entry_id = body["id"].as_str().unwrap().to_string();
+
+    // Default list should include it (it's published)
+    let resp = api
+        .get(s.url("/api/v1/content/put-status"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(entries.len(), 1, "entry created as published should appear in default list");
+
+    // Update without _status — should preserve published
+    let resp = api
+        .put(s.url(&format!("/api/v1/content/put-status/{entry_id}")))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Updated"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = api
+        .get(s.url("/api/v1/content/put-status"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(entries.len(), 1, "published status preserved after update without explicit _status");
+
+    // Update with explicit _status: "draft" — should change to draft
+    let resp = api
+        .put(s.url(&format!("/api/v1/content/put-status/{entry_id}")))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Now Draft", "_status": "draft"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = api
+        .get(s.url("/api/v1/content/put-status"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(entries.len(), 0, "entry with _status: draft should not appear in default list");
+}
+
+#[tokio::test]
+async fn api_publish_single_entry() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("single-pub-test").await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Single Pub", "slug": "single-pub", "storage": "single-file", "kind": "single"},
+        "type": "object",
+        "properties": {"site_name": {"type": "string"}},
+        "required": ["site_name"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Upsert single (starts as draft)
+    let resp = api
+        .put(s.url("/api/v1/content/single-pub/single"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "My Site"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Default GET returns 404 (draft)
+    let resp = api
+        .get(s.url("/api/v1/content/single-pub/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Publish via dedicated endpoint
+    let resp = api
+        .post(s.url("/api/v1/content/single-pub/_single/publish"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "published");
+
+    // Default GET now returns 200
+    let resp = api
+        .get(s.url("/api/v1/content/single-pub/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Unpublish
+    let resp = api
+        .post(s.url("/api/v1/content/single-pub/_single/unpublish"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "draft");
+}
+
+#[tokio::test]
+async fn webhook_publish_no_longer_flips_drafts() {
+    // Start with a mock webhook server
+    let webhook_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let webhook_addr = webhook_listener.local_addr().unwrap();
+    let webhook_url = format!("http://{webhook_addr}/hook");
+
+    // Spawn a simple handler that accepts POST and returns 200
+    tokio::spawn(async move {
+        let app = axum::Router::new().route(
+            "/hook",
+            axum::routing::post(|| async { "ok" }),
+        );
+        axum::serve(webhook_listener, app).await.unwrap();
+    });
+
+    let s = TestServer::start_with_webhooks(None, Some(webhook_url)).await;
+    s.setup_admin().await;
+    let token = s.create_api_token("webhook-test").await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "WH Test", "slug": "wh-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Create a draft entry
+    let resp = api
+        .post(s.url("/api/v1/content/wh-test"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Draft Post"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Fire production publish webhook
+    let resp = api
+        .post(s.url("/api/v1/publish/production"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Wait briefly for any async effects
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // Entry should STILL be draft (publish no longer flips drafts)
+    let resp = api
+        .get(s.url("/api/v1/content/wh-test?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(entries.len(), 1);
+
+    let resp = api
+        .get(s.url("/api/v1/content/wh-test"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(entries.len(), 0, "draft entry should NOT be flipped to published by webhook");
+}
+
+#[tokio::test]
+async fn ui_publish_entry_via_form() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "UI Pub Test", "slug": "ui-pub-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Create an entry via the UI
+    let csrf = s.get_csrf("/content/ui-pub-test/new").await;
+    let resp = s
+        .client
+        .post(s.url("/content/ui-pub-test/new"))
+        .multipart(
+            reqwest::multipart::Form::new()
+                .text("title", "Test Post")
+                .text("_csrf", csrf.clone()),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Find the entry ID from the list page
+    let resp = s
+        .client
+        .get(s.url("/content/ui-pub-test"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Draft"), "entry should show Draft badge on list");
+
+    // Load the edit page to get entry_id and CSRF
+    // The entry ID is "test-post" (slugified from "Test Post")
+    let resp = s
+        .client
+        .get(s.url("/content/ui-pub-test/test-post/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Publish"), "edit page should show Publish button for draft entry");
+    let csrf = extract_csrf_token(&body).unwrap();
+
+    // Publish via UI POST (non-htmx — should redirect)
+    let resp = s
+        .client
+        .post(s.url("/content/ui-pub-test/test-post/publish"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER, "non-htmx publish should redirect");
+
+    // Edit page should now show Published + Unpublish button
+    let resp = s
+        .client
+        .get(s.url("/content/ui-pub-test/test-post/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Published"), "edit page should show Published badge");
+    assert!(body.contains("Unpublish"), "edit page should show Unpublish button");
+
+    // Unpublish via UI POST
+    let csrf = extract_csrf_token(&body).unwrap();
+    let resp = s
+        .client
+        .post(s.url("/content/ui-pub-test/test-post/unpublish"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Edit page should show Draft again
+    let resp = s
+        .client
+        .get(s.url("/content/ui-pub-test/test-post/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Draft"), "edit page should show Draft badge after unpublish");
+}
+
+#[tokio::test]
+async fn ui_htmx_publish_returns_fragment() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "HTMX Test", "slug": "htmx-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Create entry
+    let csrf = s.get_csrf("/content/htmx-test/new").await;
+    s.client
+        .post(s.url("/content/htmx-test/new"))
+        .multipart(
+            reqwest::multipart::Form::new()
+                .text("title", "HTMX Post")
+                .text("_csrf", csrf),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    // Get CSRF from edit page
+    let resp = s
+        .client
+        .get(s.url("/content/htmx-test/htmx-post/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+
+    // Publish with HX-Request header — should get HTML fragment, not redirect
+    let resp = s
+        .client
+        .post(s.url("/content/htmx-test/htmx-post/publish"))
+        .header("HX-Request", "true")
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "htmx request should return 200");
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Published"), "htmx response should contain Published badge");
+    assert!(body.contains("Unpublish"), "htmx response should contain Unpublish button");
+    assert!(body.contains("entry-status"), "htmx response should contain entry-status span");
 }
