@@ -52,6 +52,7 @@ impl TestServer {
             production_webhook_auth_token,
             Some(3600), // long interval so cron doesn't fire during tests
             10,         // version_history_count
+            10,         // max_body_size_mb
         );
         config.ensure_dirs().unwrap();
 

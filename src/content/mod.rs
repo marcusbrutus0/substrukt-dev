@@ -222,6 +222,73 @@ pub fn delete_entry(content_dir: &Path, schema: &SchemaFile, entry_id: &str) -> 
     Ok(())
 }
 
+/// Set the _status of an entry without modifying its content.
+/// Does not create a history snapshot (metadata-only change).
+pub fn set_entry_status(
+    content_dir: &Path,
+    schema: &SchemaFile,
+    entry_id: &str,
+    status: &str,
+) -> eyre::Result<()> {
+    if !matches!(status, "draft" | "published") {
+        eyre::bail!("Invalid status: {status}. Must be \"draft\" or \"published\".");
+    }
+
+    let slug = &schema.meta.slug;
+    match schema.meta.storage {
+        StorageMode::Directory => {
+            let path = content_dir.join(slug).join(format!("{entry_id}.json"));
+            if !path.exists() {
+                eyre::bail!("Entry not found: {slug}/{entry_id}");
+            }
+            let content = std::fs::read_to_string(&path)?;
+            let mut data: Value = serde_json::from_str(&content)?;
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("_status".to_string(), Value::String(status.to_string()));
+            }
+            std::fs::write(&path, serde_json::to_string_pretty(&data)?)?;
+        }
+        StorageMode::SingleFile => {
+            let path = content_dir.join(format!("{slug}.json"));
+            if !path.exists() {
+                eyre::bail!("Entry not found: {slug}/{entry_id}");
+            }
+            if schema.meta.kind == Kind::Single {
+                let content = std::fs::read_to_string(&path)?;
+                let mut data: Value = serde_json::from_str(&content)?;
+                if let Some(obj) = data.as_object_mut() {
+                    obj.insert("_status".to_string(), Value::String(status.to_string()));
+                }
+                std::fs::write(&path, serde_json::to_string_pretty(&data)?)?;
+            } else {
+                // Collection in single file
+                let content = std::fs::read_to_string(&path)?;
+                let mut entries: Vec<Value> = serde_json::from_str(&content)?;
+                let found = entries.iter_mut().any(|e| {
+                    let matches = e
+                        .get("_id")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|s| s == entry_id);
+                    if matches {
+                        if let Some(obj) = e.as_object_mut() {
+                            obj.insert(
+                                "_status".to_string(),
+                                Value::String(status.to_string()),
+                            );
+                        }
+                    }
+                    matches
+                });
+                if !found {
+                    eyre::bail!("Entry not found: {slug}/{entry_id}");
+                }
+                std::fs::write(&path, serde_json::to_string_pretty(&entries)?)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Check if any string value in the JSON data contains the query (case-insensitive).
 /// The query must already be lowercased by the caller.
 pub fn matches_query(data: &Value, query_lower: &str) -> bool {
@@ -633,5 +700,125 @@ mod tests {
         assert_eq!(get_entry_status(&data_draft), "draft");
         assert_eq!(get_entry_status(&data_published), "published");
         assert_eq!(get_entry_status(&data_legacy), "published");
+    }
+
+    #[test]
+    fn set_entry_status_directory_mode() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::Directory);
+        let data = json!({"title": "Hello"});
+        let id = save_entry(tmp.path(), &schema, None, data).unwrap();
+
+        // Starts as draft
+        let entry = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
+        assert_eq!(get_entry_status(&entry.data), "draft");
+
+        // Publish it
+        set_entry_status(tmp.path(), &schema, &id, "published").unwrap();
+        let entry = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
+        assert_eq!(get_entry_status(&entry.data), "published");
+        // Content untouched
+        assert_eq!(entry.data.get("title").and_then(|v| v.as_str()), Some("Hello"));
+
+        // Unpublish it
+        set_entry_status(tmp.path(), &schema, &id, "draft").unwrap();
+        let entry = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
+        assert_eq!(get_entry_status(&entry.data), "draft");
+    }
+
+    #[test]
+    fn set_entry_status_single_file_single() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Single, StorageMode::SingleFile);
+        save_entry(tmp.path(), &schema, Some("_single"), json!({"title": "Settings"})).unwrap();
+
+        set_entry_status(tmp.path(), &schema, "_single", "published").unwrap();
+        let entry = get_entry(tmp.path(), &schema, "_single").unwrap().unwrap();
+        assert_eq!(get_entry_status(&entry.data), "published");
+    }
+
+    #[test]
+    fn set_entry_status_single_file_collection() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::SingleFile);
+        let id_a = save_entry(tmp.path(), &schema, None, json!({"title": "A"})).unwrap();
+        let id_b = save_entry(tmp.path(), &schema, None, json!({"title": "B"})).unwrap();
+
+        // Publish only entry A
+        set_entry_status(tmp.path(), &schema, &id_a, "published").unwrap();
+
+        let entry_a = get_entry(tmp.path(), &schema, &id_a).unwrap().unwrap();
+        let entry_b = get_entry(tmp.path(), &schema, &id_b).unwrap().unwrap();
+        assert_eq!(get_entry_status(&entry_a.data), "published");
+        assert_eq!(get_entry_status(&entry_b.data), "draft", "other entry should be untouched");
+    }
+
+    #[test]
+    fn set_entry_status_nonexistent_directory() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::Directory);
+        let result = set_entry_status(tmp.path(), &schema, "nonexistent", "published");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn set_entry_status_nonexistent_single_file_collection() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::SingleFile);
+        // Create one entry so the file exists
+        save_entry(tmp.path(), &schema, None, json!({"title": "A"})).unwrap();
+
+        let result = set_entry_status(tmp.path(), &schema, "nonexistent", "published");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn set_entry_status_nonexistent_file() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Single, StorageMode::SingleFile);
+        // File does not exist at all
+        let result = set_entry_status(tmp.path(), &schema, "_single", "published");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn set_entry_status_invalid_status() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::Directory);
+        save_entry(tmp.path(), &schema, None, json!({"title": "Hello"})).unwrap();
+
+        let result = set_entry_status(tmp.path(), &schema, "hello", "archived");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid status"));
+    }
+
+    #[test]
+    fn set_entry_status_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::Directory);
+        let id = save_entry(tmp.path(), &schema, None, json!({"title": "Hello"})).unwrap();
+
+        // Entry starts as draft — unpublishing again should succeed (idempotent)
+        set_entry_status(tmp.path(), &schema, &id, "draft").unwrap();
+        let entry = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
+        assert_eq!(get_entry_status(&entry.data), "draft");
+    }
+
+    #[test]
+    fn set_entry_status_adds_field_to_legacy_entry() {
+        let tmp = TempDir::new().unwrap();
+        let schema = test_schema(Kind::Collection, StorageMode::Directory);
+        // Write a legacy entry with no _status field
+        let dir = tmp.path().join("test");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("legacy.json"), r#"{"title": "Old"}"#).unwrap();
+
+        set_entry_status(tmp.path(), &schema, "legacy", "published").unwrap();
+        let entry = get_entry(tmp.path(), &schema, "legacy").unwrap().unwrap();
+        assert_eq!(get_entry_status(&entry.data), "published");
+        assert_eq!(entry.data.get("title").and_then(|v| v.as_str()), Some("Old"));
     }
 }
