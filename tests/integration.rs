@@ -3789,3 +3789,441 @@ async fn ui_htmx_publish_returns_fragment() {
         "htmx response should contain entry-status span"
     );
 }
+
+#[tokio::test]
+async fn viewer_cannot_publish_via_ui() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Viewer Pub Test", "slug": "viewer-pub-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Create entry as admin via UI
+    let csrf = s.get_csrf("/content/viewer-pub-test/new").await;
+    s.client
+        .post(s.url("/content/viewer-pub-test/new"))
+        .multipart(
+            reqwest::multipart::Form::new()
+                .text("title", "Test Post")
+                .text("_csrf", csrf),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    // Create viewer user
+    let viewer = signup_user_with_role(&s, "viewer@test.com", "viewer1", "viewer").await;
+
+    // Viewer can view the edit page (read access)
+    let resp = viewer
+        .get(s.url("/content/viewer-pub-test/test-post/edit"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+
+    // Viewer should see the Draft badge but NOT the Publish button
+    assert!(body.contains("Draft"), "viewer should see Draft badge");
+    // The status control template gates the button on user_role != "viewer"
+    // So the Publish button form should not be present for viewers
+    assert!(
+        !body.contains(r#"action="/content/viewer-pub-test/test-post/publish""#),
+        "viewer should NOT see publish form action"
+    );
+
+    // Even if a viewer manually POSTs to the publish endpoint, it should be rejected
+    // Get a CSRF token from a page the viewer can access
+    let resp = viewer.get(s.url("/")).send().await.unwrap();
+    let viewer_csrf = extract_csrf_token(&resp.text().await.unwrap()).unwrap();
+    let resp = viewer
+        .post(s.url("/content/viewer-pub-test/test-post/publish"))
+        .form(&[("_csrf", viewer_csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "viewer should get 403 when attempting to publish"
+    );
+
+    // Same for unpublish
+    let resp = viewer
+        .post(s.url("/content/viewer-pub-test/test-post/unpublish"))
+        .form(&[("_csrf", viewer_csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "viewer should get 403 when attempting to unpublish"
+    );
+}
+
+#[tokio::test]
+async fn api_upsert_single_with_explicit_status() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("single-status-test").await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Single Status", "slug": "single-status", "storage": "single-file", "kind": "single"},
+        "type": "object",
+        "properties": {"site_name": {"type": "string"}},
+        "required": ["site_name"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Upsert single with explicit _status: "published"
+    let resp = api
+        .put(s.url("/api/v1/content/single-status/single"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "My Site", "_status": "published"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // GET /single (default=published) should return 200
+    let resp = api
+        .get(s.url("/api/v1/content/single-status/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "single created with _status: published should be visible in default list"
+    );
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["site_name"], "My Site");
+
+    // Update with explicit _status: "draft"
+    let resp = api
+        .put(s.url("/api/v1/content/single-status/single"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "Updated Site", "_status": "draft"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // GET /single (default=published) should now return 404
+    let resp = api
+        .get(s.url("/api/v1/content/single-status/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "single set to draft via inline _status should not be visible in default list"
+    );
+}
+
+#[tokio::test]
+async fn ui_publish_single_entry_via_form() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "UI Single Pub", "slug": "ui-single-pub", "storage": "single-file", "kind": "single"},
+        "type": "object",
+        "properties": {"site_name": {"type": "string"}},
+        "required": ["site_name"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Create the single entry via the UI
+    let resp = s
+        .client
+        .get(s.url("/content/ui-single-pub/_single/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+
+    let form = reqwest::multipart::Form::new()
+        .text("site_name", "My Website")
+        .text("_csrf", csrf);
+    let resp = s
+        .client
+        .post(s.url("/content/ui-single-pub/_single"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Edit page should show Draft badge and Publish button
+    let resp = s
+        .client
+        .get(s.url("/content/ui-single-pub/_single/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Draft"), "single entry should start as draft");
+    assert!(
+        body.contains("Publish"),
+        "edit page should show Publish button for draft single"
+    );
+
+    // Publish via UI POST
+    let csrf = extract_csrf_token(&body).unwrap();
+    let resp = s
+        .client
+        .post(s.url("/content/ui-single-pub/_single/publish"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "non-htmx publish should redirect"
+    );
+
+    // Edit page should now show Published + Unpublish button
+    let resp = s
+        .client
+        .get(s.url("/content/ui-single-pub/_single/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("Published"),
+        "single edit page should show Published badge"
+    );
+    assert!(
+        body.contains("Unpublish"),
+        "single edit page should show Unpublish button"
+    );
+
+    // Unpublish via UI POST
+    let csrf = extract_csrf_token(&body).unwrap();
+    let resp = s
+        .client
+        .post(s.url("/content/ui-single-pub/_single/unpublish"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Edit page should show Draft again
+    let resp = s
+        .client
+        .get(s.url("/content/ui-single-pub/_single/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("Draft"),
+        "single edit page should show Draft badge after unpublish"
+    );
+}
+
+#[tokio::test]
+async fn ui_htmx_unpublish_returns_fragment() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "HTMX Unpub", "slug": "htmx-unpub", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Create entry
+    let csrf = s.get_csrf("/content/htmx-unpub/new").await;
+    s.client
+        .post(s.url("/content/htmx-unpub/new"))
+        .multipart(
+            reqwest::multipart::Form::new()
+                .text("title", "Unpub Post")
+                .text("_csrf", csrf),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    // Publish the entry first (non-htmx)
+    let resp = s
+        .client
+        .get(s.url("/content/htmx-unpub/unpub-post/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    s.client
+        .post(s.url("/content/htmx-unpub/unpub-post/publish"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    // Get fresh CSRF from edit page (now published)
+    let resp = s
+        .client
+        .get(s.url("/content/htmx-unpub/unpub-post/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Published"), "entry should be published");
+    let csrf = extract_csrf_token(&body).unwrap();
+
+    // Unpublish with HX-Request header — should get HTML fragment
+    let resp = s
+        .client
+        .post(s.url("/content/htmx-unpub/unpub-post/unpublish"))
+        .header("HX-Request", "true")
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "htmx unpublish request should return 200"
+    );
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("Draft"),
+        "htmx unpublish response should contain Draft badge"
+    );
+    assert!(
+        body.contains("Publish"),
+        "htmx unpublish response should contain Publish button"
+    );
+    assert!(
+        body.contains("entry-status"),
+        "htmx unpublish response should contain entry-status span"
+    );
+    // Should NOT contain "Unpublish" since it's now a draft
+    assert!(
+        !body.contains("Unpublish"),
+        "htmx unpublish response should NOT contain Unpublish button"
+    );
+}
+
+#[tokio::test]
+async fn api_unpublish_nonexistent_entry() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("unpub-nf-test").await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Unpub NF Test", "slug": "unpub-nf-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Unpublish nonexistent entry — should return 404
+    let resp = api
+        .post(s.url("/api/v1/content/unpub-nf-test/nonexistent/unpublish"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "unpublishing nonexistent entry should return 404"
+    );
+}
+
+#[tokio::test]
+async fn api_create_entry_defaults_to_draft() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("default-draft-test").await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Default Draft", "slug": "default-draft", "storage": "directory"},
+        "type": "object",
+        "properties": {"title": {"type": "string"}},
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Create entry without explicit _status
+    let resp = api
+        .post(s.url("/api/v1/content/default-draft"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "New Post"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Default list (published only) should be empty
+    let resp = api
+        .get(s.url("/api/v1/content/default-draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(
+        entries.len(),
+        0,
+        "entry without explicit _status should default to draft and not appear in published list"
+    );
+
+    // All entries list should show one entry
+    let resp = api
+        .get(s.url("/api/v1/content/default-draft?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(entries.len(), 1, "entry should appear in status=all list");
+
+    // Draft list should show one entry
+    let resp = api
+        .get(s.url("/api/v1/content/default-draft?status=draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(entries.len(), 1, "entry should appear in status=draft list");
+}
