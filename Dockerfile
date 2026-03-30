@@ -29,7 +29,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y ca-certificates curl gosu && rm -rf /var/lib/apt/lists/*
 
-RUN useradd --create-home --shell /bin/bash substrukt
+RUN useradd --create-home --shell /bin/bash --uid 1000 substrukt
 
 COPY --from=builder /build/target/release/substrukt /usr/local/bin/substrukt
 COPY --from=builder /build/templates /opt/substrukt/templates
@@ -37,8 +37,11 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /opt/substrukt
 
-# Create data directories as mount points
-RUN mkdir -p /data/schemas /data/content /data/uploads && chown -R substrukt:substrukt /data
+# Create data directories writable by substrukt user and group
+# (chmod 775 so volume mounts with matching GID also work)
+RUN mkdir -p /data/schemas /data/content /data/uploads /data/_history \
+    && chown -R substrukt:substrukt /data \
+    && chmod -R 775 /data
 
 EXPOSE 3000
 
