@@ -276,13 +276,8 @@ pub fn set_entry_status(
                         .get("_id")
                         .and_then(|v| v.as_str())
                         .is_some_and(|s| s == entry_id);
-                    if matches {
-                        if let Some(obj) = e.as_object_mut() {
-                            obj.insert(
-                                "_status".to_string(),
-                                Value::String(status.to_string()),
-                            );
-                        }
+                    if matches && let Some(obj) = e.as_object_mut() {
+                        obj.insert("_status".to_string(), Value::String(status.to_string()));
                     }
                     matches
                 });
@@ -552,12 +547,25 @@ mod tests {
     #[test]
     fn filter_by_status_published_only() {
         let entries = vec![
-            ContentEntry { id: "a".into(), data: json!({"_status": "draft", "title": "Draft"}) },
-            ContentEntry { id: "b".into(), data: json!({"_status": "published", "title": "Published"}) },
-            ContentEntry { id: "c".into(), data: json!({"title": "Legacy"}) },
+            ContentEntry {
+                id: "a".into(),
+                data: json!({"_status": "draft", "title": "Draft"}),
+            },
+            ContentEntry {
+                id: "b".into(),
+                data: json!({"_status": "published", "title": "Published"}),
+            },
+            ContentEntry {
+                id: "c".into(),
+                data: json!({"title": "Legacy"}),
+            },
         ];
         let filtered = filter_by_status(entries, "published");
-        assert_eq!(filtered.len(), 2, "should return published + legacy (no _status = published)");
+        assert_eq!(
+            filtered.len(),
+            2,
+            "should return published + legacy (no _status = published)"
+        );
         assert!(filtered.iter().any(|e| e.id == "b"));
         assert!(filtered.iter().any(|e| e.id == "c"));
     }
@@ -565,8 +573,14 @@ mod tests {
     #[test]
     fn filter_by_status_draft_only() {
         let entries = vec![
-            ContentEntry { id: "a".into(), data: json!({"_status": "draft", "title": "Draft"}) },
-            ContentEntry { id: "b".into(), data: json!({"_status": "published", "title": "Published"}) },
+            ContentEntry {
+                id: "a".into(),
+                data: json!({"_status": "draft", "title": "Draft"}),
+            },
+            ContentEntry {
+                id: "b".into(),
+                data: json!({"_status": "published", "title": "Published"}),
+            },
         ];
         let filtered = filter_by_status(entries, "draft");
         assert_eq!(filtered.len(), 1);
@@ -576,8 +590,14 @@ mod tests {
     #[test]
     fn filter_by_status_all_returns_everything() {
         let entries = vec![
-            ContentEntry { id: "a".into(), data: json!({"_status": "draft"}) },
-            ContentEntry { id: "b".into(), data: json!({"_status": "published"}) },
+            ContentEntry {
+                id: "a".into(),
+                data: json!({"_status": "draft"}),
+            },
+            ContentEntry {
+                id: "b".into(),
+                data: json!({"_status": "published"}),
+            },
         ];
         let filtered = filter_by_status(entries, "all");
         assert_eq!(filtered.len(), 2);
@@ -661,7 +681,10 @@ mod tests {
         let entry = get_entry(tmp.path(), &schema, &id).unwrap().unwrap();
         assert_eq!(get_entry_status(&entry.data), "published");
         // Content untouched
-        assert_eq!(entry.data.get("title").and_then(|v| v.as_str()), Some("Hello"));
+        assert_eq!(
+            entry.data.get("title").and_then(|v| v.as_str()),
+            Some("Hello")
+        );
 
         // Unpublish it
         set_entry_status(tmp.path(), &schema, &id, "draft").unwrap();
@@ -673,7 +696,13 @@ mod tests {
     fn set_entry_status_single_file_single() {
         let tmp = TempDir::new().unwrap();
         let schema = test_schema(Kind::Single, StorageMode::SingleFile);
-        save_entry(tmp.path(), &schema, Some("_single"), json!({"title": "Settings"})).unwrap();
+        save_entry(
+            tmp.path(),
+            &schema,
+            Some("_single"),
+            json!({"title": "Settings"}),
+        )
+        .unwrap();
 
         set_entry_status(tmp.path(), &schema, "_single", "published").unwrap();
         let entry = get_entry(tmp.path(), &schema, "_single").unwrap().unwrap();
@@ -693,7 +722,11 @@ mod tests {
         let entry_a = get_entry(tmp.path(), &schema, &id_a).unwrap().unwrap();
         let entry_b = get_entry(tmp.path(), &schema, &id_b).unwrap().unwrap();
         assert_eq!(get_entry_status(&entry_a.data), "published");
-        assert_eq!(get_entry_status(&entry_b.data), "draft", "other entry should be untouched");
+        assert_eq!(
+            get_entry_status(&entry_b.data),
+            "draft",
+            "other entry should be untouched"
+        );
     }
 
     #[test]
@@ -762,6 +795,9 @@ mod tests {
         set_entry_status(tmp.path(), &schema, "legacy", "published").unwrap();
         let entry = get_entry(tmp.path(), &schema, "legacy").unwrap().unwrap();
         assert_eq!(get_entry_status(&entry.data), "published");
-        assert_eq!(entry.data.get("title").and_then(|v| v.as_str()), Some("Old"));
+        assert_eq!(
+            entry.data.get("title").and_then(|v| v.as_str()),
+            Some("Old")
+        );
     }
 }

@@ -2732,7 +2732,11 @@ async fn content_draft_published_lifecycle() {
         .await
         .unwrap();
     let entries: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 0, "default should return published only");
+    assert_eq!(
+        entries.as_array().unwrap().len(),
+        0,
+        "default should return published only"
+    );
 
     // API list with ?status=all should return the draft
     let resp = api
@@ -2742,8 +2746,15 @@ async fn content_draft_published_lifecycle() {
         .await
         .unwrap();
     let entries: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 1, "status=all should return draft");
-    assert!(entries[0].get("_status").is_none(), "_status should be stripped from response");
+    assert_eq!(
+        entries.as_array().unwrap().len(),
+        1,
+        "status=all should return draft"
+    );
+    assert!(
+        entries[0].get("_status").is_none(),
+        "_status should be stripped from response"
+    );
 
     // API list with ?status=draft
     let resp = api
@@ -2753,7 +2764,11 @@ async fn content_draft_published_lifecycle() {
         .await
         .unwrap();
     let entries: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 1, "status=draft should return draft entry");
+    assert_eq!(
+        entries.as_array().unwrap().len(),
+        1,
+        "status=draft should return draft entry"
+    );
 
     // Get single entry by ID — should work regardless of status
     let resp = api
@@ -2784,7 +2799,11 @@ async fn content_draft_published_lifecycle() {
         .await
         .unwrap();
     let entries: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 0, "updated draft should still not appear in published");
+    assert_eq!(
+        entries.as_array().unwrap().len(),
+        0,
+        "updated draft should still not appear in published"
+    );
 }
 
 #[tokio::test]
@@ -2842,7 +2861,11 @@ async fn production_publish_does_not_flip_drafts() {
         .await
         .unwrap();
     let entries: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 2, "production publish should NOT flip drafts");
+    assert_eq!(
+        entries.as_array().unwrap().len(),
+        2,
+        "production publish should NOT flip drafts"
+    );
 
     // Publish one entry individually
     let resp = api
@@ -2861,7 +2884,11 @@ async fn production_publish_does_not_flip_drafts() {
         .await
         .unwrap();
     let entries: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 1, "only the individually published entry should appear");
+    assert_eq!(
+        entries.as_array().unwrap().len(),
+        1,
+        "only the individually published entry should appear"
+    );
 
     let resp = api
         .get(s.url("/api/v1/content/draft-posts?status=draft"))
@@ -2870,7 +2897,11 @@ async fn production_publish_does_not_flip_drafts() {
         .await
         .unwrap();
     let entries: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 1, "one entry should still be draft");
+    assert_eq!(
+        entries.as_array().unwrap().len(),
+        1,
+        "one entry should still be draft"
+    );
 }
 
 #[tokio::test]
@@ -2907,7 +2938,11 @@ async fn staging_publish_does_not_flip_drafts() {
         .await
         .unwrap();
     let entries: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(entries.as_array().unwrap().len(), 1, "staging publish should not flip drafts");
+    assert_eq!(
+        entries.as_array().unwrap().len(),
+        1,
+        "staging publish should not flip drafts"
+    );
 }
 
 #[tokio::test]
@@ -2938,7 +2973,11 @@ async fn single_schema_draft_published() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "draft single should return 404 by default");
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "draft single should return 404 by default"
+    );
 
     // GET /single?status=all returns the entry
     let resp = api
@@ -2968,7 +3007,11 @@ async fn single_schema_draft_published() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "published single should return 200");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "published single should return 200"
+    );
 
     // PUT /single update — should preserve published status
     let resp = api
@@ -2987,7 +3030,11 @@ async fn single_schema_draft_published() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "published single should stay published after update");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "published single should stay published after update"
+    );
     let data: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(data["site_name"], "Updated Site");
 }
@@ -3112,7 +3159,11 @@ async fn api_publish_entry() {
         .await
         .unwrap();
     let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
-    assert_eq!(entries.len(), 0, "draft entry should not appear in published-only list");
+    assert_eq!(
+        entries.len(),
+        0,
+        "draft entry should not appear in published-only list"
+    );
 
     // Publish the entry
     let resp = api
@@ -3134,7 +3185,11 @@ async fn api_publish_entry() {
         .await
         .unwrap();
     let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
-    assert_eq!(entries.len(), 1, "published entry should appear in default list");
+    assert_eq!(
+        entries.len(),
+        1,
+        "published entry should appear in default list"
+    );
 
     // Unpublish the entry
     let resp = api
@@ -3155,7 +3210,11 @@ async fn api_publish_entry() {
         .await
         .unwrap();
     let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
-    assert_eq!(entries.len(), 0, "unpublished entry should not appear in default list");
+    assert_eq!(
+        entries.len(),
+        0,
+        "unpublished entry should not appear in default list"
+    );
 }
 
 #[tokio::test]
@@ -3353,7 +3412,11 @@ async fn api_put_with_explicit_status() {
         .await
         .unwrap();
     let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
-    assert_eq!(entries.len(), 1, "entry created as published should appear in default list");
+    assert_eq!(
+        entries.len(),
+        1,
+        "entry created as published should appear in default list"
+    );
 
     // Update without _status — should preserve published
     let resp = api
@@ -3372,7 +3435,11 @@ async fn api_put_with_explicit_status() {
         .await
         .unwrap();
     let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
-    assert_eq!(entries.len(), 1, "published status preserved after update without explicit _status");
+    assert_eq!(
+        entries.len(),
+        1,
+        "published status preserved after update without explicit _status"
+    );
 
     // Update with explicit _status: "draft" — should change to draft
     let resp = api
@@ -3391,7 +3458,11 @@ async fn api_put_with_explicit_status() {
         .await
         .unwrap();
     let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
-    assert_eq!(entries.len(), 0, "entry with _status: draft should not appear in default list");
+    assert_eq!(
+        entries.len(),
+        0,
+        "entry with _status: draft should not appear in default list"
+    );
 }
 
 #[tokio::test]
@@ -3474,10 +3545,7 @@ async fn webhook_publish_no_longer_flips_drafts() {
 
     // Spawn a simple handler that accepts POST and returns 200
     tokio::spawn(async move {
-        let app = axum::Router::new().route(
-            "/hook",
-            axum::routing::post(|| async { "ok" }),
-        );
+        let app = axum::Router::new().route("/hook", axum::routing::post(|| async { "ok" }));
         axum::serve(webhook_listener, app).await.unwrap();
     });
 
@@ -3538,7 +3606,11 @@ async fn webhook_publish_no_longer_flips_drafts() {
         .await
         .unwrap();
     let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
-    assert_eq!(entries.len(), 0, "draft entry should NOT be flipped to published by webhook");
+    assert_eq!(
+        entries.len(),
+        0,
+        "draft entry should NOT be flipped to published by webhook"
+    );
 }
 
 #[tokio::test]
@@ -3577,7 +3649,10 @@ async fn ui_publish_entry_via_form() {
         .await
         .unwrap();
     let body = resp.text().await.unwrap();
-    assert!(body.contains("Draft"), "entry should show Draft badge on list");
+    assert!(
+        body.contains("Draft"),
+        "entry should show Draft badge on list"
+    );
 
     // Load the edit page to get entry_id and CSRF
     // The entry ID is "test-post" (slugified from "Test Post")
@@ -3588,7 +3663,10 @@ async fn ui_publish_entry_via_form() {
         .await
         .unwrap();
     let body = resp.text().await.unwrap();
-    assert!(body.contains("Publish"), "edit page should show Publish button for draft entry");
+    assert!(
+        body.contains("Publish"),
+        "edit page should show Publish button for draft entry"
+    );
     let csrf = extract_csrf_token(&body).unwrap();
 
     // Publish via UI POST (non-htmx — should redirect)
@@ -3599,7 +3677,11 @@ async fn ui_publish_entry_via_form() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER, "non-htmx publish should redirect");
+    assert_eq!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "non-htmx publish should redirect"
+    );
 
     // Edit page should now show Published + Unpublish button
     let resp = s
@@ -3609,8 +3691,14 @@ async fn ui_publish_entry_via_form() {
         .await
         .unwrap();
     let body = resp.text().await.unwrap();
-    assert!(body.contains("Published"), "edit page should show Published badge");
-    assert!(body.contains("Unpublish"), "edit page should show Unpublish button");
+    assert!(
+        body.contains("Published"),
+        "edit page should show Published badge"
+    );
+    assert!(
+        body.contains("Unpublish"),
+        "edit page should show Unpublish button"
+    );
 
     // Unpublish via UI POST
     let csrf = extract_csrf_token(&body).unwrap();
@@ -3631,7 +3719,10 @@ async fn ui_publish_entry_via_form() {
         .await
         .unwrap();
     let body = resp.text().await.unwrap();
-    assert!(body.contains("Draft"), "edit page should show Draft badge after unpublish");
+    assert!(
+        body.contains("Draft"),
+        "edit page should show Draft badge after unpublish"
+    );
 }
 
 #[tokio::test]
@@ -3679,9 +3770,22 @@ async fn ui_htmx_publish_returns_fragment() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "htmx request should return 200");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "htmx request should return 200"
+    );
     let body = resp.text().await.unwrap();
-    assert!(body.contains("Published"), "htmx response should contain Published badge");
-    assert!(body.contains("Unpublish"), "htmx response should contain Unpublish button");
-    assert!(body.contains("entry-status"), "htmx response should contain entry-status span");
+    assert!(
+        body.contains("Published"),
+        "htmx response should contain Published badge"
+    );
+    assert!(
+        body.contains("Unpublish"),
+        "htmx response should contain Unpublish button"
+    );
+    assert!(
+        body.contains("entry-status"),
+        "htmx response should contain entry-status span"
+    );
 }

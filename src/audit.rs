@@ -235,7 +235,10 @@ impl AuditLogger {
             )
         };
 
-        let mut q = sqlx::query_as::<_, (i64, String, String, String, String, String, Option<String>)>(&query);
+        let mut q = sqlx::query_as::<
+            _,
+            (i64, String, String, String, String, String, Option<String>),
+        >(&query);
 
         if let Some(action) = action_filter {
             q = q.bind(action);
@@ -250,9 +253,19 @@ impl AuditLogger {
         let entries: Vec<AuditLogEntry> = rows
             .into_iter()
             .take(100)
-            .map(|(id, timestamp, actor, action, resource_type, resource_id, details)| {
-                AuditLogEntry { id, timestamp, actor, action, resource_type, resource_id, details }
-            })
+            .map(
+                |(id, timestamp, actor, action, resource_type, resource_id, details)| {
+                    AuditLogEntry {
+                        id,
+                        timestamp,
+                        actor,
+                        action,
+                        resource_type,
+                        resource_id,
+                        details,
+                    }
+                },
+            )
             .collect();
 
         Ok((entries, has_next))
@@ -488,7 +501,10 @@ mod tests {
         assert_eq!(entries[0].actor, "user2");
         assert_eq!(entries[1].action, "content_create");
         assert_eq!(entries[1].actor, "user1");
-        assert_eq!(entries[1].details, Some("{\"title\":\"Hello\"}".to_string()));
+        assert_eq!(
+            entries[1].details,
+            Some("{\"title\":\"Hello\"}".to_string())
+        );
         assert_eq!(entries[0].details, None);
     }
 
