@@ -41,26 +41,6 @@ struct Cli {
     #[arg(long, global = true)]
     secure_cookies: bool,
 
-    /// Staging webhook URL (fires automatically when content changes)
-    #[arg(long, global = true)]
-    staging_webhook_url: Option<String>,
-
-    /// Bearer token for staging webhook authentication
-    #[arg(long, global = true)]
-    staging_webhook_auth_token: Option<String>,
-
-    /// Production webhook URL (fires on manual publish)
-    #[arg(long, global = true)]
-    production_webhook_url: Option<String>,
-
-    /// Bearer token for production webhook authentication
-    #[arg(long, global = true)]
-    production_webhook_auth_token: Option<String>,
-
-    /// Webhook check interval in seconds
-    #[arg(long, global = true, default_value = "300")]
-    webhook_check_interval: Option<u64>,
-
     /// Max API requests per IP per minute (rate limit)
     #[arg(long, global = true, default_value = "100")]
     api_rate_limit: usize,
@@ -112,11 +92,6 @@ async fn main() -> eyre::Result<()> {
         cli.db_path,
         cli.port,
         cli.secure_cookies,
-        cli.staging_webhook_url,
-        cli.staging_webhook_auth_token,
-        cli.production_webhook_url,
-        cli.production_webhook_auth_token,
-        cli.webhook_check_interval,
         cli.version_history_count,
         cli.max_body_size,
     );
@@ -173,8 +148,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     let audit_logger = audit::AuditLogger::new(audit_pool);
 
     // Template environment (auto-reloads on file changes)
-    let reloader =
-        templates::create_reloader(config.schemas_dir(), audit_logger.clone(), config.clone());
+    let reloader = templates::create_reloader(config.schemas_dir());
 
     // Migrate .meta.json sidecars to SQLite (one-time, idempotent)
     substrukt::uploads::migrate_meta_sidecars(&config.uploads_dir(), &config.data_dir, &pool)
@@ -203,14 +177,15 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
         metrics_handle,
         audit: audit_logger,
         http_client,
+        deploy_tasks: DashMap::new(),
     });
 
-    // Background webhook cron (auto-fires staging when dirty)
-    substrukt::webhooks::spawn_cron(
-        state.http_client.clone(),
-        state.audit.clone(),
-        state.config.clone(),
-    );
+    // Spawn auto-deploy tasks for all enabled deployments
+    if let Ok(deployments) = state.audit.list_auto_deploy_deployments().await {
+        for deployment in deployments {
+            substrukt::webhooks::spawn_auto_deploy_task(&state, deployment);
+        }
+    }
 
     // File watcher for cache invalidation
     let _watcher = cache::spawn_watcher(
