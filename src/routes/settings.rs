@@ -623,7 +623,7 @@ async fn audit_log_page(
 
     let (entries, has_next) = state
         .audit
-        .list_audit_log(action_filter, actor_filter, page)
+        .list_audit_log(action_filter, actor_filter, None, page)
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 

@@ -61,6 +61,7 @@ pub struct AuditLogEntry {
     pub resource_type: String,
     pub resource_id: String,
     pub details: Option<String>,
+    pub app_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -104,6 +105,7 @@ impl AuditLogger {
 
     pub async fn create_deployment(
         &self,
+        app_id: i64,
         name: &str,
         slug: &str,
         webhook_url: &str,
@@ -116,8 +118,9 @@ impl AuditLogger {
         let include_drafts_i = if include_drafts { 1i32 } else { 0 };
         let auto_deploy_i = if auto_deploy { 1i32 } else { 0 };
         let result = sqlx::query(
-            "INSERT INTO deployments (name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO deployments (app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
+        .bind(app_id)
         .bind(name)
         .bind(slug)
         .bind(webhook_url)
@@ -133,7 +136,7 @@ impl AuditLogger {
         let id = result.last_insert_rowid();
         Ok(Deployment {
             id,
-            app_id: None,
+            app_id: Some(app_id),
             name: name.to_string(),
             slug: slug.to_string(),
             webhook_url: webhook_url.to_string(),
@@ -347,6 +350,97 @@ impl AuditLogger {
             .collect())
     }
 
+    pub async fn list_deployments_for_app(
+        &self,
+        app_id: i64,
+    ) -> eyre::Result<Vec<Deployment>> {
+        let rows: Vec<(i64, Option<i64>, String, String, String, Option<String>, i32, i32, i64, String, String)> =
+            sqlx::query_as(
+                "SELECT id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at FROM deployments WHERE app_id = ? ORDER BY name"
+            )
+            .bind(app_id)
+            .fetch_all(self.pool.as_ref())
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    app_id,
+                    name,
+                    slug,
+                    webhook_url,
+                    webhook_auth_token,
+                    include_drafts,
+                    auto_deploy,
+                    debounce_seconds,
+                    created_at,
+                    updated_at,
+                )| {
+                    Deployment {
+                        id,
+                        app_id,
+                        name,
+                        slug,
+                        webhook_url,
+                        webhook_auth_token,
+                        include_drafts: include_drafts != 0,
+                        auto_deploy: auto_deploy != 0,
+                        debounce_seconds,
+                        created_at,
+                        updated_at,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn get_deployment_by_slug_and_app(
+        &self,
+        app_id: i64,
+        slug: &str,
+    ) -> eyre::Result<Option<Deployment>> {
+        let row: Option<(i64, Option<i64>, String, String, String, Option<String>, i32, i32, i64, String, String)> =
+            sqlx::query_as(
+                "SELECT id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at FROM deployments WHERE app_id = ? AND slug = ?"
+            )
+            .bind(app_id)
+            .bind(slug)
+            .fetch_optional(self.pool.as_ref())
+            .await?;
+
+        Ok(row.map(
+            |(
+                id,
+                app_id,
+                name,
+                slug,
+                webhook_url,
+                webhook_auth_token,
+                include_drafts,
+                auto_deploy,
+                debounce_seconds,
+                created_at,
+                updated_at,
+            )| {
+                Deployment {
+                    id,
+                    app_id,
+                    name,
+                    slug,
+                    webhook_url,
+                    webhook_auth_token,
+                    include_drafts: include_drafts != 0,
+                    auto_deploy: auto_deploy != 0,
+                    debounce_seconds,
+                    created_at,
+                    updated_at,
+                }
+            },
+        ))
+    }
+
     // ── Dirty detection ──────────────────────────────────────────
 
     pub async fn is_dirty_for_deployment(&self, deployment_id: i64) -> eyre::Result<bool> {
@@ -361,14 +455,31 @@ impl AuditLogger {
             _ => return Ok(true), // Never fired -> dirty
         };
 
-        let latest_mutation: (Option<String>,) = sqlx::query_as(
-            "SELECT MAX(timestamp) FROM audit_log WHERE action IN (\
-                'content_create', 'content_update', 'content_delete', \
-                'schema_create', 'schema_update', 'schema_delete', \
-                'entry_published', 'entry_unpublished')",
-        )
-        .fetch_one(self.pool.as_ref())
-        .await?;
+        // Look up the deployment's app_id for scoped dirty detection
+        let dep = self.get_deployment_by_id(deployment_id).await?;
+        let dep_app_id = dep.and_then(|d| d.app_id);
+
+        let latest_mutation: (Option<String>,) = if let Some(app_id) = dep_app_id {
+            sqlx::query_as(
+                "SELECT MAX(timestamp) FROM audit_log WHERE app_id = ? AND action IN (\
+                    'content_create', 'content_update', 'content_delete', \
+                    'schema_create', 'schema_update', 'schema_delete', \
+                    'entry_published', 'entry_unpublished')",
+            )
+            .bind(app_id)
+            .fetch_one(self.pool.as_ref())
+            .await?
+        } else {
+            // Fallback: no app_id on deployment, check all mutations (backward compat)
+            sqlx::query_as(
+                "SELECT MAX(timestamp) FROM audit_log WHERE action IN (\
+                    'content_create', 'content_update', 'content_delete', \
+                    'schema_create', 'schema_update', 'schema_delete', \
+                    'entry_published', 'entry_unpublished')",
+            )
+            .fetch_one(self.pool.as_ref())
+            .await?
+        };
 
         match latest_mutation {
             (Some(ts),) => Ok(ts > last_fired_at),
@@ -520,19 +631,36 @@ impl AuditLogger {
         &self,
         action_filter: Option<&str>,
         actor_filter: Option<&str>,
+        app_filter: Option<&str>,
         page: u32,
     ) -> eyre::Result<(Vec<AuditLogEntry>, bool)> {
         let page = page.max(1);
         let offset = (page - 1) as i64 * 100;
-        let base = "SELECT id, timestamp, actor, action, resource_type, resource_id, details FROM audit_log";
+        let base = "SELECT id, timestamp, actor, action, resource_type, resource_id, details, app_id FROM audit_log";
 
         let mut conditions = Vec::new();
         if action_filter.is_some() {
-            conditions.push("action = ?");
+            conditions.push("action = ?".to_string());
         }
         if actor_filter.is_some() {
-            conditions.push("actor = ?");
+            conditions.push("actor = ?".to_string());
         }
+        // app_filter: None = no filter, Some("global") = app_id IS NULL, Some("<id>") = app_id = <id>
+        let app_filter_id: Option<i64> = match app_filter {
+            Some("global") => {
+                conditions.push("app_id IS NULL".to_string());
+                None
+            }
+            Some(id_str) => {
+                if let Ok(id) = id_str.parse::<i64>() {
+                    conditions.push("app_id = ?".to_string());
+                    Some(id)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
 
         let query = if conditions.is_empty() {
             format!("{base} ORDER BY timestamp DESC, id DESC LIMIT 101 OFFSET ?")
@@ -545,7 +673,16 @@ impl AuditLogger {
 
         let mut q = sqlx::query_as::<
             _,
-            (i64, String, String, String, String, String, Option<String>),
+            (
+                i64,
+                String,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                Option<i64>,
+            ),
         >(&query);
 
         if let Some(action) = action_filter {
@@ -553,6 +690,9 @@ impl AuditLogger {
         }
         if let Some(actor) = actor_filter {
             q = q.bind(actor);
+        }
+        if let Some(id) = app_filter_id {
+            q = q.bind(id);
         }
         q = q.bind(offset);
 
@@ -562,7 +702,7 @@ impl AuditLogger {
             .into_iter()
             .take(100)
             .map(
-                |(id, timestamp, actor, action, resource_type, resource_id, details)| {
+                |(id, timestamp, actor, action, resource_type, resource_id, details, app_id)| {
                     AuditLogEntry {
                         id,
                         timestamp,
@@ -571,6 +711,7 @@ impl AuditLogger {
                         resource_type,
                         resource_id,
                         details,
+                        app_id,
                     }
                 },
             )
@@ -595,6 +736,18 @@ impl AuditLogger {
         resource_id: &str,
         details: Option<&str>,
     ) {
+        self.log_with_app(actor, action, resource_type, resource_id, details, None);
+    }
+
+    pub fn log_with_app(
+        &self,
+        actor: &str,
+        action: &str,
+        resource_type: &str,
+        resource_id: &str,
+        details: Option<&str>,
+        app_id: Option<i64>,
+    ) {
         let pool = self.pool.clone();
         let timestamp = chrono::Utc::now().to_rfc3339();
         let actor = actor.to_string();
@@ -605,7 +758,7 @@ impl AuditLogger {
 
         tokio::spawn(async move {
             let result = sqlx::query(
-                "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, details) VALUES (?, ?, ?, ?, ?, ?)"
+                "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, details, app_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
             )
             .bind(&timestamp)
             .bind(&actor)
@@ -613,6 +766,7 @@ impl AuditLogger {
             .bind(&resource_type)
             .bind(&resource_id)
             .bind(&details)
+            .bind(app_id)
             .execute(pool.as_ref())
             .await;
 
@@ -858,6 +1012,7 @@ mod tests {
         let logger = AuditLogger::new(pool);
         let dep = logger
             .create_deployment(
+                1,
                 "Production",
                 "production",
                 "https://example.com/hook",
@@ -901,11 +1056,11 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         logger
-            .create_deployment("Zulu", "zulu", "https://z.com", None, false, false, 300)
+            .create_deployment(1, "Zulu", "zulu", "https://z.com", None, false, false, 300)
             .await
             .unwrap();
         logger
-            .create_deployment("Alpha", "alpha", "https://a.com", None, false, false, 300)
+            .create_deployment(1, "Alpha", "alpha", "https://a.com", None, false, false, 300)
             .await
             .unwrap();
         let all = logger.list_deployments().await.unwrap();
@@ -920,6 +1075,7 @@ mod tests {
         let logger = AuditLogger::new(pool);
         let dep = logger
             .create_deployment(
+                1,
                 "Staging",
                 "staging",
                 "https://old.com",
@@ -966,6 +1122,7 @@ mod tests {
         let logger = AuditLogger::new(pool);
         logger
             .create_deployment(
+                1,
                 "First",
                 "same-slug",
                 "https://a.com",
@@ -978,6 +1135,7 @@ mod tests {
             .unwrap();
         let result = logger
             .create_deployment(
+                1,
                 "Second",
                 "same-slug",
                 "https://b.com",
@@ -1013,7 +1171,7 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep = logger
-            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .create_deployment(1, "D", "d", "https://d.com", None, false, false, 300)
             .await
             .unwrap();
         assert!(logger.is_dirty_for_deployment(dep.id).await.unwrap());
@@ -1024,7 +1182,7 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep = logger
-            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .create_deployment(1, "D", "d", "https://d.com", None, false, false, 300)
             .await
             .unwrap();
         logger.mark_deployment_fired(dep.id).await.unwrap();
@@ -1036,14 +1194,14 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep = logger
-            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .create_deployment(1, "D", "d", "https://d.com", None, false, false, 300)
             .await
             .unwrap();
         logger.mark_deployment_fired(dep.id).await.unwrap();
-        // Insert a mutation with a future timestamp
+        // Insert a mutation with a future timestamp and matching app_id
         let future_ts = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
         let query = format!(
-            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{future_ts}', 'test', 'content_create', 'content', 'test/1')"
+            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, app_id) VALUES ('{future_ts}', 'test', 'content_create', 'content', 'test/1', 1)"
         );
         logger.execute_raw(&query).await.unwrap();
         assert!(logger.is_dirty_for_deployment(dep.id).await.unwrap());
@@ -1054,12 +1212,12 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep = logger
-            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .create_deployment(1, "D", "d", "https://d.com", None, false, false, 300)
             .await
             .unwrap();
         logger.mark_deployment_fired(dep.id).await.unwrap();
         logger
-            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES (datetime('now', '+1 second'), 'test', 'login', 'session', '')")
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, app_id) VALUES (datetime('now', '+1 second'), 'test', 'login', 'session', '', 1)")
             .await
             .unwrap();
         assert!(!logger.is_dirty_for_deployment(dep.id).await.unwrap());
@@ -1070,13 +1228,13 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep = logger
-            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .create_deployment(1, "D", "d", "https://d.com", None, false, false, 300)
             .await
             .unwrap();
         logger.mark_deployment_fired(dep.id).await.unwrap();
         let future_ts = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
         let query = format!(
-            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{future_ts}', 'test', 'entry_published', 'content', 'posts/1')"
+            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, app_id) VALUES ('{future_ts}', 'test', 'entry_published', 'content', 'posts/1', 1)"
         );
         logger.execute_raw(&query).await.unwrap();
         assert!(logger.is_dirty_for_deployment(dep.id).await.unwrap());
@@ -1087,7 +1245,7 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep = logger
-            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .create_deployment(1, "D", "d", "https://d.com", None, false, false, 300)
             .await
             .unwrap();
         let ts1 = logger.mark_deployment_fired(dep.id).await.unwrap();
@@ -1103,7 +1261,7 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep = logger
-            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .create_deployment(1, "D", "d", "https://d.com", None, false, false, 300)
             .await
             .unwrap();
         let id = logger
@@ -1127,11 +1285,11 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep1 = logger
-            .create_deployment("Alpha", "alpha", "https://a.com", None, false, false, 300)
+            .create_deployment(1, "Alpha", "alpha", "https://a.com", None, false, false, 300)
             .await
             .unwrap();
         let dep2 = logger
-            .create_deployment("Beta", "beta", "https://b.com", None, false, false, 300)
+            .create_deployment(1, "Beta", "beta", "https://b.com", None, false, false, 300)
             .await
             .unwrap();
 
@@ -1192,7 +1350,7 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep = logger
-            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .create_deployment(1, "D", "d", "https://d.com", None, false, false, 300)
             .await
             .unwrap();
         logger.mark_deployment_fired(dep.id).await.unwrap();
@@ -1226,13 +1384,13 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep = logger
-            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .create_deployment(1, "D", "d", "https://d.com", None, false, false, 300)
             .await
             .unwrap();
         logger.mark_deployment_fired(dep.id).await.unwrap();
         let future_ts = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
         let query = format!(
-            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{future_ts}', 'test', 'entry_unpublished', 'content', 'posts/1')"
+            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, app_id) VALUES ('{future_ts}', 'test', 'entry_unpublished', 'content', 'posts/1', 1)"
         );
         logger.execute_raw(&query).await.unwrap();
         assert!(logger.is_dirty_for_deployment(dep.id).await.unwrap());
@@ -1243,15 +1401,16 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         logger
-            .create_deployment("Manual", "manual", "https://m.com", None, false, false, 300)
+            .create_deployment(1, "Manual", "manual", "https://m.com", None, false, false, 300)
             .await
             .unwrap();
         logger
-            .create_deployment("Auto", "auto", "https://a.com", None, false, true, 60)
+            .create_deployment(1, "Auto", "auto", "https://a.com", None, false, true, 60)
             .await
             .unwrap();
         logger
             .create_deployment(
+                1,
                 "Also Auto",
                 "also-auto",
                 "https://aa.com",
@@ -1285,6 +1444,7 @@ mod tests {
         let logger = AuditLogger::new(pool);
         let dep = logger
             .create_deployment(
+                1,
                 "NoToken",
                 "no-token",
                 "https://n.com",
@@ -1310,11 +1470,11 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep1 = logger
-            .create_deployment("D1", "d1", "https://d1.com", None, false, false, 300)
+            .create_deployment(1, "D1", "d1", "https://d1.com", None, false, false, 300)
             .await
             .unwrap();
         let dep2 = logger
-            .create_deployment("D2", "d2", "https://d2.com", None, false, false, 300)
+            .create_deployment(1, "D2", "d2", "https://d2.com", None, false, false, 300)
             .await
             .unwrap();
 
@@ -1335,7 +1495,7 @@ mod tests {
         // Add a mutation -- both become dirty
         let future_ts = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
         let query = format!(
-            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{future_ts}', 'test', 'content_update', 'content', 'posts/1')"
+            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, app_id) VALUES ('{future_ts}', 'test', 'content_update', 'content', 'posts/1', 1)"
         );
         logger.execute_raw(&query).await.unwrap();
         assert!(logger.is_dirty_for_deployment(dep1.id).await.unwrap());
@@ -1348,6 +1508,7 @@ mod tests {
         let logger = AuditLogger::new(pool);
         let dep = logger
             .create_deployment(
+                1,
                 "Staging",
                 "staging",
                 "https://s.com",
@@ -1404,7 +1565,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (entries, has_next) = logger.list_audit_log(None, None, 1).await.unwrap();
+        let (entries, has_next) = logger.list_audit_log(None, None, None, 1).await.unwrap();
         assert_eq!(entries.len(), 2);
         assert!(!has_next);
         assert_eq!(entries[0].action, "login");
@@ -1432,7 +1593,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (entries, _) = logger.list_audit_log(Some("login"), None, 1).await.unwrap();
+        let (entries, _) = logger.list_audit_log(Some("login"), None, None, 1).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].action, "login");
     }
@@ -1451,7 +1612,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (entries, _) = logger.list_audit_log(None, Some("user1"), 1).await.unwrap();
+        let (entries, _) = logger.list_audit_log(None, Some("user1"), None, 1).await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].actor, "user1");
     }
@@ -1469,11 +1630,11 @@ mod tests {
             logger.execute_raw(&query).await.unwrap();
         }
 
-        let (page1, has_next1) = logger.list_audit_log(None, None, 1).await.unwrap();
+        let (page1, has_next1) = logger.list_audit_log(None, None, None, 1).await.unwrap();
         assert_eq!(page1.len(), 100);
         assert!(has_next1);
 
-        let (page2, has_next2) = logger.list_audit_log(None, None, 2).await.unwrap();
+        let (page2, has_next2) = logger.list_audit_log(None, None, None, 2).await.unwrap();
         assert_eq!(page2.len(), 5);
         assert!(!has_next2);
     }
@@ -1706,5 +1867,135 @@ mod tests {
         let history = logger.list_backup_history(10).await.unwrap();
         assert_eq!(history.len(), 1, "Should not delete when fewer than keep");
         assert_eq!(history[0].size_bytes, Some(256));
+    }
+
+    // ── Multi-app audit tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_log_with_app() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        // Log with app_id
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, app_id) VALUES ('2026-01-01T00:00:00Z', 'user1', 'content_create', 'content', 'posts/1', 1)")
+            .await
+            .unwrap();
+        // Log without app_id (global event)
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('2026-01-02T00:00:00Z', 'user1', 'login', 'session', '')")
+            .await
+            .unwrap();
+        // Log with different app_id
+        logger
+            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, app_id) VALUES ('2026-01-03T00:00:00Z', 'user1', 'content_create', 'content', 'pages/1', 2)")
+            .await
+            .unwrap();
+
+        // No filter: returns all
+        let (entries, _) = logger.list_audit_log(None, None, None, 1).await.unwrap();
+        assert_eq!(entries.len(), 3);
+
+        // Filter by app_id = 1
+        let (entries, _) = logger.list_audit_log(None, None, Some("1"), 1).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].app_id, Some(1));
+        assert_eq!(entries[0].resource_id, "posts/1");
+
+        // Filter by app_id = 2
+        let (entries, _) = logger.list_audit_log(None, None, Some("2"), 1).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].app_id, Some(2));
+        assert_eq!(entries[0].resource_id, "pages/1");
+
+        // Filter by global (no app_id)
+        let (entries, _) = logger.list_audit_log(None, None, Some("global"), 1).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].app_id, None);
+        assert_eq!(entries[0].action, "login");
+    }
+
+    #[tokio::test]
+    async fn test_deployment_scoped_by_app() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        // Create deployments for two different apps
+        let dep1 = logger
+            .create_deployment(1, "Prod App1", "prod", "https://a.com", None, false, false, 300)
+            .await
+            .unwrap();
+        let dep2 = logger
+            .create_deployment(2, "Prod App2", "prod", "https://b.com", None, false, false, 300)
+            .await
+            .unwrap();
+        let dep3 = logger
+            .create_deployment(1, "Staging App1", "staging", "https://c.com", None, false, false, 300)
+            .await
+            .unwrap();
+
+        // list_deployments_for_app returns only correct app's deployments
+        let app1_deps = logger.list_deployments_for_app(1).await.unwrap();
+        assert_eq!(app1_deps.len(), 2);
+        let slugs: Vec<&str> = app1_deps.iter().map(|d| d.slug.as_str()).collect();
+        assert!(slugs.contains(&"prod"));
+        assert!(slugs.contains(&"staging"));
+
+        let app2_deps = logger.list_deployments_for_app(2).await.unwrap();
+        assert_eq!(app2_deps.len(), 1);
+        assert_eq!(app2_deps[0].slug, "prod");
+
+        // get_deployment_by_slug_and_app returns correct one
+        let found = logger.get_deployment_by_slug_and_app(1, "prod").await.unwrap().unwrap();
+        assert_eq!(found.id, dep1.id);
+
+        let found = logger.get_deployment_by_slug_and_app(2, "prod").await.unwrap().unwrap();
+        assert_eq!(found.id, dep2.id);
+
+        // Non-existent combination
+        let found = logger.get_deployment_by_slug_and_app(2, "staging").await.unwrap();
+        assert!(found.is_none());
+
+        // Same slug in different apps is allowed
+        assert_ne!(dep1.id, dep2.id);
+        // Verify app_ids
+        assert_eq!(dep1.app_id, Some(1));
+        assert_eq!(dep2.app_id, Some(2));
+        assert_eq!(dep3.app_id, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_dirty_detection_scoped() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        // Create deployments for two different apps
+        let dep1 = logger
+            .create_deployment(1, "D1", "d1", "https://d1.com", None, false, false, 300)
+            .await
+            .unwrap();
+        let dep2 = logger
+            .create_deployment(2, "D2", "d2", "https://d2.com", None, false, false, 300)
+            .await
+            .unwrap();
+
+        // Mark both as fired
+        logger.mark_deployment_fired(dep1.id).await.unwrap();
+        logger.mark_deployment_fired(dep2.id).await.unwrap();
+
+        // Neither should be dirty
+        assert!(!logger.is_dirty_for_deployment(dep1.id).await.unwrap());
+        assert!(!logger.is_dirty_for_deployment(dep2.id).await.unwrap());
+
+        // Insert a mutation for app_id=1 only (with a future timestamp)
+        let future_ts = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
+        let query = format!(
+            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id, app_id) VALUES ('{future_ts}', 'test', 'content_create', 'content', 'test/1', 1)"
+        );
+        logger.execute_raw(&query).await.unwrap();
+
+        // dep1 (app_id=1) should be dirty, dep2 (app_id=2) should not
+        assert!(logger.is_dirty_for_deployment(dep1.id).await.unwrap());
+        assert!(!logger.is_dirty_for_deployment(dep2.id).await.unwrap());
     }
 }
