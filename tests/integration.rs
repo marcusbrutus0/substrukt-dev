@@ -4601,3 +4601,211 @@ async fn test_deployment_debounce_minimum_enforced() {
         "Debounce should be clamped to minimum of 10 seconds"
     );
 }
+
+// ── Backup tests ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_backup_page_loads_for_admin() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s
+        .client
+        .get(s.url("/settings/backups"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("Backups not configured"),
+        "Should show S3 not configured banner"
+    );
+    assert!(
+        body.contains("SUBSTRUKT_S3_ENDPOINT"),
+        "Should show credential status"
+    );
+}
+
+#[tokio::test]
+async fn test_backup_page_403_for_non_admin() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
+    let resp = editor
+        .get(s.url("/settings/backups"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_update_backup_config() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/backups").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/backups"))
+        .form(&[
+            ("frequency_hours", "12"),
+            ("retention_count", "14"),
+            ("enabled", "on"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Follow redirect and check values
+    let resp = s
+        .client
+        .get(s.url("/settings/backups"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Backup configuration updated") || body.contains(r#"value="12" selected"#) || body.contains(r#"value="14""#));
+}
+
+#[tokio::test]
+async fn test_trigger_backup_no_s3() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/backups").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/backups/trigger"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Follow redirect to check flash message
+    let resp = s
+        .client
+        .get(s.url("/settings/backups"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("S3 not configured"),
+        "Should show S3 not configured error"
+    );
+}
+
+#[tokio::test]
+async fn test_api_backup_status() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("backup-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = api
+        .get(s.url("/api/v1/backups/status"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["s3_configured"], false);
+    assert_eq!(body["backup_running"], false);
+    assert!(body["config"].is_object());
+    assert_eq!(body["config"]["frequency_hours"], 24);
+    assert_eq!(body["config"]["retention_count"], 7);
+    assert_eq!(body["config"]["enabled"], false);
+}
+
+#[tokio::test]
+async fn test_api_trigger_backup_no_s3() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("backup-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = api
+        .post(s.url("/api/v1/backups/trigger"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "S3 backup not configured");
+}
+
+#[tokio::test]
+async fn test_api_trigger_backup_non_admin() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create editor token
+    let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
+    // Editor creates a token via the tokens page
+    let resp = editor.get(s.url("/settings/tokens")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let resp = editor
+        .post(s.url("/settings/tokens"))
+        .form(&[("name", "test-token"), ("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let editor_token = extract_new_token(&body).expect("should find editor token");
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = api
+        .post(s.url("/api/v1/backups/trigger"))
+        .bearer_auth(&editor_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_nav_shows_backups_for_admin() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s.client.get(s.url("/")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains(r#"href="/settings/backups""#),
+        "Admin nav should contain Backups link"
+    );
+}
+
+#[tokio::test]
+async fn test_nav_hides_backups_for_editor() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
+    let resp = editor.get(s.url("/")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        !body.contains(r#"href="/settings/backups""#),
+        "Editor nav should not contain Backups link"
+    );
+}
