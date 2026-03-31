@@ -34,6 +34,7 @@ impl TestServer {
             10, // max_body_size_mb
         );
         config.ensure_dirs().unwrap();
+        config.ensure_app_dirs("default").unwrap();
 
         let pool = db::init_pool(&config.db_path).await.unwrap();
         let session_store = SqliteStore::new(pool.clone());
@@ -44,9 +45,9 @@ impl TestServer {
         let audit_pool = substrukt::audit::init_pool(&audit_db_path).await.unwrap();
         let audit_logger = substrukt::audit::AuditLogger::new(audit_pool);
 
-        let reloader = templates::create_reloader(config.schemas_dir());
+        let reloader = templates::create_reloader();
         let content_cache = DashMap::new();
-        cache::populate(&content_cache, &config.schemas_dir(), &config.content_dir());
+        cache::populate(&content_cache, &config.data_dir);
 
         let metrics_handle = metrics_exporter_prometheus::PrometheusBuilder::new()
             .build_recorder()
@@ -124,34 +125,42 @@ impl TestServer {
     }
 
     async fn create_schema(&self, json: &str) {
-        let csrf = self.get_csrf("/schemas/new").await;
+        let csrf = self.get_csrf("/apps/default/schemas/new").await;
         self.client
-            .post(self.url("/schemas/new"))
+            .post(self.url("/apps/default/schemas/new"))
             .form(&[("schema_json", json), ("_csrf", &csrf)])
             .send()
             .await
             .unwrap();
     }
 
-    /// Create an API token via the settings UI and extract the raw token from the response.
+    /// Create an API token via the app settings UI and extract the raw token from the response.
     async fn create_api_token(&self, name: &str) -> String {
-        let csrf = self.get_csrf("/settings/tokens").await;
+        let csrf = self.get_csrf("/apps/default/settings").await;
         let resp = self
             .client
-            .post(self.url("/settings/tokens"))
+            .post(self.url("/apps/default/settings/tokens"))
             .form(&[("name", name), ("_csrf", &csrf)])
             .send()
             .await
             .unwrap();
+        // Follow redirect to settings page where the token flash is shown
+        let location = resp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("/apps/default/settings")
+            .to_string();
+        let resp = self.client.get(self.url(&location)).send().await.unwrap();
         let body = resp.text().await.unwrap();
         extract_new_token(&body).expect("should find new token in response")
     }
 
     /// Create a deployment via the admin UI.
     async fn create_deployment(&self, name: &str, slug: &str, webhook_url: &str) {
-        let csrf = self.get_csrf("/deployments/new").await;
+        let csrf = self.get_csrf("/apps/default/deployments/new").await;
         self.client
-            .post(self.url("/deployments/new"))
+            .post(self.url("/apps/default/deployments/new"))
             .form(&[
                 ("name", name),
                 ("slug", slug),
@@ -200,8 +209,11 @@ async fn auth_setup_creates_admin_and_sets_session() {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     assert_eq!(resp.headers().get("location").unwrap(), "/");
 
-    // Session should now work
+    // Session should now work -- "/" redirects to /apps
     let resp = s.client.get(s.url("/")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
+    let resp = s.client.get(s.url("/apps")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
@@ -220,8 +232,8 @@ async fn auth_login_and_logout() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    // Logout (get CSRF from dashboard which has nav with logout form)
-    let csrf = s.get_csrf("/").await;
+    // Logout (get CSRF from apps page which has nav with logout form)
+    let csrf = s.get_csrf("/apps").await;
     let resp = s
         .client
         .post(s.url("/logout"))
@@ -271,17 +283,22 @@ async fn schema_create_and_list() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    let csrf = s.get_csrf("/schemas/new").await;
+    let csrf = s.get_csrf("/apps/default/schemas/new").await;
     let resp = s
         .client
-        .post(s.url("/schemas/new"))
+        .post(s.url("/apps/default/schemas/new"))
         .form(&[("schema_json", BLOG_SCHEMA), ("_csrf", &csrf)])
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
-    let resp = s.client.get(s.url("/schemas")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/apps/default/schemas"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("Blog Posts"));
 }
@@ -295,18 +312,20 @@ async fn schema_edit_and_update() {
     // Edit page loads
     let resp = s
         .client
-        .get(s.url("/schemas/blog-posts/edit"))
+        .get(s.url("/apps/default/schemas/blog-posts/edit"))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    let status = resp.status();
+    let body = resp.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "Schema edit page failed: {body}");
 
     // Update via POST
-    let csrf = s.get_csrf("/schemas/blog-posts/edit").await;
+    let csrf = s.get_csrf("/apps/default/schemas/blog-posts/edit").await;
     let updated = BLOG_SCHEMA.replace("Blog Posts", "Articles");
     let resp = s
         .client
-        .post(s.url("/schemas/blog-posts"))
+        .post(s.url("/apps/default/schemas/blog-posts"))
         .form(&[("schema_json", updated.as_str()), ("_csrf", &csrf)])
         .send()
         .await
@@ -320,10 +339,10 @@ async fn schema_delete() {
     s.setup_admin().await;
     s.create_schema(BLOG_SCHEMA).await;
 
-    let csrf = s.get_csrf("/schemas/blog-posts/edit").await;
+    let csrf = s.get_csrf("/apps/default/schemas/blog-posts/edit").await;
     let resp = s
         .client
-        .delete(s.url("/schemas/blog-posts"))
+        .delete(s.url("/apps/default/schemas/blog-posts"))
         .header("X-CSRF-Token", &csrf)
         .send()
         .await
@@ -342,7 +361,7 @@ async fn content_create_and_list() {
     // New entry page
     let resp = s
         .client
-        .get(s.url("/content/blog-posts/new"))
+        .get(s.url("/apps/default/content/blog-posts/new"))
         .send()
         .await
         .unwrap();
@@ -352,7 +371,7 @@ async fn content_create_and_list() {
     assert!(body.contains("<textarea"), "Form should have textarea");
 
     // Create entry
-    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let csrf = s.get_csrf("/apps/default/content/blog-posts/new").await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("title", "Hello World")
@@ -360,7 +379,7 @@ async fn content_create_and_list() {
         .text("published", "true");
     let resp = s
         .client
-        .post(s.url("/content/blog-posts/new"))
+        .post(s.url("/apps/default/content/blog-posts/new"))
         .multipart(form)
         .send()
         .await
@@ -370,7 +389,7 @@ async fn content_create_and_list() {
     // Entry appears in list
     let resp = s
         .client
-        .get(s.url("/content/blog-posts"))
+        .get(s.url("/apps/default/content/blog-posts"))
         .send()
         .await
         .unwrap();
@@ -385,13 +404,13 @@ async fn content_edit_and_delete() {
     s.create_schema(BLOG_SCHEMA).await;
 
     // Create
-    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let csrf = s.get_csrf("/apps/default/content/blog-posts/new").await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("title", "To Edit")
         .text("body", "Original");
     s.client
-        .post(s.url("/content/blog-posts/new"))
+        .post(s.url("/apps/default/content/blog-posts/new"))
         .multipart(form)
         .send()
         .await
@@ -400,7 +419,7 @@ async fn content_edit_and_delete() {
     // Find entry ID from list page
     let resp = s
         .client
-        .get(s.url("/content/blog-posts"))
+        .get(s.url("/apps/default/content/blog-posts"))
         .send()
         .await
         .unwrap();
@@ -410,7 +429,7 @@ async fn content_edit_and_delete() {
     // Edit page loads
     let resp = s
         .client
-        .get(s.url(&format!("/content/blog-posts/{entry_id}/edit")))
+        .get(s.url(&format!("/apps/default/content/blog-posts/{entry_id}/edit")))
         .send()
         .await
         .unwrap();
@@ -418,7 +437,7 @@ async fn content_edit_and_delete() {
 
     // Update
     let csrf = s
-        .get_csrf(&format!("/content/blog-posts/{entry_id}/edit"))
+        .get_csrf(&format!("/apps/default/content/blog-posts/{entry_id}/edit"))
         .await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
@@ -426,7 +445,7 @@ async fn content_edit_and_delete() {
         .text("body", "Updated body");
     let resp = s
         .client
-        .post(s.url(&format!("/content/blog-posts/{entry_id}")))
+        .post(s.url(&format!("/apps/default/content/blog-posts/{entry_id}")))
         .multipart(form)
         .send()
         .await
@@ -436,7 +455,7 @@ async fn content_edit_and_delete() {
     // Verify update
     let resp = s
         .client
-        .get(s.url("/content/blog-posts"))
+        .get(s.url("/apps/default/content/blog-posts"))
         .send()
         .await
         .unwrap();
@@ -444,10 +463,10 @@ async fn content_edit_and_delete() {
     assert!(body.contains("Edited Title"));
 
     // Delete
-    let csrf = s.get_csrf("/content/blog-posts").await;
+    let csrf = s.get_csrf("/apps/default/content/blog-posts").await;
     let resp = s
         .client
-        .delete(s.url(&format!("/content/blog-posts/{entry_id}")))
+        .delete(s.url(&format!("/apps/default/content/blog-posts/{entry_id}")))
         .header("X-CSRF-Token", &csrf)
         .send()
         .await
@@ -473,7 +492,7 @@ async fn upload_create_and_serve() {
     s.setup_admin().await;
     s.create_schema(GALLERY_SCHEMA).await;
 
-    let csrf = s.get_csrf("/content/gallery/new").await;
+    let csrf = s.get_csrf("/apps/default/content/gallery/new").await;
     let file_part = reqwest::multipart::Part::bytes(b"fake image data".to_vec())
         .file_name("photo.png")
         .mime_str("image/png")
@@ -484,7 +503,7 @@ async fn upload_create_and_serve() {
         .part("image", file_part);
     let resp = s
         .client
-        .post(s.url("/content/gallery/new"))
+        .post(s.url("/apps/default/content/gallery/new"))
         .multipart(form)
         .send()
         .await
@@ -494,7 +513,7 @@ async fn upload_create_and_serve() {
     // Get entry to find upload hash
     let resp = s
         .client
-        .get(s.url("/content/gallery"))
+        .get(s.url("/apps/default/content/gallery"))
         .send()
         .await
         .unwrap();
@@ -503,7 +522,7 @@ async fn upload_create_and_serve() {
 
     let resp = s
         .client
-        .get(s.url(&format!("/content/gallery/{entry_id}/edit")))
+        .get(s.url(&format!("/apps/default/content/gallery/{entry_id}/edit")))
         .send()
         .await
         .unwrap();
@@ -517,7 +536,7 @@ async fn upload_create_and_serve() {
     if let Some(hash) = extract_upload_hash(&edit_body) {
         let resp = s
             .client
-            .get(s.url(&format!("/uploads/file/{hash}/photo.png")))
+            .get(s.url(&format!("/apps/default/uploads/file/{hash}/photo.png")))
             .send()
             .await
             .unwrap();
@@ -535,7 +554,7 @@ async fn upload_dedup() {
 
     // Upload same file twice in different entries
     for title in ["Photo 1", "Photo 2"] {
-        let csrf = s.get_csrf("/content/gallery/new").await;
+        let csrf = s.get_csrf("/apps/default/content/gallery/new").await;
         let file_part = reqwest::multipart::Part::bytes(b"identical content".to_vec())
             .file_name("img.png")
             .mime_str("image/png")
@@ -545,7 +564,7 @@ async fn upload_dedup() {
             .text("title", title.to_string())
             .part("image", file_part);
         s.client
-            .post(s.url("/content/gallery/new"))
+            .post(s.url("/apps/default/content/gallery/new"))
             .multipart(form)
             .send()
             .await
@@ -553,7 +572,7 @@ async fn upload_dedup() {
     }
 
     // Count upload files on disk — should be 1 (deduplicated)
-    let upload_count = std::fs::read_dir(s._data_dir.path().join("uploads"))
+    let upload_count = std::fs::read_dir(s._data_dir.path().join("default/uploads"))
         .unwrap()
         .flat_map(|d| std::fs::read_dir(d.unwrap().path()).unwrap())
         .filter(|e| {
@@ -572,9 +591,14 @@ async fn sidebar_shows_content_links() {
     s.setup_admin().await;
     s.create_schema(BLOG_SCHEMA).await;
 
-    let resp = s.client.get(s.url("/")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/apps/default/schemas"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
-    assert!(body.contains(r#"href="/content/blog-posts""#));
+    assert!(body.contains(r#"href="/apps/default/content/blog-posts""#));
 }
 
 // ── Flash message tests ──────────────────────────────────────
@@ -586,7 +610,12 @@ async fn flash_message_after_schema_create() {
     s.create_schema(BLOG_SCHEMA).await;
 
     // After creating a schema, the redirect to /schemas should show the flash
-    let resp = s.client.get(s.url("/schemas")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/apps/default/schemas"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(
         body.contains("Schema created"),
@@ -594,7 +623,12 @@ async fn flash_message_after_schema_create() {
     );
 
     // Second load should not show flash (consumed)
-    let resp = s.client.get(s.url("/schemas")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/apps/default/schemas"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(
         !body.contains("Schema created"),
@@ -611,7 +645,7 @@ async fn token_create_and_list() {
 
     let resp = s
         .client
-        .get(s.url("/settings/tokens"))
+        .get(s.url("/apps/default/settings"))
         .send()
         .await
         .unwrap();
@@ -622,7 +656,7 @@ async fn token_create_and_list() {
 
     let resp = s
         .client
-        .get(s.url("/settings/tokens"))
+        .get(s.url("/apps/default/settings"))
         .send()
         .await
         .unwrap();
@@ -643,7 +677,7 @@ async fn api_requires_bearer_token() {
         .build()
         .unwrap();
     let resp = no_cookie_client
-        .get(s.url("/api/v1/schemas"))
+        .get(s.url("/api/v1/apps/default/schemas"))
         .send()
         .await
         .unwrap();
@@ -667,7 +701,7 @@ async fn api_schema_and_content_crud() {
 
     // List schemas via API
     let resp = api
-        .get(s.url("/api/v1/schemas"))
+        .get(s.url("/api/v1/apps/default/schemas"))
         .bearer_auth(&token)
         .send()
         .await
@@ -684,7 +718,7 @@ async fn api_schema_and_content_crud() {
 
     // Get single schema
     let resp = api
-        .get(s.url("/api/v1/schemas/blog-posts"))
+        .get(s.url("/api/v1/apps/default/schemas/blog-posts"))
         .bearer_auth(&token)
         .send()
         .await
@@ -693,7 +727,7 @@ async fn api_schema_and_content_crud() {
 
     // Create entry via API
     let resp = api
-        .post(s.url("/api/v1/content/blog-posts"))
+        .post(s.url("/api/v1/apps/default/content/blog-posts"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "API Post", "body": "From API"}))
         .send()
@@ -705,7 +739,7 @@ async fn api_schema_and_content_crud() {
 
     // List entries via API
     let resp = api
-        .get(s.url("/api/v1/content/blog-posts?status=all"))
+        .get(s.url("/api/v1/apps/default/content/blog-posts?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -716,7 +750,9 @@ async fn api_schema_and_content_crud() {
 
     // Get single entry
     let resp = api
-        .get(s.url(&format!("/api/v1/content/blog-posts/{entry_id}")))
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/blog-posts/{entry_id}"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -727,7 +763,9 @@ async fn api_schema_and_content_crud() {
 
     // Update entry
     let resp = api
-        .put(s.url(&format!("/api/v1/content/blog-posts/{entry_id}")))
+        .put(s.url(&format!(
+            "/api/v1/apps/default/content/blog-posts/{entry_id}"
+        )))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Updated API Post", "body": "Edited"}))
         .send()
@@ -737,7 +775,9 @@ async fn api_schema_and_content_crud() {
 
     // Delete entry
     let resp = api
-        .delete(s.url(&format!("/api/v1/content/blog-posts/{entry_id}")))
+        .delete(s.url(&format!(
+            "/api/v1/apps/default/content/blog-posts/{entry_id}"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -758,13 +798,13 @@ async fn api_export_import() {
 
     // Create schema and content
     s.create_schema(BLOG_SCHEMA).await;
-    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let csrf = s.get_csrf("/apps/default/content/blog-posts/new").await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("title", "Export Me")
         .text("body", "Content for export");
     s.client
-        .post(s.url("/content/blog-posts/new"))
+        .post(s.url("/apps/default/content/blog-posts/new"))
         .multipart(form)
         .send()
         .await
@@ -772,7 +812,7 @@ async fn api_export_import() {
 
     // Export
     let resp = api
-        .post(s.url("/api/v1/export"))
+        .post(s.url("/api/v1/apps/default/export"))
         .bearer_auth(&token)
         .send()
         .await
@@ -797,7 +837,7 @@ async fn api_export_import() {
         .unwrap();
     let form = reqwest::multipart::Form::new().part("bundle", file_part);
     let resp = api2
-        .post(s2.url("/api/v1/import"))
+        .post(s2.url("/api/v1/apps/default/import"))
         .bearer_auth(&token2)
         .multipart(form)
         .send()
@@ -807,7 +847,7 @@ async fn api_export_import() {
 
     // Verify imported content
     let resp = api2
-        .get(s2.url("/api/v1/content/blog-posts?status=all"))
+        .get(s2.url("/api/v1/apps/default/content/blog-posts?status=all"))
         .bearer_auth(&token2)
         .send()
         .await
@@ -829,7 +869,7 @@ async fn upload_reference_tracking() {
     s.create_schema(GALLERY_SCHEMA).await;
 
     // Create entry with upload
-    let csrf = s.get_csrf("/content/gallery/new").await;
+    let csrf = s.get_csrf("/apps/default/content/gallery/new").await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("title", "Test Photo")
@@ -842,7 +882,7 @@ async fn upload_reference_tracking() {
         );
     let resp = s
         .client
-        .post(s.url("/content/gallery/new"))
+        .post(s.url("/apps/default/content/gallery/new"))
         .multipart(form)
         .send()
         .await
@@ -850,7 +890,12 @@ async fn upload_reference_tracking() {
     assert!(resp.status().is_redirection() || resp.status().is_success());
 
     // Check uploads page shows the upload with reference
-    let resp = s.client.get(s.url("/uploads")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/apps/default/uploads"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.text().await.unwrap();
     assert!(body.contains("test.jpg"));
@@ -865,7 +910,7 @@ async fn uploads_browser_filtering() {
     s.create_schema(GALLERY_SCHEMA).await;
 
     // Upload a file via content creation
-    let csrf = s.get_csrf("/content/gallery/new").await;
+    let csrf = s.get_csrf("/apps/default/content/gallery/new").await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("title", "Beach")
@@ -877,7 +922,7 @@ async fn uploads_browser_filtering() {
                 .unwrap(),
         );
     s.client
-        .post(s.url("/content/gallery/new"))
+        .post(s.url("/apps/default/content/gallery/new"))
         .multipart(form)
         .send()
         .await
@@ -886,7 +931,7 @@ async fn uploads_browser_filtering() {
     // Filter by filename — should match
     let resp = s
         .client
-        .get(s.url("/uploads?q=beach"))
+        .get(s.url("/apps/default/uploads?q=beach"))
         .send()
         .await
         .unwrap();
@@ -896,7 +941,7 @@ async fn uploads_browser_filtering() {
     // Filter by non-matching filename — should not match
     let resp = s
         .client
-        .get(s.url("/uploads?q=mountain"))
+        .get(s.url("/apps/default/uploads?q=mountain"))
         .send()
         .await
         .unwrap();
@@ -906,7 +951,7 @@ async fn uploads_browser_filtering() {
     // Filter by schema
     let resp = s
         .client
-        .get(s.url("/uploads?schema=gallery"))
+        .get(s.url("/apps/default/uploads?schema=gallery"))
         .send()
         .await
         .unwrap();
@@ -927,7 +972,7 @@ async fn export_import_with_upload_manifest() {
         .unwrap();
 
     // Upload via web UI
-    let csrf = s.get_csrf("/content/gallery/new").await;
+    let csrf = s.get_csrf("/apps/default/content/gallery/new").await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("title", "Manual")
@@ -939,7 +984,7 @@ async fn export_import_with_upload_manifest() {
                 .unwrap(),
         );
     s.client
-        .post(s.url("/content/gallery/new"))
+        .post(s.url("/apps/default/content/gallery/new"))
         .multipart(form)
         .send()
         .await
@@ -947,7 +992,7 @@ async fn export_import_with_upload_manifest() {
 
     // Export via API
     let resp = api
-        .post(s.url("/api/v1/export"))
+        .post(s.url("/api/v1/apps/default/export"))
         .bearer_auth(&token)
         .send()
         .await
@@ -971,7 +1016,7 @@ async fn export_import_with_upload_manifest() {
         .unwrap();
     let form = reqwest::multipart::Form::new().part("bundle", file_part);
     let resp = api2
-        .post(s2.url("/api/v1/import"))
+        .post(s2.url("/api/v1/apps/default/import"))
         .bearer_auth(&token2)
         .multipart(form)
         .send()
@@ -980,7 +1025,12 @@ async fn export_import_with_upload_manifest() {
     assert!(resp.status().is_success());
 
     // Verify upload appears in the new server's uploads browser
-    let resp = s2.client.get(s2.url("/uploads")).send().await.unwrap();
+    let resp = s2
+        .client
+        .get(s2.url("/apps/default/uploads"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("manual.pdf"));
 }
@@ -1006,14 +1056,14 @@ async fn single_list_redirects_to_edit() {
     // GET /content/site-settings should redirect to /_single/edit
     let resp = s
         .client
-        .get(s.url("/content/site-settings"))
+        .get(s.url("/apps/default/content/site-settings"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     assert_eq!(
         resp.headers().get("location").unwrap(),
-        "/content/site-settings/_single/edit"
+        "/apps/default/content/site-settings/_single/edit"
     );
 }
 
@@ -1026,7 +1076,7 @@ async fn single_edit_page_shows_empty_form_when_unsaved() {
     // Edit page for unsaved single should show empty form, not 404
     let resp = s
         .client
-        .get(s.url("/content/site-settings/_single/edit"))
+        .get(s.url("/apps/default/content/site-settings/_single/edit"))
         .send()
         .await
         .unwrap();
@@ -1043,14 +1093,16 @@ async fn single_create_and_update_via_web() {
     s.create_schema(SETTINGS_SCHEMA).await;
 
     // Save (first time — creates the _single entry)
-    let csrf = s.get_csrf("/content/site-settings/_single/edit").await;
+    let csrf = s
+        .get_csrf("/apps/default/content/site-settings/_single/edit")
+        .await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("site_name", "My Site")
         .text("tagline", "Welcome");
     let resp = s
         .client
-        .post(s.url("/content/site-settings/_single"))
+        .post(s.url("/apps/default/content/site-settings/_single"))
         .multipart(form)
         .send()
         .await
@@ -1059,13 +1111,13 @@ async fn single_create_and_update_via_web() {
     // Should redirect back to the single edit page, not the list
     assert_eq!(
         resp.headers().get("location").unwrap(),
-        "/content/site-settings/_single/edit"
+        "/apps/default/content/site-settings/_single/edit"
     );
 
     // Edit page should show saved data
     let resp = s
         .client
-        .get(s.url("/content/site-settings/_single/edit"))
+        .get(s.url("/apps/default/content/site-settings/_single/edit"))
         .send()
         .await
         .unwrap();
@@ -1073,14 +1125,16 @@ async fn single_create_and_update_via_web() {
     assert!(body.contains("My Site"));
 
     // Update
-    let csrf = s.get_csrf("/content/site-settings/_single/edit").await;
+    let csrf = s
+        .get_csrf("/apps/default/content/site-settings/_single/edit")
+        .await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("site_name", "Updated Site")
         .text("tagline", "New tagline");
     let resp = s
         .client
-        .post(s.url("/content/site-settings/_single"))
+        .post(s.url("/apps/default/content/site-settings/_single"))
         .multipart(form)
         .send()
         .await
@@ -1090,7 +1144,7 @@ async fn single_create_and_update_via_web() {
     // Verify update
     let resp = s
         .client
-        .get(s.url("/content/site-settings/_single/edit"))
+        .get(s.url("/apps/default/content/site-settings/_single/edit"))
         .send()
         .await
         .unwrap();
@@ -1107,14 +1161,14 @@ async fn single_new_entry_page_redirects() {
     // GET /content/site-settings/new should redirect to /_single/edit for singles
     let resp = s
         .client
-        .get(s.url("/content/site-settings/new"))
+        .get(s.url("/apps/default/content/site-settings/new"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     assert_eq!(
         resp.headers().get("location").unwrap(),
-        "/content/site-settings/_single/edit"
+        "/apps/default/content/site-settings/_single/edit"
     );
 }
 
@@ -1132,7 +1186,7 @@ async fn api_single_crud() {
 
     // GET /single returns 404 when not yet saved
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1141,7 +1195,7 @@ async fn api_single_crud() {
 
     // PUT /single creates it
     let resp = api
-        .put(s.url("/api/v1/content/site-settings/single"))
+        .put(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"site_name": "API Site", "tagline": "Hello"}))
         .send()
@@ -1151,7 +1205,7 @@ async fn api_single_crud() {
 
     // GET /single returns the data
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single?status=all"))
+        .get(s.url("/api/v1/apps/default/content/site-settings/single?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1162,7 +1216,7 @@ async fn api_single_crud() {
 
     // PUT /single updates it
     let resp = api
-        .put(s.url("/api/v1/content/site-settings/single"))
+        .put(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"site_name": "Updated Site", "tagline": "New"}))
         .send()
@@ -1172,7 +1226,7 @@ async fn api_single_crud() {
 
     // Verify update
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single?status=all"))
+        .get(s.url("/api/v1/apps/default/content/site-settings/single?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1182,7 +1236,7 @@ async fn api_single_crud() {
 
     // DELETE /single
     let resp = api
-        .delete(s.url("/api/v1/content/site-settings/single"))
+        .delete(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1191,7 +1245,7 @@ async fn api_single_crud() {
 
     // GET /single returns 404 again
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1213,7 +1267,7 @@ async fn api_rejects_collection_create_for_singles() {
 
     // POST to collection endpoint for a single schema should be rejected
     let resp = api
-        .post(s.url("/api/v1/content/site-settings"))
+        .post(s.url("/api/v1/apps/default/content/site-settings"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"site_name": "Bad", "tagline": "No"}))
         .send()
@@ -1239,7 +1293,7 @@ async fn single_full_workflow() {
     // 1. Web: list redirects to edit
     let resp = s
         .client
-        .get(s.url("/content/site-settings"))
+        .get(s.url("/apps/default/content/site-settings"))
         .send()
         .await
         .unwrap();
@@ -1248,21 +1302,23 @@ async fn single_full_workflow() {
     // 2. Web: edit shows empty form
     let resp = s
         .client
-        .get(s.url("/content/site-settings/_single/edit"))
+        .get(s.url("/apps/default/content/site-settings/_single/edit"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // 3. Web: save creates entry
-    let csrf = s.get_csrf("/content/site-settings/_single/edit").await;
+    let csrf = s
+        .get_csrf("/apps/default/content/site-settings/_single/edit")
+        .await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("site_name", "Web Site")
         .text("tagline", "From web");
     let resp = s
         .client
-        .post(s.url("/content/site-settings/_single"))
+        .post(s.url("/apps/default/content/site-settings/_single"))
         .multipart(form)
         .send()
         .await
@@ -1271,7 +1327,7 @@ async fn single_full_workflow() {
 
     // 4. API: GET /single returns data
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single?status=all"))
+        .get(s.url("/api/v1/apps/default/content/site-settings/single?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1282,7 +1338,7 @@ async fn single_full_workflow() {
 
     // 5. API: PUT /single updates
     let resp = api
-        .put(s.url("/api/v1/content/site-settings/single"))
+        .put(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"site_name": "API Site", "tagline": "From API"}))
         .send()
@@ -1293,7 +1349,7 @@ async fn single_full_workflow() {
     // 6. Web: edit shows API-updated data
     let resp = s
         .client
-        .get(s.url("/content/site-settings/_single/edit"))
+        .get(s.url("/apps/default/content/site-settings/_single/edit"))
         .send()
         .await
         .unwrap();
@@ -1302,7 +1358,7 @@ async fn single_full_workflow() {
 
     // 7. API: DELETE /single
     let resp = api
-        .delete(s.url("/api/v1/content/site-settings/single"))
+        .delete(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1312,7 +1368,7 @@ async fn single_full_workflow() {
     // 8. Web: edit shows empty form again
     let resp = s
         .client
-        .get(s.url("/content/site-settings/_single/edit"))
+        .get(s.url("/apps/default/content/site-settings/_single/edit"))
         .send()
         .await
         .unwrap();
@@ -1505,8 +1561,10 @@ async fn signup_creates_user_and_logs_in() {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     assert_eq!(resp.headers().get("location").unwrap(), "/");
 
-    // Should be logged in — can access dashboard
+    // Should be logged in — / redirects to /apps
     let resp = client2.get(s.url("/")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let resp = client2.get(s.url("/apps")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
@@ -1665,25 +1723,25 @@ async fn content_search_filters_entries() {
     s.create_schema(BLOG_SCHEMA).await;
 
     // Create two entries with distinct titles
-    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let csrf = s.get_csrf("/apps/default/content/blog-posts/new").await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("title", "Rust Programming")
         .text("body", "A post about Rust");
     s.client
-        .post(s.url("/content/blog-posts/new"))
+        .post(s.url("/apps/default/content/blog-posts/new"))
         .multipart(form)
         .send()
         .await
         .unwrap();
 
-    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let csrf = s.get_csrf("/apps/default/content/blog-posts/new").await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("title", "Python Scripting")
         .text("body", "A post about Python");
     s.client
-        .post(s.url("/content/blog-posts/new"))
+        .post(s.url("/apps/default/content/blog-posts/new"))
         .multipart(form)
         .send()
         .await
@@ -1692,7 +1750,7 @@ async fn content_search_filters_entries() {
     // Unfiltered list shows both
     let resp = s
         .client
-        .get(s.url("/content/blog-posts"))
+        .get(s.url("/apps/default/content/blog-posts"))
         .send()
         .await
         .unwrap();
@@ -1703,7 +1761,7 @@ async fn content_search_filters_entries() {
     // Search for "rust" (case-insensitive) — UI
     let resp = s
         .client
-        .get(s.url("/content/blog-posts?q=rust"))
+        .get(s.url("/apps/default/content/blog-posts?q=rust"))
         .send()
         .await
         .unwrap();
@@ -1716,7 +1774,7 @@ async fn content_search_filters_entries() {
     // Search for "python" — UI
     let resp = s
         .client
-        .get(s.url("/content/blog-posts?q=python"))
+        .get(s.url("/apps/default/content/blog-posts?q=python"))
         .send()
         .await
         .unwrap();
@@ -1733,7 +1791,7 @@ async fn content_search_filters_entries() {
 
     // API: unfiltered
     let resp = api
-        .get(s.url("/api/v1/content/blog-posts?status=all"))
+        .get(s.url("/api/v1/apps/default/content/blog-posts?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1744,7 +1802,7 @@ async fn content_search_filters_entries() {
 
     // API: filtered
     let resp = api
-        .get(s.url("/api/v1/content/blog-posts?q=rust&status=all"))
+        .get(s.url("/api/v1/apps/default/content/blog-posts?q=rust&status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1756,7 +1814,7 @@ async fn content_search_filters_entries() {
 
     // API: no match
     let resp = api
-        .get(s.url("/api/v1/content/blog-posts?q=javascript&status=all"))
+        .get(s.url("/api/v1/apps/default/content/blog-posts?q=javascript&status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1785,14 +1843,14 @@ async fn content_markdown_field_stored_as_string() {
     s.create_schema(ARTICLE_SCHEMA).await;
 
     // Create entry with markdown content
-    let csrf = s.get_csrf("/content/articles/new").await;
+    let csrf = s.get_csrf("/apps/default/content/articles/new").await;
     let md = "# Hello\n\nThis is **bold** text.";
     let form = reqwest::multipart::Form::new()
         .text("title", "Test Article")
         .text("content", md.to_string())
         .text("_csrf", csrf);
     s.client
-        .post(s.url("/content/articles/new"))
+        .post(s.url("/apps/default/content/articles/new"))
         .multipart(form)
         .send()
         .await
@@ -1802,7 +1860,7 @@ async fn content_markdown_field_stored_as_string() {
     let token = s.create_api_token("test").await;
     let resp = s
         .client
-        .get(s.url("/api/v1/content/articles?status=all"))
+        .get(s.url("/api/v1/apps/default/content/articles?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1814,7 +1872,7 @@ async fn content_markdown_field_stored_as_string() {
     // Find the entry ID from the list page
     let resp = s
         .client
-        .get(s.url("/content/articles"))
+        .get(s.url("/apps/default/content/articles"))
         .send()
         .await
         .unwrap();
@@ -1824,7 +1882,7 @@ async fn content_markdown_field_stored_as_string() {
     // Verify edit page contains data-markdown attribute
     let resp = s
         .client
-        .get(s.url(&format!("/content/articles/{entry_id}/edit")))
+        .get(s.url(&format!("/apps/default/content/articles/{entry_id}/edit")))
         .send()
         .await
         .unwrap();
@@ -1861,25 +1919,25 @@ async fn content_references_resolve_in_api() {
     s.create_schema(POSTS_WITH_AUTHOR_SCHEMA).await;
 
     // Create an author
-    let csrf = s.get_csrf("/content/authors/new").await;
+    let csrf = s.get_csrf("/apps/default/content/authors/new").await;
     let form = reqwest::multipart::Form::new()
         .text("name", "Jane Doe")
         .text("_csrf", csrf);
     s.client
-        .post(s.url("/content/authors/new"))
+        .post(s.url("/apps/default/content/authors/new"))
         .multipart(form)
         .send()
         .await
         .unwrap();
 
     // Create a post referencing the author
-    let csrf = s.get_csrf("/content/posts/new").await;
+    let csrf = s.get_csrf("/apps/default/content/posts/new").await;
     let form = reqwest::multipart::Form::new()
         .text("title", "My Post")
         .text("author", "jane-doe")
         .text("_csrf", csrf);
     s.client
-        .post(s.url("/content/posts/new"))
+        .post(s.url("/apps/default/content/posts/new"))
         .multipart(form)
         .send()
         .await
@@ -1889,7 +1947,7 @@ async fn content_references_resolve_in_api() {
     let token = s.create_api_token("test").await;
     let resp = s
         .client
-        .get(s.url("/api/v1/content/posts?status=all"))
+        .get(s.url("/api/v1/apps/default/content/posts?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1906,7 +1964,7 @@ async fn content_references_resolve_in_api() {
     // Edit page should show reference select
     let resp = s
         .client
-        .get(s.url("/content/posts/my-post/edit"))
+        .get(s.url("/apps/default/content/posts/my-post/edit"))
         .send()
         .await
         .unwrap();
@@ -1919,7 +1977,7 @@ async fn content_references_resolve_in_api() {
 
 /// Extract the first entry ID from a content list page's edit links.
 fn extract_entry_id(html: &str, schema_slug: &str) -> Option<String> {
-    let pattern = format!("/content/{schema_slug}/");
+    let pattern = format!("/apps/default/content/{schema_slug}/");
     for line in html.lines() {
         if let Some(pos) = line.find(&pattern) {
             let rest = &line[pos + pattern.len()..];
@@ -1933,7 +1991,7 @@ fn extract_entry_id(html: &str, schema_slug: &str) -> Option<String> {
 
 /// Extract an upload hash from an edit page's upload link.
 fn extract_upload_hash(html: &str) -> Option<String> {
-    let marker = "/uploads/file/";
+    let marker = "/apps/default/uploads/file/";
     if let Some(pos) = html.find(marker) {
         let rest = &html[pos + marker.len()..];
         if let Some(end) = rest.find('/') {
@@ -2019,13 +2077,13 @@ async fn content_versioning_history_and_revert() {
     s.create_schema(BLOG_SCHEMA).await;
 
     // Create entry
-    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let csrf = s.get_csrf("/apps/default/content/blog-posts/new").await;
     let form = reqwest::multipart::Form::new()
         .text("title", "Original Title")
         .text("body", "Original body")
         .text("_csrf", csrf);
     s.client
-        .post(s.url("/content/blog-posts/new"))
+        .post(s.url("/apps/default/content/blog-posts/new"))
         .multipart(form)
         .send()
         .await
@@ -2034,7 +2092,7 @@ async fn content_versioning_history_and_revert() {
     // Find entry ID from list page
     let resp = s
         .client
-        .get(s.url("/content/blog-posts"))
+        .get(s.url("/apps/default/content/blog-posts"))
         .send()
         .await
         .unwrap();
@@ -2043,14 +2101,14 @@ async fn content_versioning_history_and_revert() {
 
     // Update entry (creates a history snapshot)
     let csrf = s
-        .get_csrf(&format!("/content/blog-posts/{entry_id}/edit"))
+        .get_csrf(&format!("/apps/default/content/blog-posts/{entry_id}/edit"))
         .await;
     let form = reqwest::multipart::Form::new()
         .text("title", "Updated Title")
         .text("body", "Updated body")
         .text("_csrf", csrf);
     s.client
-        .post(s.url(&format!("/content/blog-posts/{entry_id}")))
+        .post(s.url(&format!("/apps/default/content/blog-posts/{entry_id}")))
         .multipart(form)
         .send()
         .await
@@ -2059,7 +2117,9 @@ async fn content_versioning_history_and_revert() {
     // Check history page has a version
     let resp = s
         .client
-        .get(s.url(&format!("/content/blog-posts/{entry_id}/history")))
+        .get(s.url(&format!(
+            "/apps/default/content/blog-posts/{entry_id}/history"
+        )))
         .send()
         .await
         .unwrap();
@@ -2071,7 +2131,9 @@ async fn content_versioning_history_and_revert() {
     let token = s.create_api_token("test").await;
     let resp = s
         .client
-        .get(s.url(&format!("/api/v1/content/blog-posts/{entry_id}")))
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/blog-posts/{entry_id}"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -2135,7 +2197,7 @@ async fn rbac_editor_restrictions() {
 
     // Editor CAN create content
     let resp = editor
-        .get(s.url("/content/blog-posts/new"))
+        .get(s.url("/apps/default/content/blog-posts/new"))
         .send()
         .await
         .unwrap();
@@ -2147,7 +2209,7 @@ async fn rbac_editor_restrictions() {
         .text("title", "Editor Post")
         .text("body", "Content by editor");
     let resp = editor
-        .post(s.url("/content/blog-posts/new"))
+        .post(s.url("/apps/default/content/blog-posts/new"))
         .multipart(form)
         .send()
         .await
@@ -2155,20 +2217,32 @@ async fn rbac_editor_restrictions() {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
     // Editor CANNOT create schemas (403)
-    let resp = editor.get(s.url("/schemas/new")).send().await.unwrap();
+    let resp = editor
+        .get(s.url("/apps/default/schemas/new"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Editor CANNOT access /settings/users (403)
     let resp = editor.get(s.url("/settings/users")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
-    // Editor CANNOT access /settings/data (403)
-    let resp = editor.get(s.url("/settings/data")).send().await.unwrap();
+    // Editor CANNOT access app settings/data (admin only)
+    let resp = editor
+        .get(s.url("/apps/default/settings/data"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
-    // Editor CAN access /settings/tokens (viewer+)
-    let resp = editor.get(s.url("/settings/tokens")).send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    // Editor CANNOT access app settings page (admin only, tokens are now on settings page)
+    let resp = editor
+        .get(s.url("/apps/default/settings"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -2178,13 +2252,13 @@ async fn rbac_viewer_restrictions() {
     s.create_schema(BLOG_SCHEMA).await;
 
     // Admin creates an entry for the viewer to see
-    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let csrf = s.get_csrf("/apps/default/content/blog-posts/new").await;
     let form = reqwest::multipart::Form::new()
         .text("_csrf", csrf)
         .text("title", "Admin Post")
         .text("body", "Content");
     s.client
-        .post(s.url("/content/blog-posts/new"))
+        .post(s.url("/apps/default/content/blog-posts/new"))
         .multipart(form)
         .send()
         .await
@@ -2194,7 +2268,7 @@ async fn rbac_viewer_restrictions() {
 
     // Viewer CAN list content
     let resp = viewer
-        .get(s.url("/content/blog-posts"))
+        .get(s.url("/apps/default/content/blog-posts"))
         .send()
         .await
         .unwrap();
@@ -2204,7 +2278,7 @@ async fn rbac_viewer_restrictions() {
 
     // Viewer CANNOT access new entry page (403)
     let resp = viewer
-        .get(s.url("/content/blog-posts/new"))
+        .get(s.url("/apps/default/content/blog-posts/new"))
         .send()
         .await
         .unwrap();
@@ -2212,7 +2286,7 @@ async fn rbac_viewer_restrictions() {
 
     // Viewer CANNOT create content (403 via multipart POST)
     let csrf_resp = viewer
-        .get(s.url("/content/blog-posts"))
+        .get(s.url("/apps/default/content/blog-posts"))
         .send()
         .await
         .unwrap();
@@ -2222,7 +2296,7 @@ async fn rbac_viewer_restrictions() {
         .text("title", "Viewer Post")
         .text("body", "Nope");
     let resp = viewer
-        .post(s.url("/content/blog-posts/new"))
+        .post(s.url("/apps/default/content/blog-posts/new"))
         .multipart(form)
         .send()
         .await
@@ -2230,7 +2304,11 @@ async fn rbac_viewer_restrictions() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Viewer CANNOT create schemas (403)
-    let resp = viewer.get(s.url("/schemas/new")).send().await.unwrap();
+    let resp = viewer
+        .get(s.url("/apps/default/schemas/new"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Viewer CANNOT access /settings/users (403)
@@ -2244,20 +2322,10 @@ async fn rbac_api_token_inherits_role() {
     s.setup_admin().await;
     s.create_schema(BLOG_SCHEMA).await;
 
-    let editor = signup_user_with_role(&s, "apieditor@test.com", "apieditor", "editor").await;
+    let _editor = signup_user_with_role(&s, "apieditor@test.com", "apieditor", "editor").await;
 
-    // Editor creates an API token
-    let resp = editor.get(s.url("/settings/tokens")).send().await.unwrap();
-    let body = resp.text().await.unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let resp = editor
-        .post(s.url("/settings/tokens"))
-        .form(&[("name", "editor-token"), ("_csrf", csrf.as_str())])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    let token = extract_new_token(&body).expect("should get editor token");
+    // Admin creates an API token (tokens are now managed via app settings, admin creates)
+    let admin_token = s.create_api_token("admin-token").await;
 
     // API client (no cookies)
     let api = Client::builder()
@@ -2265,38 +2333,45 @@ async fn rbac_api_token_inherits_role() {
         .build()
         .unwrap();
 
-    // Editor token CAN create content via API
+    // Admin token CAN create content via API
     let resp = api
-        .post(s.url("/api/v1/content/blog-posts"))
-        .bearer_auth(&token)
-        .json(&serde_json::json!({"title": "API Post", "body": "From editor token"}))
+        .post(s.url("/api/v1/apps/default/content/blog-posts"))
+        .bearer_auth(&admin_token)
+        .json(&serde_json::json!({"title": "API Post", "body": "From admin token"}))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
 
-    // Editor token CANNOT export (admin-only)
+    // Admin token CAN export (admin privilege)
     let resp = api
-        .post(s.url("/api/v1/export"))
-        .bearer_auth(&token)
+        .post(s.url("/api/v1/apps/default/export"))
+        .bearer_auth(&admin_token)
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::OK);
 
-    // Editor token CANNOT import (admin-only)
+    // Unauthenticated client CANNOT export
+    let resp = api
+        .post(s.url("/api/v1/apps/default/export"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Unauthenticated client CANNOT import
     let form = reqwest::multipart::Form::new().part(
         "bundle",
         reqwest::multipart::Part::bytes(vec![0u8; 10]).file_name("test.tar.gz"),
     );
     let resp = api
-        .post(s.url("/api/v1/import"))
-        .bearer_auth(&token)
+        .post(s.url("/api/v1/apps/default/import"))
         .multipart(form)
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 // Old webhook history/retry/access tests removed — replaced by deployment tests
@@ -2325,7 +2400,7 @@ async fn content_draft_published_lifecycle() {
 
     // Create entry via API — should be draft
     let resp = api
-        .post(s.url("/api/v1/content/draft-posts"))
+        .post(s.url("/api/v1/apps/default/content/draft-posts"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "My Post"}))
         .send()
@@ -2337,7 +2412,7 @@ async fn content_draft_published_lifecycle() {
 
     // API list (default) should return empty — no published entries
     let resp = api
-        .get(s.url("/api/v1/content/draft-posts"))
+        .get(s.url("/api/v1/apps/default/content/draft-posts"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2351,7 +2426,7 @@ async fn content_draft_published_lifecycle() {
 
     // API list with ?status=all should return the draft
     let resp = api
-        .get(s.url("/api/v1/content/draft-posts?status=all"))
+        .get(s.url("/api/v1/apps/default/content/draft-posts?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2369,7 +2444,7 @@ async fn content_draft_published_lifecycle() {
 
     // API list with ?status=draft
     let resp = api
-        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .get(s.url("/api/v1/apps/default/content/draft-posts?status=draft"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2383,7 +2458,9 @@ async fn content_draft_published_lifecycle() {
 
     // Get single entry by ID — should work regardless of status
     let resp = api
-        .get(s.url(&format!("/api/v1/content/draft-posts/{entry_id}")))
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/draft-posts/{entry_id}"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -2394,7 +2471,9 @@ async fn content_draft_published_lifecycle() {
 
     // Update entry — status should stay draft
     let resp = api
-        .put(s.url(&format!("/api/v1/content/draft-posts/{entry_id}")))
+        .put(s.url(&format!(
+            "/api/v1/apps/default/content/draft-posts/{entry_id}"
+        )))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Updated Post"}))
         .send()
@@ -2404,7 +2483,7 @@ async fn content_draft_published_lifecycle() {
 
     // Still no published entries
     let resp = api
-        .get(s.url("/api/v1/content/draft-posts"))
+        .get(s.url("/api/v1/apps/default/content/draft-posts"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2430,7 +2509,7 @@ async fn production_publish_does_not_flip_drafts() {
 
     // Create two entries
     let resp = api
-        .post(s.url("/api/v1/content/draft-posts"))
+        .post(s.url("/api/v1/apps/default/content/draft-posts"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Article 1"}))
         .send()
@@ -2439,7 +2518,7 @@ async fn production_publish_does_not_flip_drafts() {
     let body: serde_json::Value = resp.json().await.unwrap();
     let id1 = body["id"].as_str().unwrap().to_string();
 
-    api.post(s.url("/api/v1/content/draft-posts"))
+    api.post(s.url("/api/v1/apps/default/content/draft-posts"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Article 2"}))
         .send()
@@ -2448,7 +2527,7 @@ async fn production_publish_does_not_flip_drafts() {
 
     // Verify both are draft
     let resp = api
-        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .get(s.url("/api/v1/apps/default/content/draft-posts?status=draft"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2466,7 +2545,7 @@ async fn production_publish_does_not_flip_drafts() {
 
     // Drafts should still be draft
     let resp = api
-        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .get(s.url("/api/v1/apps/default/content/draft-posts?status=draft"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2480,7 +2559,9 @@ async fn production_publish_does_not_flip_drafts() {
 
     // Publish one entry individually
     let resp = api
-        .post(s.url(&format!("/api/v1/content/draft-posts/{id1}/publish")))
+        .post(s.url(&format!(
+            "/api/v1/apps/default/content/draft-posts/{id1}/publish"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -2489,7 +2570,7 @@ async fn production_publish_does_not_flip_drafts() {
 
     // Now one published, one draft
     let resp = api
-        .get(s.url("/api/v1/content/draft-posts"))
+        .get(s.url("/api/v1/apps/default/content/draft-posts"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2502,7 +2583,7 @@ async fn production_publish_does_not_flip_drafts() {
     );
 
     let resp = api
-        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .get(s.url("/api/v1/apps/default/content/draft-posts?status=draft"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2526,7 +2607,7 @@ async fn staging_publish_does_not_flip_drafts() {
         .build()
         .unwrap();
 
-    api.post(s.url("/api/v1/content/draft-posts"))
+    api.post(s.url("/api/v1/apps/default/content/draft-posts"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Page 1"}))
         .send()
@@ -2543,7 +2624,7 @@ async fn staging_publish_does_not_flip_drafts() {
 
     // Entry should still be draft
     let resp = api
-        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .get(s.url("/api/v1/apps/default/content/draft-posts?status=draft"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2569,7 +2650,7 @@ async fn single_schema_draft_published() {
 
     // PUT /single creates — should be draft
     let resp = api
-        .put(s.url("/api/v1/content/site-settings/single"))
+        .put(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"site_name": "Test Site", "tagline": "Hello"}))
         .send()
@@ -2579,7 +2660,7 @@ async fn single_schema_draft_published() {
 
     // GET /single (default) returns 404 — draft entry, published-only filter
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2592,7 +2673,7 @@ async fn single_schema_draft_published() {
 
     // GET /single?status=all returns the entry
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single?status=all"))
+        .get(s.url("/api/v1/apps/default/content/site-settings/single?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2604,7 +2685,7 @@ async fn single_schema_draft_published() {
 
     // Publish the single entry via dedicated endpoint
     let resp = api
-        .post(s.url("/api/v1/content/site-settings/_single/publish"))
+        .post(s.url("/api/v1/apps/default/content/site-settings/_single/publish"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2613,7 +2694,7 @@ async fn single_schema_draft_published() {
 
     // GET /single (default) now returns 200 — published
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2626,7 +2707,7 @@ async fn single_schema_draft_published() {
 
     // PUT /single update — should preserve published status
     let resp = api
-        .put(s.url("/api/v1/content/site-settings/single"))
+        .put(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"site_name": "Updated Site", "tagline": "World"}))
         .send()
@@ -2636,7 +2717,7 @@ async fn single_schema_draft_published() {
 
     // Still published after update
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/apps/default/content/site-settings/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2752,7 +2833,7 @@ async fn api_publish_entry() {
 
     // Create entry via API (starts as draft)
     let resp = api
-        .post(s.url("/api/v1/content/pub-test"))
+        .post(s.url("/api/v1/apps/default/content/pub-test"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Draft Post"}))
         .send()
@@ -2764,7 +2845,7 @@ async fn api_publish_entry() {
 
     // Entry is draft — default list (published only) should be empty
     let resp = api
-        .get(s.url("/api/v1/content/pub-test"))
+        .get(s.url("/api/v1/apps/default/content/pub-test"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2778,7 +2859,9 @@ async fn api_publish_entry() {
 
     // Publish the entry
     let resp = api
-        .post(s.url(&format!("/api/v1/content/pub-test/{entry_id}/publish")))
+        .post(s.url(&format!(
+            "/api/v1/apps/default/content/pub-test/{entry_id}/publish"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -2790,7 +2873,7 @@ async fn api_publish_entry() {
 
     // Entry now visible in default list
     let resp = api
-        .get(s.url("/api/v1/content/pub-test"))
+        .get(s.url("/api/v1/apps/default/content/pub-test"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2804,7 +2887,9 @@ async fn api_publish_entry() {
 
     // Unpublish the entry
     let resp = api
-        .post(s.url(&format!("/api/v1/content/pub-test/{entry_id}/unpublish")))
+        .post(s.url(&format!(
+            "/api/v1/apps/default/content/pub-test/{entry_id}/unpublish"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -2815,7 +2900,7 @@ async fn api_publish_entry() {
 
     // Entry no longer in default list
     let resp = api
-        .get(s.url("/api/v1/content/pub-test"))
+        .get(s.url("/api/v1/apps/default/content/pub-test"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2849,7 +2934,7 @@ async fn api_publish_idempotent() {
     s.create_schema(schema_json).await;
 
     let resp = api
-        .post(s.url("/api/v1/content/idemp-test"))
+        .post(s.url("/api/v1/apps/default/content/idemp-test"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Hello"}))
         .send()
@@ -2860,7 +2945,9 @@ async fn api_publish_idempotent() {
 
     // Unpublish a draft (idempotent) — should succeed
     let resp = api
-        .post(s.url(&format!("/api/v1/content/idemp-test/{entry_id}/unpublish")))
+        .post(s.url(&format!(
+            "/api/v1/apps/default/content/idemp-test/{entry_id}/unpublish"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -2868,13 +2955,17 @@ async fn api_publish_idempotent() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Publish twice (idempotent) — should succeed
-    api.post(s.url(&format!("/api/v1/content/idemp-test/{entry_id}/publish")))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
+    api.post(s.url(&format!(
+        "/api/v1/apps/default/content/idemp-test/{entry_id}/publish"
+    )))
+    .bearer_auth(&token)
+    .send()
+    .await
+    .unwrap();
     let resp = api
-        .post(s.url(&format!("/api/v1/content/idemp-test/{entry_id}/publish")))
+        .post(s.url(&format!(
+            "/api/v1/apps/default/content/idemp-test/{entry_id}/publish"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -2906,7 +2997,7 @@ async fn api_publish_unauthenticated() {
 
     // Create entry as admin
     let resp = api
-        .post(s.url("/api/v1/content/auth-test"))
+        .post(s.url("/api/v1/apps/default/content/auth-test"))
         .bearer_auth(&admin_token)
         .json(&serde_json::json!({"title": "Test"}))
         .send()
@@ -2917,7 +3008,9 @@ async fn api_publish_unauthenticated() {
 
     // Unauthenticated request (no bearer token) — should fail with 401
     let resp = api
-        .post(s.url(&format!("/api/v1/content/auth-test/{entry_id}/publish")))
+        .post(s.url(&format!(
+            "/api/v1/apps/default/content/auth-test/{entry_id}/publish"
+        )))
         .send()
         .await
         .unwrap();
@@ -2925,7 +3018,9 @@ async fn api_publish_unauthenticated() {
 
     // Request with invalid bearer token — should also fail with 401
     let resp = api
-        .post(s.url(&format!("/api/v1/content/auth-test/{entry_id}/publish")))
+        .post(s.url(&format!(
+            "/api/v1/apps/default/content/auth-test/{entry_id}/publish"
+        )))
         .bearer_auth("invalid-token-value")
         .send()
         .await
@@ -2954,7 +3049,7 @@ async fn api_publish_nonexistent_entry() {
     s.create_schema(schema_json).await;
 
     let resp = api
-        .post(s.url("/api/v1/content/nf-test/nonexistent/publish"))
+        .post(s.url("/api/v1/apps/default/content/nf-test/nonexistent/publish"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2975,7 +3070,7 @@ async fn api_publish_nonexistent_schema() {
         .unwrap();
 
     let resp = api
-        .post(s.url("/api/v1/content/nonexistent-schema/some-id/publish"))
+        .post(s.url("/api/v1/apps/default/content/nonexistent-schema/some-id/publish"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3005,7 +3100,7 @@ async fn api_put_with_explicit_status() {
 
     // Create with explicit _status: "published"
     let resp = api
-        .post(s.url("/api/v1/content/put-status"))
+        .post(s.url("/api/v1/apps/default/content/put-status"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Published", "_status": "published"}))
         .send()
@@ -3017,7 +3112,7 @@ async fn api_put_with_explicit_status() {
 
     // Default list should include it (it's published)
     let resp = api
-        .get(s.url("/api/v1/content/put-status"))
+        .get(s.url("/api/v1/apps/default/content/put-status"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3031,7 +3126,9 @@ async fn api_put_with_explicit_status() {
 
     // Update without _status — should preserve published
     let resp = api
-        .put(s.url(&format!("/api/v1/content/put-status/{entry_id}")))
+        .put(s.url(&format!(
+            "/api/v1/apps/default/content/put-status/{entry_id}"
+        )))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Updated"}))
         .send()
@@ -3040,7 +3137,7 @@ async fn api_put_with_explicit_status() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let resp = api
-        .get(s.url("/api/v1/content/put-status"))
+        .get(s.url("/api/v1/apps/default/content/put-status"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3054,7 +3151,9 @@ async fn api_put_with_explicit_status() {
 
     // Update with explicit _status: "draft" — should change to draft
     let resp = api
-        .put(s.url(&format!("/api/v1/content/put-status/{entry_id}")))
+        .put(s.url(&format!(
+            "/api/v1/apps/default/content/put-status/{entry_id}"
+        )))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "Now Draft", "_status": "draft"}))
         .send()
@@ -3063,7 +3162,7 @@ async fn api_put_with_explicit_status() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let resp = api
-        .get(s.url("/api/v1/content/put-status"))
+        .get(s.url("/api/v1/apps/default/content/put-status"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3098,7 +3197,7 @@ async fn api_publish_single_entry() {
 
     // Upsert single (starts as draft)
     let resp = api
-        .put(s.url("/api/v1/content/single-pub/single"))
+        .put(s.url("/api/v1/apps/default/content/single-pub/single"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"site_name": "My Site"}))
         .send()
@@ -3108,7 +3207,7 @@ async fn api_publish_single_entry() {
 
     // Default GET returns 404 (draft)
     let resp = api
-        .get(s.url("/api/v1/content/single-pub/single"))
+        .get(s.url("/api/v1/apps/default/content/single-pub/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3117,7 +3216,7 @@ async fn api_publish_single_entry() {
 
     // Publish via dedicated endpoint
     let resp = api
-        .post(s.url("/api/v1/content/single-pub/_single/publish"))
+        .post(s.url("/api/v1/apps/default/content/single-pub/_single/publish"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3128,7 +3227,7 @@ async fn api_publish_single_entry() {
 
     // Default GET now returns 200
     let resp = api
-        .get(s.url("/api/v1/content/single-pub/single"))
+        .get(s.url("/api/v1/apps/default/content/single-pub/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3137,7 +3236,7 @@ async fn api_publish_single_entry() {
 
     // Unpublish
     let resp = api
-        .post(s.url("/api/v1/content/single-pub/_single/unpublish"))
+        .post(s.url("/api/v1/apps/default/content/single-pub/_single/unpublish"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3163,10 +3262,10 @@ async fn ui_publish_entry_via_form() {
     s.create_schema(schema_json).await;
 
     // Create an entry via the UI
-    let csrf = s.get_csrf("/content/ui-pub-test/new").await;
+    let csrf = s.get_csrf("/apps/default/content/ui-pub-test/new").await;
     let resp = s
         .client
-        .post(s.url("/content/ui-pub-test/new"))
+        .post(s.url("/apps/default/content/ui-pub-test/new"))
         .multipart(
             reqwest::multipart::Form::new()
                 .text("title", "Test Post")
@@ -3180,7 +3279,7 @@ async fn ui_publish_entry_via_form() {
     // Find the entry ID from the list page
     let resp = s
         .client
-        .get(s.url("/content/ui-pub-test"))
+        .get(s.url("/apps/default/content/ui-pub-test"))
         .send()
         .await
         .unwrap();
@@ -3194,7 +3293,7 @@ async fn ui_publish_entry_via_form() {
     // The entry ID is "test-post" (slugified from "Test Post")
     let resp = s
         .client
-        .get(s.url("/content/ui-pub-test/test-post/edit"))
+        .get(s.url("/apps/default/content/ui-pub-test/test-post/edit"))
         .send()
         .await
         .unwrap();
@@ -3208,7 +3307,7 @@ async fn ui_publish_entry_via_form() {
     // Publish via UI POST (non-htmx — should redirect)
     let resp = s
         .client
-        .post(s.url("/content/ui-pub-test/test-post/publish"))
+        .post(s.url("/apps/default/content/ui-pub-test/test-post/publish"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -3222,7 +3321,7 @@ async fn ui_publish_entry_via_form() {
     // Edit page should now show Published + Unpublish button
     let resp = s
         .client
-        .get(s.url("/content/ui-pub-test/test-post/edit"))
+        .get(s.url("/apps/default/content/ui-pub-test/test-post/edit"))
         .send()
         .await
         .unwrap();
@@ -3240,7 +3339,7 @@ async fn ui_publish_entry_via_form() {
     let csrf = extract_csrf_token(&body).unwrap();
     let resp = s
         .client
-        .post(s.url("/content/ui-pub-test/test-post/unpublish"))
+        .post(s.url("/apps/default/content/ui-pub-test/test-post/unpublish"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -3250,7 +3349,7 @@ async fn ui_publish_entry_via_form() {
     // Edit page should show Draft again
     let resp = s
         .client
-        .get(s.url("/content/ui-pub-test/test-post/edit"))
+        .get(s.url("/apps/default/content/ui-pub-test/test-post/edit"))
         .send()
         .await
         .unwrap();
@@ -3275,9 +3374,9 @@ async fn ui_htmx_publish_returns_fragment() {
     s.create_schema(schema_json).await;
 
     // Create entry
-    let csrf = s.get_csrf("/content/htmx-test/new").await;
+    let csrf = s.get_csrf("/apps/default/content/htmx-test/new").await;
     s.client
-        .post(s.url("/content/htmx-test/new"))
+        .post(s.url("/apps/default/content/htmx-test/new"))
         .multipart(
             reqwest::multipart::Form::new()
                 .text("title", "HTMX Post")
@@ -3290,7 +3389,7 @@ async fn ui_htmx_publish_returns_fragment() {
     // Get CSRF from edit page
     let resp = s
         .client
-        .get(s.url("/content/htmx-test/htmx-post/edit"))
+        .get(s.url("/apps/default/content/htmx-test/htmx-post/edit"))
         .send()
         .await
         .unwrap();
@@ -3300,7 +3399,7 @@ async fn ui_htmx_publish_returns_fragment() {
     // Publish with HX-Request header — should get HTML fragment, not redirect
     let resp = s
         .client
-        .post(s.url("/content/htmx-test/htmx-post/publish"))
+        .post(s.url("/apps/default/content/htmx-test/htmx-post/publish"))
         .header("HX-Request", "true")
         .form(&[("_csrf", csrf.as_str())])
         .send()
@@ -3340,9 +3439,11 @@ async fn viewer_cannot_publish_via_ui() {
     s.create_schema(schema_json).await;
 
     // Create entry as admin via UI
-    let csrf = s.get_csrf("/content/viewer-pub-test/new").await;
+    let csrf = s
+        .get_csrf("/apps/default/content/viewer-pub-test/new")
+        .await;
     s.client
-        .post(s.url("/content/viewer-pub-test/new"))
+        .post(s.url("/apps/default/content/viewer-pub-test/new"))
         .multipart(
             reqwest::multipart::Form::new()
                 .text("title", "Test Post")
@@ -3357,7 +3458,7 @@ async fn viewer_cannot_publish_via_ui() {
 
     // Viewer can view the edit page (read access)
     let resp = viewer
-        .get(s.url("/content/viewer-pub-test/test-post/edit"))
+        .get(s.url("/apps/default/content/viewer-pub-test/test-post/edit"))
         .send()
         .await
         .unwrap();
@@ -3369,16 +3470,16 @@ async fn viewer_cannot_publish_via_ui() {
     // The status control template gates the button on user_role != "viewer"
     // So the Publish button form should not be present for viewers
     assert!(
-        !body.contains(r#"action="/content/viewer-pub-test/test-post/publish""#),
+        !body.contains(r#"action="/apps/default/content/viewer-pub-test/test-post/publish""#),
         "viewer should NOT see publish form action"
     );
 
     // Even if a viewer manually POSTs to the publish endpoint, it should be rejected
     // Get a CSRF token from a page the viewer can access
-    let resp = viewer.get(s.url("/")).send().await.unwrap();
+    let resp = viewer.get(s.url("/apps")).send().await.unwrap();
     let viewer_csrf = extract_csrf_token(&resp.text().await.unwrap()).unwrap();
     let resp = viewer
-        .post(s.url("/content/viewer-pub-test/test-post/publish"))
+        .post(s.url("/apps/default/content/viewer-pub-test/test-post/publish"))
         .form(&[("_csrf", viewer_csrf.as_str())])
         .send()
         .await
@@ -3391,7 +3492,7 @@ async fn viewer_cannot_publish_via_ui() {
 
     // Same for unpublish
     let resp = viewer
-        .post(s.url("/content/viewer-pub-test/test-post/unpublish"))
+        .post(s.url("/apps/default/content/viewer-pub-test/test-post/unpublish"))
         .form(&[("_csrf", viewer_csrf.as_str())])
         .send()
         .await
@@ -3425,7 +3526,7 @@ async fn api_upsert_single_with_explicit_status() {
 
     // Upsert single with explicit _status: "published"
     let resp = api
-        .put(s.url("/api/v1/content/single-status/single"))
+        .put(s.url("/api/v1/apps/default/content/single-status/single"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"site_name": "My Site", "_status": "published"}))
         .send()
@@ -3435,7 +3536,7 @@ async fn api_upsert_single_with_explicit_status() {
 
     // GET /single (default=published) should return 200
     let resp = api
-        .get(s.url("/api/v1/content/single-status/single"))
+        .get(s.url("/api/v1/apps/default/content/single-status/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3450,7 +3551,7 @@ async fn api_upsert_single_with_explicit_status() {
 
     // Update with explicit _status: "draft"
     let resp = api
-        .put(s.url("/api/v1/content/single-status/single"))
+        .put(s.url("/api/v1/apps/default/content/single-status/single"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"site_name": "Updated Site", "_status": "draft"}))
         .send()
@@ -3460,7 +3561,7 @@ async fn api_upsert_single_with_explicit_status() {
 
     // GET /single (default=published) should now return 404
     let resp = api
-        .get(s.url("/api/v1/content/single-status/single"))
+        .get(s.url("/api/v1/apps/default/content/single-status/single"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3488,7 +3589,7 @@ async fn ui_publish_single_entry_via_form() {
     // Create the single entry via the UI
     let resp = s
         .client
-        .get(s.url("/content/ui-single-pub/_single/edit"))
+        .get(s.url("/apps/default/content/ui-single-pub/_single/edit"))
         .send()
         .await
         .unwrap();
@@ -3500,7 +3601,7 @@ async fn ui_publish_single_entry_via_form() {
         .text("_csrf", csrf);
     let resp = s
         .client
-        .post(s.url("/content/ui-single-pub/_single"))
+        .post(s.url("/apps/default/content/ui-single-pub/_single"))
         .multipart(form)
         .send()
         .await
@@ -3510,7 +3611,7 @@ async fn ui_publish_single_entry_via_form() {
     // Edit page should show Draft badge and Publish button
     let resp = s
         .client
-        .get(s.url("/content/ui-single-pub/_single/edit"))
+        .get(s.url("/apps/default/content/ui-single-pub/_single/edit"))
         .send()
         .await
         .unwrap();
@@ -3525,7 +3626,7 @@ async fn ui_publish_single_entry_via_form() {
     let csrf = extract_csrf_token(&body).unwrap();
     let resp = s
         .client
-        .post(s.url("/content/ui-single-pub/_single/publish"))
+        .post(s.url("/apps/default/content/ui-single-pub/_single/publish"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -3539,7 +3640,7 @@ async fn ui_publish_single_entry_via_form() {
     // Edit page should now show Published + Unpublish button
     let resp = s
         .client
-        .get(s.url("/content/ui-single-pub/_single/edit"))
+        .get(s.url("/apps/default/content/ui-single-pub/_single/edit"))
         .send()
         .await
         .unwrap();
@@ -3557,7 +3658,7 @@ async fn ui_publish_single_entry_via_form() {
     let csrf = extract_csrf_token(&body).unwrap();
     let resp = s
         .client
-        .post(s.url("/content/ui-single-pub/_single/unpublish"))
+        .post(s.url("/apps/default/content/ui-single-pub/_single/unpublish"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -3567,7 +3668,7 @@ async fn ui_publish_single_entry_via_form() {
     // Edit page should show Draft again
     let resp = s
         .client
-        .get(s.url("/content/ui-single-pub/_single/edit"))
+        .get(s.url("/apps/default/content/ui-single-pub/_single/edit"))
         .send()
         .await
         .unwrap();
@@ -3592,9 +3693,9 @@ async fn ui_htmx_unpublish_returns_fragment() {
     s.create_schema(schema_json).await;
 
     // Create entry
-    let csrf = s.get_csrf("/content/htmx-unpub/new").await;
+    let csrf = s.get_csrf("/apps/default/content/htmx-unpub/new").await;
     s.client
-        .post(s.url("/content/htmx-unpub/new"))
+        .post(s.url("/apps/default/content/htmx-unpub/new"))
         .multipart(
             reqwest::multipart::Form::new()
                 .text("title", "Unpub Post")
@@ -3607,14 +3708,14 @@ async fn ui_htmx_unpublish_returns_fragment() {
     // Publish the entry first (non-htmx)
     let resp = s
         .client
-        .get(s.url("/content/htmx-unpub/unpub-post/edit"))
+        .get(s.url("/apps/default/content/htmx-unpub/unpub-post/edit"))
         .send()
         .await
         .unwrap();
     let body = resp.text().await.unwrap();
     let csrf = extract_csrf_token(&body).unwrap();
     s.client
-        .post(s.url("/content/htmx-unpub/unpub-post/publish"))
+        .post(s.url("/apps/default/content/htmx-unpub/unpub-post/publish"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -3623,7 +3724,7 @@ async fn ui_htmx_unpublish_returns_fragment() {
     // Get fresh CSRF from edit page (now published)
     let resp = s
         .client
-        .get(s.url("/content/htmx-unpub/unpub-post/edit"))
+        .get(s.url("/apps/default/content/htmx-unpub/unpub-post/edit"))
         .send()
         .await
         .unwrap();
@@ -3634,7 +3735,7 @@ async fn ui_htmx_unpublish_returns_fragment() {
     // Unpublish with HX-Request header — should get HTML fragment
     let resp = s
         .client
-        .post(s.url("/content/htmx-unpub/unpub-post/unpublish"))
+        .post(s.url("/apps/default/content/htmx-unpub/unpub-post/unpublish"))
         .header("HX-Request", "true")
         .form(&[("_csrf", csrf.as_str())])
         .send()
@@ -3687,7 +3788,7 @@ async fn api_unpublish_nonexistent_entry() {
 
     // Unpublish nonexistent entry — should return 404
     let resp = api
-        .post(s.url("/api/v1/content/unpub-nf-test/nonexistent/unpublish"))
+        .post(s.url("/api/v1/apps/default/content/unpub-nf-test/nonexistent/unpublish"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3721,7 +3822,7 @@ async fn api_create_entry_defaults_to_draft() {
 
     // Create entry without explicit _status
     let resp = api
-        .post(s.url("/api/v1/content/default-draft"))
+        .post(s.url("/api/v1/apps/default/content/default-draft"))
         .bearer_auth(&token)
         .json(&serde_json::json!({"title": "New Post"}))
         .send()
@@ -3731,7 +3832,7 @@ async fn api_create_entry_defaults_to_draft() {
 
     // Default list (published only) should be empty
     let resp = api
-        .get(s.url("/api/v1/content/default-draft"))
+        .get(s.url("/api/v1/apps/default/content/default-draft"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3745,7 +3846,7 @@ async fn api_create_entry_defaults_to_draft() {
 
     // All entries list should show one entry
     let resp = api
-        .get(s.url("/api/v1/content/default-draft?status=all"))
+        .get(s.url("/api/v1/apps/default/content/default-draft?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3755,7 +3856,7 @@ async fn api_create_entry_defaults_to_draft() {
 
     // Draft list should show one entry
     let resp = api
-        .get(s.url("/api/v1/content/default-draft?status=draft"))
+        .get(s.url("/api/v1/apps/default/content/default-draft?status=draft"))
         .bearer_auth(&token)
         .send()
         .await
@@ -3771,10 +3872,10 @@ async fn test_create_deployment_via_ui() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    let csrf = s.get_csrf("/deployments/new").await;
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
     let resp = s
         .client
-        .post(s.url("/deployments/new"))
+        .post(s.url("/apps/default/deployments/new"))
         .form(&[
             ("name", "Production"),
             ("slug", "production"),
@@ -3785,9 +3886,17 @@ async fn test_create_deployment_via_ui() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/deployments");
+    assert_eq!(
+        resp.headers().get("location").unwrap(),
+        "/apps/default/deployments"
+    );
 
-    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("Production"));
 }
@@ -3799,10 +3908,10 @@ async fn test_create_deployment_duplicate_slug() {
     s.create_deployment("Prod", "prod", "https://example.com/hook")
         .await;
 
-    let csrf = s.get_csrf("/deployments/new").await;
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
     let resp = s
         .client
-        .post(s.url("/deployments/new"))
+        .post(s.url("/apps/default/deployments/new"))
         .form(&[
             ("name", "Prod 2"),
             ("slug", "prod"),
@@ -3821,10 +3930,10 @@ async fn test_create_deployment_invalid_slug() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    let csrf = s.get_csrf("/deployments/new").await;
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
     let resp = s
         .client
-        .post(s.url("/deployments/new"))
+        .post(s.url("/apps/default/deployments/new"))
         .form(&[
             ("name", "Bad"),
             ("slug", "My Slug"),
@@ -3848,7 +3957,7 @@ async fn test_edit_deployment() {
     // Edit page loads
     let resp = s
         .client
-        .get(s.url("/deployments/staging/edit"))
+        .get(s.url("/apps/default/deployments/staging/edit"))
         .send()
         .await
         .unwrap();
@@ -3857,10 +3966,10 @@ async fn test_edit_deployment() {
     assert!(body.contains("Staging"));
 
     // Update
-    let csrf = s.get_csrf("/deployments/staging/edit").await;
+    let csrf = s.get_csrf("/apps/default/deployments/staging/edit").await;
     let resp = s
         .client
-        .post(s.url("/deployments/staging"))
+        .post(s.url("/apps/default/deployments/staging"))
         .form(&[
             ("name", "Updated Staging"),
             ("slug", "staging"),
@@ -3873,7 +3982,12 @@ async fn test_edit_deployment() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
-    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("Updated Staging"));
 }
@@ -3885,21 +3999,26 @@ async fn test_delete_deployment() {
     s.create_deployment("ToDelete", "to-delete", "https://example.com/hook")
         .await;
 
-    let csrf = s.get_csrf("/deployments").await;
+    let csrf = s.get_csrf("/apps/default/deployments").await;
     let resp = s
         .client
-        .post(s.url("/deployments/to-delete/delete"))
+        .post(s.url("/apps/default/deployments/to-delete/delete"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
-    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     // Check the deployment row is gone from the table (not just the flash message)
     assert!(
-        !body.contains("/deployments/to-delete/fire"),
+        !body.contains("/apps/default/deployments/to-delete/fire"),
         "Deployment row should no longer appear in the table after deletion"
     );
 }
@@ -3926,10 +4045,10 @@ async fn test_fire_deployment_via_ui() {
     s.setup_admin().await;
     s.create_deployment("Prod", "prod", &webhook_url).await;
 
-    let csrf = s.get_csrf("/deployments").await;
+    let csrf = s.get_csrf("/apps/default/deployments").await;
     let resp = s
         .client
-        .post(s.url("/deployments/prod/fire"))
+        .post(s.url("/apps/default/deployments/prod/fire"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -3977,7 +4096,7 @@ async fn test_fire_deployment_via_api() {
         .unwrap();
 
     let resp = api
-        .post(s.url("/api/v1/deployments/staging/fire"))
+        .post(s.url("/api/v1/apps/default/deployments/staging/fire"))
         .bearer_auth(&token)
         .send()
         .await
@@ -4008,7 +4127,7 @@ async fn test_list_deployments_api() {
         .unwrap();
 
     let resp = api
-        .get(s.url("/api/v1/deployments"))
+        .get(s.url("/api/v1/apps/default/deployments"))
         .bearer_auth(&token)
         .send()
         .await
@@ -4028,7 +4147,11 @@ async fn test_viewer_cannot_access_deployments() {
     s.setup_admin().await;
 
     let viewer = signup_user_with_role(&s, "viewer-dep@test.com", "viewer1", "viewer").await;
-    let resp = viewer.get(s.url("/deployments")).send().await.unwrap();
+    let resp = viewer
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -4042,20 +4165,32 @@ async fn test_editor_can_see_but_not_crud_deployments() {
     let editor = signup_user_with_role(&s, "editor-dep@test.com", "editor1", "editor").await;
 
     // Editor CAN see deployments list
-    let resp = editor.get(s.url("/deployments")).send().await.unwrap();
+    let resp = editor
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Editor CANNOT create deployments
-    let resp = editor.get(s.url("/deployments/new")).send().await.unwrap();
+    let resp = editor
+        .get(s.url("/apps/default/deployments/new"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Editor CAN fire deployments (would get redirect to /deployments)
-    let csrf_resp = editor.get(s.url("/deployments")).send().await.unwrap();
+    let csrf_resp = editor
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
     let body = csrf_resp.text().await.unwrap();
     let csrf = extract_csrf_token(&body).unwrap();
 
     let resp = editor
-        .post(s.url("/deployments/existing/fire"))
+        .post(s.url("/apps/default/deployments/existing/fire"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -4085,7 +4220,7 @@ async fn test_old_publish_routes_404() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
     // Old UI publish route should 404
-    let csrf = s.get_csrf("/").await;
+    let csrf = s.get_csrf("/apps").await;
     let resp = s
         .client
         .post(s.url("/publish/staging"))
@@ -4121,9 +4256,9 @@ async fn test_fire_deployment_sends_auth_token() {
     s.setup_admin().await;
 
     // Create deployment with auth token via direct form POST
-    let csrf = s.get_csrf("/deployments/new").await;
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
     s.client
-        .post(s.url("/deployments/new"))
+        .post(s.url("/apps/default/deployments/new"))
         .form(&[
             ("name", "Auth Deploy"),
             ("slug", "auth-deploy"),
@@ -4136,9 +4271,9 @@ async fn test_fire_deployment_sends_auth_token() {
         .unwrap();
 
     // Fire it
-    let csrf = s.get_csrf("/deployments").await;
+    let csrf = s.get_csrf("/apps/default/deployments").await;
     s.client
-        .post(s.url("/deployments/auth-deploy/fire"))
+        .post(s.url("/apps/default/deployments/auth-deploy/fire"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -4173,9 +4308,9 @@ async fn test_fire_deployment_include_drafts_in_payload() {
     s.setup_admin().await;
 
     // Create deployment with include_drafts enabled
-    let csrf = s.get_csrf("/deployments/new").await;
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
     s.client
-        .post(s.url("/deployments/new"))
+        .post(s.url("/apps/default/deployments/new"))
         .form(&[
             ("name", "Drafts Deploy"),
             ("slug", "drafts-deploy"),
@@ -4188,9 +4323,9 @@ async fn test_fire_deployment_include_drafts_in_payload() {
         .unwrap();
 
     // Fire it
-    let csrf = s.get_csrf("/deployments").await;
+    let csrf = s.get_csrf("/apps/default/deployments").await;
     s.client
-        .post(s.url("/deployments/drafts-deploy/fire"))
+        .post(s.url("/apps/default/deployments/drafts-deploy/fire"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -4212,10 +4347,10 @@ async fn test_fire_deployment_unreachable_url() {
         .await;
 
     // Fire via UI — should redirect with error flash
-    let csrf = s.get_csrf("/deployments").await;
+    let csrf = s.get_csrf("/apps/default/deployments").await;
     let resp = s
         .client
-        .post(s.url("/deployments/unreachable/fire"))
+        .post(s.url("/apps/default/deployments/unreachable/fire"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -4223,7 +4358,12 @@ async fn test_fire_deployment_unreachable_url() {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
     // Follow redirect — flash should indicate failure
-    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("failed") || body.contains("retries"));
 
@@ -4234,7 +4374,7 @@ async fn test_fire_deployment_unreachable_url() {
         .build()
         .unwrap();
     let resp = api
-        .post(s.url("/api/v1/deployments/unreachable/fire"))
+        .post(s.url("/api/v1/apps/default/deployments/unreachable/fire"))
         .bearer_auth(&token)
         .send()
         .await
@@ -4268,19 +4408,23 @@ async fn test_editor_cannot_edit_or_delete_deployment() {
 
     // Editor cannot access edit form
     let resp = editor
-        .get(s.url("/deployments/protected/edit"))
+        .get(s.url("/apps/default/deployments/protected/edit"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Editor cannot post update
-    let csrf_resp = editor.get(s.url("/deployments")).send().await.unwrap();
+    let csrf_resp = editor
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
     let body = csrf_resp.text().await.unwrap();
     let csrf = extract_csrf_token(&body).unwrap();
 
     let resp = editor
-        .post(s.url("/deployments/protected"))
+        .post(s.url("/apps/default/deployments/protected"))
         .form(&[
             ("name", "Hacked"),
             ("slug", "protected"),
@@ -4295,7 +4439,7 @@ async fn test_editor_cannot_edit_or_delete_deployment() {
 
     // Editor cannot delete
     let resp = editor
-        .post(s.url("/deployments/protected/delete"))
+        .post(s.url("/apps/default/deployments/protected/delete"))
         .form(&[("_csrf", &csrf)])
         .send()
         .await
@@ -4315,7 +4459,7 @@ async fn test_api_fire_nonexistent_deployment_404() {
         .unwrap();
 
     let resp = api
-        .post(s.url("/api/v1/deployments/nonexistent/fire"))
+        .post(s.url("/api/v1/apps/default/deployments/nonexistent/fire"))
         .bearer_auth(&token)
         .send()
         .await
@@ -4345,7 +4489,11 @@ async fn test_api_viewer_cannot_fire_deployment() {
 
     // Actually, let's verify via the UI that a viewer session cannot fire.
     let viewer = signup_user_with_role(&s, "viewer-fire@test.com", "viewer2", "viewer").await;
-    let resp = viewer.get(s.url("/deployments")).send().await.unwrap();
+    let resp = viewer
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -4354,10 +4502,10 @@ async fn test_deployment_empty_name_returns_error() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    let csrf = s.get_csrf("/deployments/new").await;
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
     let resp = s
         .client
-        .post(s.url("/deployments/new"))
+        .post(s.url("/apps/default/deployments/new"))
         .form(&[
             ("name", ""),
             ("slug", "empty-name"),
@@ -4376,10 +4524,10 @@ async fn test_deployment_empty_url_returns_error() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    let csrf = s.get_csrf("/deployments/new").await;
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
     let resp = s
         .client
-        .post(s.url("/deployments/new"))
+        .post(s.url("/apps/default/deployments/new"))
         .form(&[
             ("name", "No URL"),
             ("slug", "no-url"),
@@ -4418,9 +4566,9 @@ async fn test_update_deployment_token_action_clear() {
     s.setup_admin().await;
 
     // Create deployment with auth token
-    let csrf = s.get_csrf("/deployments/new").await;
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
     s.client
-        .post(s.url("/deployments/new"))
+        .post(s.url("/apps/default/deployments/new"))
         .form(&[
             ("name", "Token Clear"),
             ("slug", "token-clear"),
@@ -4433,9 +4581,11 @@ async fn test_update_deployment_token_action_clear() {
         .unwrap();
 
     // Update deployment with _token_action=clear
-    let csrf = s.get_csrf("/deployments/token-clear/edit").await;
+    let csrf = s
+        .get_csrf("/apps/default/deployments/token-clear/edit")
+        .await;
     s.client
-        .post(s.url("/deployments/token-clear"))
+        .post(s.url("/apps/default/deployments/token-clear"))
         .form(&[
             ("name", "Token Clear"),
             ("slug", "token-clear"),
@@ -4448,9 +4598,9 @@ async fn test_update_deployment_token_action_clear() {
         .unwrap();
 
     // Fire -- should NOT send auth header
-    let csrf = s.get_csrf("/deployments").await;
+    let csrf = s.get_csrf("/apps/default/deployments").await;
     s.client
-        .post(s.url("/deployments/token-clear/fire"))
+        .post(s.url("/apps/default/deployments/token-clear/fire"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -4470,30 +4620,44 @@ async fn test_update_deployment_token_action_clear() {
 async fn test_nav_shows_deployments_link_for_editor() {
     let s = TestServer::start().await;
     s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
 
-    // Admin sees Deployments link
-    let resp = s.client.get(s.url("/")).send().await.unwrap();
+    // Admin sees Deployments link on an app-scoped page
+    let resp = s
+        .client
+        .get(s.url("/apps/default/schemas"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(
-        body.contains("href=\"/deployments\""),
+        body.contains("href=\"/apps/default/deployments\""),
         "Admin should see Deployments link in nav"
     );
 
-    // Editor sees Deployments link
+    // Editor sees Deployments link on an app-scoped page
     let editor = signup_user_with_role(&s, "editor-nav@test.com", "editor3", "editor").await;
-    let resp = editor.get(s.url("/")).send().await.unwrap();
+    let resp = editor
+        .get(s.url("/apps/default/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(
-        body.contains("href=\"/deployments\""),
+        body.contains("href=\"/apps/default/deployments\""),
         "Editor should see Deployments link in nav"
     );
 
     // Viewer does NOT see Deployments link
     let viewer = signup_user_with_role(&s, "viewer-nav@test.com", "viewer3", "viewer").await;
-    let resp = viewer.get(s.url("/")).send().await.unwrap();
+    let resp = viewer
+        .get(s.url("/apps/default/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(
-        !body.contains("href=\"/deployments\""),
+        !body.contains("href=\"/apps/default/deployments\""),
         "Viewer should NOT see Deployments link in nav"
     );
 }
@@ -4503,10 +4667,10 @@ async fn test_fire_nonexistent_deployment_via_ui() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    let csrf = s.get_csrf("/").await;
+    let csrf = s.get_csrf("/apps").await;
     let resp = s
         .client
-        .post(s.url("/deployments/does-not-exist/fire"))
+        .post(s.url("/apps/default/deployments/does-not-exist/fire"))
         .form(&[("_csrf", csrf.as_str())])
         .send()
         .await
@@ -4520,10 +4684,10 @@ async fn test_deployment_with_auto_deploy_settings() {
     s.setup_admin().await;
 
     // Create deployment with auto_deploy enabled
-    let csrf = s.get_csrf("/deployments/new").await;
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
     let resp = s
         .client
-        .post(s.url("/deployments/new"))
+        .post(s.url("/apps/default/deployments/new"))
         .form(&[
             ("name", "Auto Deploy"),
             ("slug", "auto-deploy"),
@@ -4538,7 +4702,12 @@ async fn test_deployment_with_auto_deploy_settings() {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
     // Verify on the list page
-    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
+    let resp = s
+        .client
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("Auto Deploy"));
     assert!(body.contains("Auto") || body.contains("auto"));
@@ -4550,7 +4719,7 @@ async fn test_deployment_with_auto_deploy_settings() {
         .build()
         .unwrap();
     let resp = api
-        .get(s.url("/api/v1/deployments"))
+        .get(s.url("/api/v1/apps/default/deployments"))
         .bearer_auth(&token)
         .send()
         .await
@@ -4567,9 +4736,9 @@ async fn test_deployment_debounce_minimum_enforced() {
     s.setup_admin().await;
 
     // Create deployment with debounce below minimum (10)
-    let csrf = s.get_csrf("/deployments/new").await;
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
     s.client
-        .post(s.url("/deployments/new"))
+        .post(s.url("/apps/default/deployments/new"))
         .form(&[
             ("name", "Low Debounce"),
             ("slug", "low-debounce"),
@@ -4589,7 +4758,7 @@ async fn test_deployment_debounce_minimum_enforced() {
         .build()
         .unwrap();
     let resp = api
-        .get(s.url("/api/v1/deployments"))
+        .get(s.url("/api/v1/apps/default/deployments"))
         .bearer_auth(&token)
         .send()
         .await
@@ -4755,32 +4924,17 @@ async fn test_api_trigger_backup_non_admin() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    // Create editor token
-    let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
-    // Editor creates a token via the tokens page
-    let resp = editor.get(s.url("/settings/tokens")).send().await.unwrap();
-    let body = resp.text().await.unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let resp = editor
-        .post(s.url("/settings/tokens"))
-        .form(&[("name", "test-token"), ("_csrf", csrf.as_str())])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    let editor_token = extract_new_token(&body).expect("should find editor token");
-
+    // Unauthenticated access should be rejected
     let api = Client::builder()
         .redirect(redirect::Policy::none())
         .build()
         .unwrap();
     let resp = api
         .post(s.url("/api/v1/backups/trigger"))
-        .bearer_auth(&editor_token)
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -4788,7 +4942,7 @@ async fn test_nav_shows_backups_for_admin() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    let resp = s.client.get(s.url("/")).send().await.unwrap();
+    let resp = s.client.get(s.url("/apps")).send().await.unwrap();
     let body = resp.text().await.unwrap();
     assert!(
         body.contains(r#"href="/settings/backups""#),
@@ -4802,7 +4956,7 @@ async fn test_nav_hides_backups_for_editor() {
     s.setup_admin().await;
 
     let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
-    let resp = editor.get(s.url("/")).send().await.unwrap();
+    let resp = editor.get(s.url("/apps")).send().await.unwrap();
     let body = resp.text().await.unwrap();
     assert!(
         !body.contains(r#"href="/settings/backups""#),
@@ -4912,33 +5066,20 @@ async fn test_api_backup_status_non_admin_forbidden() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
-    let resp = editor.get(s.url("/settings/tokens")).send().await.unwrap();
-    let body = resp.text().await.unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let resp = editor
-        .post(s.url("/settings/tokens"))
-        .form(&[("name", "test-token"), ("_csrf", csrf.as_str())])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    let editor_token = extract_new_token(&body).expect("should find editor token");
-
+    // Unauthenticated access should be rejected
     let api = Client::builder()
         .redirect(redirect::Policy::none())
         .build()
         .unwrap();
     let resp = api
         .get(s.url("/api/v1/backups/status"))
-        .bearer_auth(&editor_token)
         .send()
         .await
         .unwrap();
     assert_eq!(
         resp.status(),
-        StatusCode::FORBIDDEN,
-        "Editor token should not access backup status"
+        StatusCode::UNAUTHORIZED,
+        "Unauthenticated request should not access backup status"
     );
 }
 
