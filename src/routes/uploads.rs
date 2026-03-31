@@ -9,6 +9,7 @@ use axum::{
 use axum_htmx::HxRequest;
 use tower_sessions::Session;
 
+use crate::app_context::AppContext;
 use crate::auth;
 use crate::schema;
 use crate::state::AppState;
@@ -54,6 +55,7 @@ async fn list_uploads(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
+    app: AppContext,
     Query(filter): Query<UploadFilter>,
 ) -> Result<Html<String>, StatusCode> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
@@ -76,10 +78,11 @@ async fn list_uploads(
             >(
                 "SELECT u.hash, u.filename, u.mime, u.size, u.created_at, r.schema_slug, r.entry_id
                  FROM uploads u
-                 LEFT JOIN upload_references r ON u.hash = r.upload_hash
-                 WHERE u.filename LIKE ? AND r.schema_slug = ?
+                 LEFT JOIN upload_references r ON u.app_id = r.app_id AND u.hash = r.upload_hash
+                 WHERE u.app_id = ? AND u.filename LIKE ? AND r.schema_slug = ?
                  ORDER BY u.created_at DESC",
             )
+            .bind(app.app.id)
             .bind(&pattern)
             .bind(schema_slug)
             .fetch_all(&state.pool)
@@ -101,10 +104,11 @@ async fn list_uploads(
             >(
                 "SELECT u.hash, u.filename, u.mime, u.size, u.created_at, r.schema_slug, r.entry_id
                  FROM uploads u
-                 LEFT JOIN upload_references r ON u.hash = r.upload_hash
-                 WHERE u.filename LIKE ?
+                 LEFT JOIN upload_references r ON u.app_id = r.app_id AND u.hash = r.upload_hash
+                 WHERE u.app_id = ? AND u.filename LIKE ?
                  ORDER BY u.created_at DESC",
             )
+            .bind(app.app.id)
             .bind(&pattern)
             .fetch_all(&state.pool)
             .await
@@ -123,10 +127,11 @@ async fn list_uploads(
             >(
                 "SELECT u.hash, u.filename, u.mime, u.size, u.created_at, r.schema_slug, r.entry_id
                  FROM uploads u
-                 LEFT JOIN upload_references r ON u.hash = r.upload_hash
-                 WHERE r.schema_slug = ?
+                 LEFT JOIN upload_references r ON u.app_id = r.app_id AND u.hash = r.upload_hash
+                 WHERE u.app_id = ? AND r.schema_slug = ?
                  ORDER BY u.created_at DESC",
             )
+            .bind(app.app.id)
             .bind(schema_slug)
             .fetch_all(&state.pool)
             .await,
@@ -144,9 +149,11 @@ async fn list_uploads(
             >(
                 "SELECT u.hash, u.filename, u.mime, u.size, u.created_at, r.schema_slug, r.entry_id
                  FROM uploads u
-                 LEFT JOIN upload_references r ON u.hash = r.upload_hash
+                 LEFT JOIN upload_references r ON u.app_id = r.app_id AND u.hash = r.upload_hash
+                 WHERE u.app_id = ?
                  ORDER BY u.created_at DESC",
             )
+            .bind(app.app.id)
             .fetch_all(&state.pool)
             .await,
         }
@@ -173,7 +180,8 @@ async fn list_uploads(
     let upload_rows: Vec<UploadRow> = upload_map.into_values().collect();
 
     // Get schema list for filter dropdown
-    let schemas: Vec<SchemaOption> = schema::list_schemas(&state.config.schemas_dir())
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let schemas: Vec<SchemaOption> = schema::list_schemas(&schemas_dir)
         .unwrap_or_default()
         .into_iter()
         .map(|s| SchemaOption {
@@ -195,6 +203,8 @@ async fn list_uploads(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             uploads => upload_rows,
             schemas => schemas,
             filter_q => filter.q.unwrap_or_default(),
@@ -218,6 +228,7 @@ fn format_size(bytes: u64) -> String {
 async fn upload_file(
     State(state): State<AppState>,
     session: Session,
+    app: AppContext,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     if auth::require_role(&session, "editor").await.is_err() {
@@ -227,6 +238,7 @@ async fn upload_file(
         )
             .into_response();
     }
+    let uploads_dir = state.config.app_uploads_dir(&app.app.slug);
     while let Ok(Some(field)) = multipart.next_field().await {
         let filename = field.file_name().unwrap_or("file").to_string();
         let content_type = field
@@ -249,9 +261,9 @@ async fn upload_file(
         }
 
         match uploads::store_upload(
-            &state.config.uploads_dir(),
+            &uploads_dir,
             &state.pool,
-            1, // TODO: replace with app.app.id in Task 7
+            app.app.id,
             &filename,
             &content_type,
             &data,
@@ -286,29 +298,32 @@ async fn upload_file(
 
 async fn serve_upload(
     State(state): State<AppState>,
-    Path((hash, _filename)): Path<(String, String)>,
+    app: AppContext,
+    Path((_app_slug, hash, _filename)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
-    serve_file(&state, &hash).await
+    serve_file(&state, &app, &hash).await
 }
 
 async fn serve_upload_no_name(
     State(state): State<AppState>,
-    Path(hash): Path<String>,
+    app: AppContext,
+    Path((_app_slug, hash)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    serve_file(&state, &hash).await
+    serve_file(&state, &app, &hash).await
 }
 
-pub async fn serve_upload_by_hash(state: &AppState, hash: &str) -> axum::response::Response {
-    serve_file(state, hash).await
-}
-
-async fn serve_file(state: &AppState, hash: &str) -> axum::response::Response {
-    let path = match uploads::get_upload_path(&state.config.uploads_dir(), hash) {
+pub async fn serve_upload_by_hash(
+    state: &AppState,
+    app_id: i64,
+    uploads_dir: &std::path::Path,
+    hash: &str,
+) -> axum::response::Response {
+    let path = match uploads::get_upload_path(uploads_dir, hash) {
         Some(p) => p,
         None => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    let meta = uploads::db_get_upload_meta(&state.pool, 1, hash) // TODO: replace with app.app.id in Task 7
+    let meta = uploads::db_get_upload_meta(&state.pool, app_id, hash)
         .await
         .ok()
         .flatten();
@@ -337,4 +352,9 @@ async fn serve_file(state: &AppState, hash: &str) -> axum::response::Response {
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+async fn serve_file(state: &AppState, app: &AppContext, hash: &str) -> axum::response::Response {
+    let uploads_dir = state.config.app_uploads_dir(&app.app.slug);
+    serve_upload_by_hash(state, app.app.id, &uploads_dir, hash).await
 }

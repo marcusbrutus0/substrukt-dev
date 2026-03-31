@@ -8,6 +8,7 @@ use axum_htmx::HxRequest;
 use sqlx;
 use tower_sessions::Session;
 
+use crate::app_context::AppContext;
 use crate::audit::validate_deployment_slug;
 use crate::auth;
 use crate::state::AppState;
@@ -45,6 +46,7 @@ async fn list_deployments(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
+    app: AppContext,
 ) -> axum::response::Result<axum::response::Response> {
     auth::require_role(&session, "editor").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
@@ -53,7 +55,7 @@ async fn list_deployments(
 
     let deployments = state
         .audit
-        .list_deployments()
+        .list_deployments_for_app(app.app.id)
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
@@ -127,6 +129,8 @@ async fn list_deployments(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             deployments => deployment_data,
             history => history_data,
             flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
@@ -140,6 +144,7 @@ async fn new_deployment_form(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
+    app: AppContext,
 ) -> axum::response::Result<Html<String>> {
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
@@ -157,6 +162,8 @@ async fn new_deployment_form(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             editing => false,
         })
         .map_err(|e| format!("Render error: {e}"))?;
@@ -167,6 +174,7 @@ async fn create_deployment(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
+    app: AppContext,
     Form(form): Form<DeploymentForm>,
 ) -> axum::response::Result<axum::response::Response> {
     let user_id = auth::require_role(&session, "admin").await?;
@@ -178,6 +186,7 @@ async fn create_deployment(
     if name.is_empty() || webhook_url.is_empty() {
         return render_form_with_error(
             &state,
+            &app,
             &session,
             is_htmx,
             "Name and Webhook URL are required",
@@ -187,7 +196,7 @@ async fn create_deployment(
     }
 
     if let Err(e) = validate_deployment_slug(slug) {
-        return render_form_with_error(&state, &session, is_htmx, &e, None).await;
+        return render_form_with_error(&state, &app, &session, is_htmx, &e, None).await;
     }
 
     let auth_token = if form.webhook_auth_token.trim().is_empty() {
@@ -203,7 +212,7 @@ async fn create_deployment(
     match state
         .audit
         .create_deployment(
-            1, // TODO: replace with app.app.id in Task 7
+            app.app.id,
             name,
             slug,
             webhook_url,
@@ -215,12 +224,13 @@ async fn create_deployment(
         .await
     {
         Ok(dep) => {
-            state.audit.log(
+            state.audit.log_with_app(
                 &user_id.to_string(),
                 "deployment_created",
                 "deployment",
                 &dep.slug,
                 Some(&serde_json::json!({"name": dep.name}).to_string()),
+                Some(app.app.id),
             );
             if dep.auto_deploy {
                 webhooks::spawn_auto_deploy_task(&state, dep);
@@ -231,7 +241,7 @@ async fn create_deployment(
                 &format!("Deployment '{}' created", name),
             )
             .await;
-            Ok(Redirect::to("/deployments").into_response())
+            Ok(Redirect::to(&format!("/apps/{}/deployments", app.app.slug)).into_response())
         }
         Err(e) => {
             let msg = if e.to_string().contains("UNIQUE") {
@@ -239,7 +249,7 @@ async fn create_deployment(
             } else {
                 e.to_string()
             };
-            render_form_with_error(&state, &session, is_htmx, &msg, None).await
+            render_form_with_error(&state, &app, &session, is_htmx, &msg, None).await
         }
     }
 }
@@ -248,7 +258,8 @@ async fn edit_deployment_form(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
-    Path(slug): Path<String>,
+    app: AppContext,
+    Path((_app_slug, slug)): Path<(String, String)>,
 ) -> axum::response::Result<axum::response::Response> {
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
@@ -256,7 +267,7 @@ async fn edit_deployment_form(
 
     let dep = state
         .audit
-        .get_deployment_by_slug(&slug)
+        .get_deployment_by_slug_and_app(app.app.id, &slug)
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
@@ -282,6 +293,8 @@ async fn edit_deployment_form(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             editing => true,
             has_token => has_token,
             deployment => minijinja::context! {
@@ -302,14 +315,15 @@ async fn update_deployment(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
-    Path(slug): Path<String>,
+    app: AppContext,
+    Path((_app_slug, slug)): Path<(String, String)>,
     Form(form): Form<DeploymentForm>,
 ) -> axum::response::Result<axum::response::Response> {
     let user_id = auth::require_role(&session, "admin").await?;
 
     let dep = state
         .audit
-        .get_deployment_by_slug(&slug)
+        .get_deployment_by_slug_and_app(app.app.id, &slug)
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
@@ -328,6 +342,7 @@ async fn update_deployment(
     if name.is_empty() || webhook_url.is_empty() {
         return render_form_with_error(
             &state,
+            &app,
             &session,
             is_htmx,
             "Name and Webhook URL are required",
@@ -337,7 +352,7 @@ async fn update_deployment(
     }
 
     if let Err(e) = validate_deployment_slug(new_slug) {
-        return render_form_with_error(&state, &session, is_htmx, &e, Some(&dep)).await;
+        return render_form_with_error(&state, &app, &session, is_htmx, &e, Some(&dep)).await;
     }
 
     // Handle auth token: keep, clear, or update
@@ -376,15 +391,16 @@ async fn update_deployment(
         } else {
             e.to_string()
         };
-        return render_form_with_error(&state, &session, is_htmx, &msg, Some(&dep)).await;
+        return render_form_with_error(&state, &app, &session, is_htmx, &msg, Some(&dep)).await;
     }
 
-    state.audit.log(
+    state.audit.log_with_app(
         &user_id.to_string(),
         "deployment_updated",
         "deployment",
         new_slug,
         Some(&serde_json::json!({"name": name}).to_string()),
+        Some(app.app.id),
     );
 
     // Cancel old auto-deploy task, optionally spawn new one
@@ -399,19 +415,20 @@ async fn update_deployment(
         &format!("Deployment '{}' updated", name),
     )
     .await;
-    Ok(Redirect::to("/deployments").into_response())
+    Ok(Redirect::to(&format!("/apps/{}/deployments", app.app.slug)).into_response())
 }
 
 async fn delete_deployment(
     State(state): State<AppState>,
     session: Session,
-    Path(slug): Path<String>,
+    app: AppContext,
+    Path((_app_slug, slug)): Path<(String, String)>,
 ) -> axum::response::Result<axum::response::Response> {
     let user_id = auth::require_role(&session, "admin").await?;
 
     let dep = state
         .audit
-        .get_deployment_by_slug(&slug)
+        .get_deployment_by_slug_and_app(app.app.id, &slug)
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
@@ -430,12 +447,13 @@ async fn delete_deployment(
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
-    state.audit.log(
+    state.audit.log_with_app(
         &user_id.to_string(),
         "deployment_deleted",
         "deployment",
         &dep.slug,
         Some(&serde_json::json!({"name": dep.name}).to_string()),
+        Some(app.app.id),
     );
 
     auth::set_flash(
@@ -444,19 +462,20 @@ async fn delete_deployment(
         &format!("Deployment '{}' deleted", dep.name),
     )
     .await;
-    Ok(Redirect::to("/deployments").into_response())
+    Ok(Redirect::to(&format!("/apps/{}/deployments", app.app.slug)).into_response())
 }
 
 async fn fire_deployment(
     State(state): State<AppState>,
     session: Session,
-    Path(slug): Path<String>,
+    app: AppContext,
+    Path((_app_slug, slug)): Path<(String, String)>,
 ) -> axum::response::Result<axum::response::Response> {
     let user_id = auth::require_role(&session, "editor").await?;
 
     let dep = state
         .audit
-        .get_deployment_by_slug(&slug)
+        .get_deployment_by_slug_and_app(app.app.id, &slug)
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
@@ -473,17 +492,18 @@ async fn fire_deployment(
         &state.audit,
         &dep,
         webhooks::TriggerSource::Manual,
-        "default", // TODO: replace with app.app.slug in Task 11
+        &app.app.slug,
     )
     .await
     {
         Ok(_) => {
-            state.audit.log(
+            state.audit.log_with_app(
                 &user_id.to_string(),
                 "deployment_fired",
                 "deployment",
                 &dep.slug,
                 None,
+                Some(app.app.id),
             );
             auth::set_flash(
                 &session,
@@ -494,12 +514,13 @@ async fn fire_deployment(
         }
         Err(e) => {
             tracing::warn!("Webhook failed for deployment {}: {e}", dep.slug);
-            state.audit.log(
+            state.audit.log_with_app(
                 &user_id.to_string(),
                 "deployment_fired",
                 "deployment",
                 &dep.slug,
                 None,
+                Some(app.app.id),
             );
             auth::set_flash(
                 &session,
@@ -510,11 +531,12 @@ async fn fire_deployment(
         }
     }
 
-    Ok(Redirect::to("/deployments").into_response())
+    Ok(Redirect::to(&format!("/apps/{}/deployments", app.app.slug)).into_response())
 }
 
 async fn render_form_with_error(
     state: &AppState,
+    app: &AppContext,
     session: &Session,
     is_htmx: bool,
     error: &str,
@@ -551,6 +573,8 @@ async fn render_form_with_error(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             editing => editing,
             has_token => has_token,
             deployment => deployment_ctx,
