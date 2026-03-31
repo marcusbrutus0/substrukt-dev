@@ -899,4 +899,82 @@ mod tests {
         let delay = calculate_next_backup_delay(Some(&record), 24);
         assert_eq!(delay, std::time::Duration::ZERO);
     }
+
+    // ── S3 integration tests (require Minio) ────────────────
+    // Start Minio: docker run -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
+    // Run: SUBSTRUKT_S3_ENDPOINT=http://localhost:9000 SUBSTRUKT_S3_BUCKET=test-backups SUBSTRUKT_S3_ACCESS_KEY=minioadmin SUBSTRUKT_S3_SECRET_KEY=minioadmin cargo test -- --ignored test_full_backup
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_full_backup_cycle_s3() {
+        let config = S3Config::new(
+            std::env::var("SUBSTRUKT_S3_ENDPOINT").expect("SUBSTRUKT_S3_ENDPOINT required"),
+            std::env::var("SUBSTRUKT_S3_BUCKET").expect("SUBSTRUKT_S3_BUCKET required"),
+            std::env::var("SUBSTRUKT_S3_ACCESS_KEY").expect("SUBSTRUKT_S3_ACCESS_KEY required"),
+            std::env::var("SUBSTRUKT_S3_SECRET_KEY").expect("SUBSTRUKT_S3_SECRET_KEY required"),
+            std::env::var("SUBSTRUKT_S3_REGION").ok(),
+            Some(true),
+        );
+
+        // Create a test archive
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(data_dir.join("schemas")).unwrap();
+        std::fs::write(data_dir.join("schemas/test.json"), r#"{"title":"Test"}"#).unwrap();
+
+        let main_db = tmp.path().join("main.db");
+        let main_pool = crate::db::init_pool(&main_db).await.unwrap();
+        let audit_db = tmp.path().join("audit.db");
+        let audit_pool = crate::audit::init_pool(&audit_db).await.unwrap();
+
+        let (archive_path, _manifest) =
+            create_archive(&data_dir, &main_pool, &audit_pool).await.unwrap();
+
+        // Upload
+        let bucket = create_bucket(&config).unwrap();
+        let key = format!("backups/test-{}.tar.gz", chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ"));
+        upload_archive(&bucket, &key, &archive_path).await.unwrap();
+
+        // Verify it exists in list
+        let keys = list_backups(&bucket).await.unwrap();
+        assert!(keys.contains(&key), "Uploaded backup should appear in list");
+
+        // Cleanup
+        delete_backup(&bucket, &key).await.unwrap();
+        let _ = std::fs::remove_file(&archive_path);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_retention_cleanup_s3() {
+        let config = S3Config::new(
+            std::env::var("SUBSTRUKT_S3_ENDPOINT").expect("SUBSTRUKT_S3_ENDPOINT required"),
+            std::env::var("SUBSTRUKT_S3_BUCKET").expect("SUBSTRUKT_S3_BUCKET required"),
+            std::env::var("SUBSTRUKT_S3_ACCESS_KEY").expect("SUBSTRUKT_S3_ACCESS_KEY required"),
+            std::env::var("SUBSTRUKT_S3_SECRET_KEY").expect("SUBSTRUKT_S3_SECRET_KEY required"),
+            std::env::var("SUBSTRUKT_S3_REGION").ok(),
+            Some(true),
+        );
+
+        let bucket = create_bucket(&config).unwrap();
+
+        // Upload 4 dummy objects
+        let keys: Vec<String> = (0..4)
+            .map(|i| format!("backups/retention-test-{i}.tar.gz"))
+            .collect();
+
+        for key in &keys {
+            bucket.put_object(key, b"test").await.unwrap();
+        }
+
+        // Enforce retention of 2
+        let deleted = enforce_retention(&bucket, 2).await.unwrap();
+        assert_eq!(deleted, 2, "Should delete 2 oldest backups");
+
+        // Cleanup remaining
+        let remaining = list_backups(&bucket).await.unwrap();
+        for key in remaining.iter().filter(|k| k.contains("retention-test")) {
+            let _ = delete_backup(&bucket, key).await;
+        }
+    }
 }
