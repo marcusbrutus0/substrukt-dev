@@ -10,6 +10,7 @@ use crate::state::AppState;
 #[derive(Serialize)]
 struct WebhookPayload {
     event_type: &'static str,
+    app: String,
     deployment: String,
     include_drafts: bool,
     triggered_at: String,
@@ -79,6 +80,7 @@ pub async fn fire_webhook(
     audit: &AuditLogger,
     deployment: &Deployment,
     source: TriggerSource,
+    app_slug: &str,
 ) -> Result<bool> {
     let triggered_by = match source {
         TriggerSource::Auto => "auto",
@@ -88,6 +90,7 @@ pub async fn fire_webhook(
 
     let payload = WebhookPayload {
         event_type: "substrukt-publish",
+        app: app_slug.to_string(),
         deployment: deployment.slug.clone(),
         include_drafts: deployment.include_drafts,
         triggered_at: chrono::Utc::now().to_rfc3339(),
@@ -196,10 +199,21 @@ pub fn spawn_auto_deploy_task(state: &AppState, deployment: Deployment) {
 
     let client = state.http_client.clone();
     let audit = state.audit.clone();
+    let pool = state.pool.clone();
     let poll_interval = Duration::from_secs(30);
     let debounce = Duration::from_secs(deployment.debounce_seconds as u64);
 
     tokio::spawn(async move {
+        // Resolve app_slug from app_id at startup (avoids repeated lookups)
+        let app_slug = if let Some(app_id) = deployment.app_id {
+            match crate::db::models::find_app_by_id(&pool, app_id).await {
+                Ok(Some(app)) => app.slug,
+                _ => "unknown".to_string(),
+            }
+        } else {
+            "default".to_string()
+        };
+
         loop {
             // Check dirty
             let dirty = match audit.is_dirty_for_deployment(deployment.id).await {
@@ -224,14 +238,17 @@ pub fn spawn_auto_deploy_task(state: &AppState, deployment: Deployment) {
                     .unwrap_or(false);
                 if still_dirty {
                     tracing::info!("Auto-deploying {}", deployment.slug);
-                    match fire_webhook(&client, &audit, &deployment, TriggerSource::Auto).await {
+                    match fire_webhook(&client, &audit, &deployment, TriggerSource::Auto, &app_slug)
+                        .await
+                    {
                         Ok(_) => {
-                            audit.log(
+                            audit.log_with_app(
                                 "system",
                                 "deployment_auto_fired",
                                 "deployment",
                                 &deployment.slug,
                                 None,
+                                deployment.app_id,
                             );
                         }
                         Err(e) => {

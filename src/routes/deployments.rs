@@ -473,6 +473,7 @@ async fn fire_deployment(
         &state.audit,
         &dep,
         webhooks::TriggerSource::Manual,
+        "default", // TODO: replace with app.app.slug in Task 11
     )
     .await
     {

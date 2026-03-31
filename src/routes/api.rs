@@ -811,7 +811,7 @@ async fn export_bundle(State(state): State<AppState>, token: BearerToken) -> imp
     }
     let tmp =
         std::env::temp_dir().join(format!("substrukt-export-{}.tar.gz", uuid::Uuid::new_v4()));
-    match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
+    match crate::sync::export_bundle(&state.config.data_dir, &state.pool, 1, &tmp).await {
         Ok(()) => match std::fs::read(&tmp) {
             Ok(data) => {
                 let _ = std::fs::remove_file(&tmp);
@@ -868,7 +868,7 @@ async fn import_bundle(
             continue;
         }
 
-        match crate::sync::import_bundle_from_bytes(&state.config.data_dir, &state.pool, &data)
+        match crate::sync::import_bundle_from_bytes(&state.config.data_dir, &state.pool, 1, &data)
             .await
         {
             Ok(warnings) => {
@@ -959,6 +959,7 @@ async fn api_fire_deployment(
         &state.audit,
         &dep,
         crate::webhooks::TriggerSource::Manual,
+        "default", // TODO: replace with app.app.slug in Task 11
     )
     .await
     {

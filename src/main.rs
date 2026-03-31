@@ -113,12 +113,11 @@ async fn main() -> eyre::Result<()> {
         Command::Serve => run_server(config, api_rate_limit).await,
         Command::Import { path, app } => {
             let pool = db::init_pool(&config.db_path).await?;
-            let _app_record = models::find_app_by_slug(&pool, &app)
+            let app_record = models::find_app_by_slug(&pool, &app)
                 .await?
                 .ok_or_else(|| eyre::eyre!("App '{app}' not found"))?;
             let app_dir = config.app_dir(&app);
-            // Sync module updated in Task 10 to accept app_dir + app_id
-            let warnings = sync::import_bundle(&app_dir, &pool, &path).await?;
+            let warnings = sync::import_bundle(&app_dir, &pool, app_record.id, &path).await?;
             if warnings.is_empty() {
                 tracing::info!("Import complete, no validation warnings");
             } else {
@@ -131,12 +130,11 @@ async fn main() -> eyre::Result<()> {
         }
         Command::Export { path, app } => {
             let pool = db::init_pool(&config.db_path).await?;
-            let _app_record = models::find_app_by_slug(&pool, &app)
+            let app_record = models::find_app_by_slug(&pool, &app)
                 .await?
                 .ok_or_else(|| eyre::eyre!("App '{app}' not found"))?;
             let app_dir = config.app_dir(&app);
-            // Sync module updated in Task 10 to accept app_dir + app_id
-            sync::export_bundle(&app_dir, &pool, &path).await?;
+            sync::export_bundle(&app_dir, &pool, app_record.id, &path).await?;
             tracing::info!("Exported to {}", path.display());
             Ok(())
         }

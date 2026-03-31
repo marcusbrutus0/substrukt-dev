@@ -270,7 +270,7 @@ async fn import_data(
     };
 
     // Import
-    match crate::sync::import_bundle_from_bytes(&state.config.data_dir, &state.pool, &data).await {
+    match crate::sync::import_bundle_from_bytes(&state.config.data_dir, &state.pool, 1, &data).await {
         Ok(warnings) => {
             crate::cache::rebuild(&state.cache, &state.config.data_dir);
             state
@@ -326,7 +326,7 @@ async fn export_data(
         std::env::temp_dir().join(format!("substrukt-export-{}.tar.gz", uuid::Uuid::new_v4()));
 
     Ok(
-        match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
+        match crate::sync::export_bundle(&state.config.data_dir, &state.pool, 1, &tmp).await {
             Ok(()) => match std::fs::read(&tmp) {
                 Ok(data) => {
                     let _ = std::fs::remove_file(&tmp);
