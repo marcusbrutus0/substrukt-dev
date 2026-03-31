@@ -95,10 +95,7 @@ async fn upload_archive(bucket: &Bucket, key: &str, path: &Path) -> eyre::Result
         .await
         .map_err(|e| eyre::eyre!("S3 upload failed: {e}"))?;
     if response.status_code() >= 300 {
-        eyre::bail!(
-            "S3 upload returned status {}",
-            response.status_code()
-        );
+        eyre::bail!("S3 upload returned status {}", response.status_code());
     }
     Ok(())
 }
@@ -123,10 +120,7 @@ async fn delete_backup(bucket: &Bucket, key: &str) -> eyre::Result<()> {
         .await
         .map_err(|e| eyre::eyre!("S3 delete failed: {e}"))?;
     if response.status_code() >= 300 && response.status_code() != 404 {
-        eyre::bail!(
-            "S3 delete returned status {}",
-            response.status_code()
-        );
+        eyre::bail!("S3 delete returned status {}", response.status_code());
     }
     Ok(())
 }
@@ -230,21 +224,15 @@ pub async fn create_archive(
     let main_db_snapshot = temp_dir.join("substrukt.db");
     let audit_db_snapshot = temp_dir.join("audit.db");
 
-    sqlx::query(&format!(
-        "VACUUM INTO '{}'",
-        main_db_snapshot.display()
-    ))
-    .execute(main_pool)
-    .await
-    .wrap_err("Failed to snapshot main database")?;
+    sqlx::query(&format!("VACUUM INTO '{}'", main_db_snapshot.display()))
+        .execute(main_pool)
+        .await
+        .wrap_err("Failed to snapshot main database")?;
 
-    sqlx::query(&format!(
-        "VACUUM INTO '{}'",
-        audit_db_snapshot.display()
-    ))
-    .execute(audit_pool)
-    .await
-    .wrap_err("Failed to snapshot audit database")?;
+    sqlx::query(&format!("VACUUM INTO '{}'", audit_db_snapshot.display()))
+        .execute(audit_pool)
+        .await
+        .wrap_err("Failed to snapshot audit database")?;
 
     // Build tar.gz
     let archive_file = std::fs::File::create(&archive_path)?;
@@ -366,29 +354,24 @@ pub async fn run_backup(state: &AppState, s3_config: &S3Config, trigger_source: 
     );
 
     // Create archive
-    let (archive_path, manifest) = match create_archive(
-        &state.config.data_dir,
-        &state.pool,
-        state.audit.pool_ref(),
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(e) => {
-            let err_msg = format!("Archive creation failed: {e}");
-            tracing::error!("{err_msg}");
-            let _ = state.audit.fail_backup_record(record_id, &err_msg).await;
-            state.audit.log(
-                "system",
-                "backup_failed",
-                "backup",
-                &record_id.to_string(),
-                Some(&serde_json::json!({"error": err_msg}).to_string()),
-            );
-            counter!("substrukt_backup_attempts_total", "status" => "failed").increment(1);
-            return;
-        }
-    };
+    let (archive_path, manifest) =
+        match create_archive(&state.config.data_dir, &state.pool, state.audit.pool_ref()).await {
+            Ok(result) => result,
+            Err(e) => {
+                let err_msg = format!("Archive creation failed: {e}");
+                tracing::error!("{err_msg}");
+                let _ = state.audit.fail_backup_record(record_id, &err_msg).await;
+                state.audit.log(
+                    "system",
+                    "backup_failed",
+                    "backup",
+                    &record_id.to_string(),
+                    Some(&serde_json::json!({"error": err_msg}).to_string()),
+                );
+                counter!("substrukt_backup_attempts_total", "status" => "failed").increment(1);
+                return;
+            }
+        };
 
     // Check archive size (fail if > 4GB)
     let archive_size = match std::fs::metadata(&archive_path) {
@@ -493,13 +476,10 @@ pub async fn run_backup(state: &AppState, s3_config: &S3Config, trigger_source: 
         "backup_completed",
         "backup",
         &record_id.to_string(),
-        Some(
-            &serde_json::json!({"size_bytes": archive_size, "s3_key": s3_key}).to_string(),
-        ),
+        Some(&serde_json::json!({"size_bytes": archive_size, "s3_key": s3_key}).to_string()),
     );
 
-    gauge!("substrukt_backup_last_success_timestamp")
-        .set(chrono::Utc::now().timestamp() as f64);
+    gauge!("substrukt_backup_last_success_timestamp").set(chrono::Utc::now().timestamp() as f64);
     gauge!("substrukt_backup_last_duration_seconds").set(duration.as_secs_f64());
     counter!("substrukt_backup_attempts_total", "status" => "success").increment(1);
 
@@ -580,18 +560,18 @@ pub fn spawn_backup_task(
             // On first iteration, check for stuck backups
             if first_iteration {
                 first_iteration = false;
-                if let Ok(Some(latest)) = state.audit.latest_backup().await {
-                    if is_backup_stuck(&latest) {
-                        tracing::warn!(
-                            "Detected stuck backup (id={}), marking as failed",
-                            latest.id
-                        );
-                        let _ = state
-                            .audit
-                            .fail_backup_record(latest.id, "Server restarted during backup")
-                            .await;
-                        state.backup_running.store(false, Ordering::SeqCst);
-                    }
+                if let Ok(Some(latest)) = state.audit.latest_backup().await
+                    && is_backup_stuck(&latest)
+                {
+                    tracing::warn!(
+                        "Detected stuck backup (id={}), marking as failed",
+                        latest.id
+                    );
+                    let _ = state
+                        .audit
+                        .fail_backup_record(latest.id, "Server restarted during backup")
+                        .await;
+                    state.backup_running.store(false, Ordering::SeqCst);
                 }
             }
 
@@ -735,11 +715,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let data_dir = tmp.path().join("data");
         std::fs::create_dir_all(data_dir.join("schemas")).unwrap();
-        std::fs::write(
-            data_dir.join("schemas/test.json"),
-            r#"{"title":"Test"}"#,
-        )
-        .unwrap();
+        std::fs::write(data_dir.join("schemas/test.json"), r#"{"title":"Test"}"#).unwrap();
 
         // Create file-based SQLite pools (VACUUM INTO requires file-based)
         let main_db = tmp.path().join("main.db");
@@ -748,8 +724,9 @@ mod tests {
         let audit_db = tmp.path().join("audit.db");
         let audit_pool = crate::audit::init_pool(&audit_db).await.unwrap();
 
-        let (archive_path, manifest) =
-            create_archive(&data_dir, &main_pool, &audit_pool).await.unwrap();
+        let (archive_path, manifest) = create_archive(&data_dir, &main_pool, &audit_pool)
+            .await
+            .unwrap();
 
         assert!(archive_path.exists());
 
@@ -795,17 +772,15 @@ mod tests {
         let audit_db = tmp.path().join("audit.db");
         let audit_pool = crate::audit::init_pool(&audit_db).await.unwrap();
 
-        let (archive_path, manifest) =
-            create_archive(&data_dir, &main_pool, &audit_pool).await.unwrap();
+        let (archive_path, manifest) = create_archive(&data_dir, &main_pool, &audit_pool)
+            .await
+            .unwrap();
 
         assert_eq!(manifest["version"], 1);
         assert_eq!(manifest["substrukt_version"], env!("CARGO_PKG_VERSION"));
 
         let entries = manifest["data_dir_entries"].as_array().unwrap();
-        let entry_strs: Vec<&str> = entries
-            .iter()
-            .filter_map(|v| v.as_str())
-            .collect();
+        let entry_strs: Vec<&str> = entries.iter().filter_map(|v| v.as_str()).collect();
         assert!(entry_strs.contains(&"schemas"));
         assert!(entry_strs.contains(&"content"));
 
@@ -820,8 +795,7 @@ mod tests {
 
     #[test]
     fn test_is_backup_stuck_old_record() {
-        let two_hours_ago =
-            (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+        let two_hours_ago = (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
         let record = BackupRecord {
             id: 1,
             started_at: two_hours_ago,
@@ -838,8 +812,7 @@ mod tests {
 
     #[test]
     fn test_is_backup_stuck_recent_record() {
-        let five_mins_ago =
-            (chrono::Utc::now() - chrono::Duration::minutes(5)).to_rfc3339();
+        let five_mins_ago = (chrono::Utc::now() - chrono::Duration::minutes(5)).to_rfc3339();
         let record = BackupRecord {
             id: 1,
             started_at: five_mins_ago,
@@ -862,8 +835,7 @@ mod tests {
 
     #[test]
     fn test_calculate_next_backup_delay_recent_backup() {
-        let two_hours_ago =
-            (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+        let two_hours_ago = (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
         let record = BackupRecord {
             id: 1,
             started_at: two_hours_ago,
@@ -878,13 +850,15 @@ mod tests {
         let delay = calculate_next_backup_delay(Some(&record), 24);
         // Should be roughly 22 hours
         let hours = delay.as_secs() as f64 / 3600.0;
-        assert!(hours > 21.0 && hours < 23.0, "Expected ~22 hours, got {hours}");
+        assert!(
+            hours > 21.0 && hours < 23.0,
+            "Expected ~22 hours, got {hours}"
+        );
     }
 
     #[test]
     fn test_calculate_next_backup_delay_overdue() {
-        let two_days_ago =
-            (chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339();
+        let two_days_ago = (chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339();
         let record = BackupRecord {
             id: 1,
             started_at: two_days_ago,
@@ -927,12 +901,16 @@ mod tests {
         let audit_db = tmp.path().join("audit.db");
         let audit_pool = crate::audit::init_pool(&audit_db).await.unwrap();
 
-        let (archive_path, _manifest) =
-            create_archive(&data_dir, &main_pool, &audit_pool).await.unwrap();
+        let (archive_path, _manifest) = create_archive(&data_dir, &main_pool, &audit_pool)
+            .await
+            .unwrap();
 
         // Upload
         let bucket = create_bucket(&config).unwrap();
-        let key = format!("backups/test-{}.tar.gz", chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ"));
+        let key = format!(
+            "backups/test-{}.tar.gz",
+            chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ")
+        );
         upload_archive(&bucket, &key, &archive_path).await.unwrap();
 
         // Verify it exists in list

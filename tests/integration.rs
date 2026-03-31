@@ -4633,11 +4633,7 @@ async fn test_backup_page_403_for_non_admin() {
     s.setup_admin().await;
 
     let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
-    let resp = editor
-        .get(s.url("/settings/backups"))
-        .send()
-        .await
-        .unwrap();
+    let resp = editor.get(s.url("/settings/backups")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -4669,7 +4665,11 @@ async fn test_update_backup_config() {
         .await
         .unwrap();
     let body = resp.text().await.unwrap();
-    assert!(body.contains("Backup configuration updated") || body.contains(r#"value="12" selected"#) || body.contains(r#"value="14""#));
+    assert!(
+        body.contains("Backup configuration updated")
+            || body.contains(r#"value="12" selected"#)
+            || body.contains(r#"value="14""#)
+    );
 }
 
 #[tokio::test]

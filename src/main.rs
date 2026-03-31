@@ -207,12 +207,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     if let (Some(s3_cfg), Some(rx), Some(cancel)) =
         (state.s3_config.clone(), backup_trigger_rx, &backup_cancel)
     {
-        substrukt::backup::spawn_backup_task(
-            state.clone(),
-            s3_cfg,
-            rx,
-            cancel.child_token(),
-        );
+        substrukt::backup::spawn_backup_task(state.clone(), s3_cfg, rx, cancel.child_token());
     }
 
     // File watcher for cache invalidation

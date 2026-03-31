@@ -708,9 +708,31 @@ impl AuditLogger {
             )
             .fetch_optional(self.pool.as_ref())
             .await?;
-        Ok(row.map(|(id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest)| {
-            BackupRecord { id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest }
-        }))
+        Ok(row.map(
+            |(
+                id,
+                started_at,
+                completed_at,
+                status,
+                trigger_source,
+                error_message,
+                size_bytes,
+                s3_key,
+                manifest,
+            )| {
+                BackupRecord {
+                    id,
+                    started_at,
+                    completed_at,
+                    status,
+                    trigger_source,
+                    error_message,
+                    size_bytes,
+                    s3_key,
+                    manifest,
+                }
+            },
+        ))
     }
 
     pub async fn last_successful_backup(&self) -> eyre::Result<Option<BackupRecord>> {
@@ -720,9 +742,31 @@ impl AuditLogger {
             )
             .fetch_optional(self.pool.as_ref())
             .await?;
-        Ok(row.map(|(id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest)| {
-            BackupRecord { id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest }
-        }))
+        Ok(row.map(
+            |(
+                id,
+                started_at,
+                completed_at,
+                status,
+                trigger_source,
+                error_message,
+                size_bytes,
+                s3_key,
+                manifest,
+            )| {
+                BackupRecord {
+                    id,
+                    started_at,
+                    completed_at,
+                    status,
+                    trigger_source,
+                    error_message,
+                    size_bytes,
+                    s3_key,
+                    manifest,
+                }
+            },
+        ))
     }
 
     pub async fn list_backup_history(&self, limit: i64) -> eyre::Result<Vec<BackupRecord>> {
@@ -733,9 +777,34 @@ impl AuditLogger {
             .bind(limit)
             .fetch_all(self.pool.as_ref())
             .await?;
-        Ok(rows.into_iter().map(|(id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest)| {
-            BackupRecord { id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest }
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    started_at,
+                    completed_at,
+                    status,
+                    trigger_source,
+                    error_message,
+                    size_bytes,
+                    s3_key,
+                    manifest,
+                )| {
+                    BackupRecord {
+                        id,
+                        started_at,
+                        completed_at,
+                        status,
+                        trigger_source,
+                        error_message,
+                        size_bytes,
+                        s3_key,
+                        manifest,
+                    }
+                },
+            )
+            .collect())
     }
 
     pub async fn prune_backup_history(&self, keep: i64) -> eyre::Result<()> {
@@ -1447,10 +1516,7 @@ mod tests {
     async fn test_update_and_get_backup_config() {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
-        logger
-            .update_backup_config(12, 14, true)
-            .await
-            .unwrap();
+        logger.update_backup_config(12, 14, true).await.unwrap();
         let config = logger.get_backup_config().await.unwrap();
         assert_eq!(config.frequency_hours, 12);
         assert_eq!(config.retention_count, 14);
@@ -1497,10 +1563,7 @@ mod tests {
             .unwrap();
         let latest = logger.latest_backup().await.unwrap().unwrap();
         assert_eq!(latest.status, "failed");
-        assert_eq!(
-            latest.error_message.as_deref(),
-            Some("connection refused")
-        );
+        assert_eq!(latest.error_message.as_deref(), Some("connection refused"));
         assert!(latest.completed_at.is_some());
     }
 
@@ -1567,12 +1630,7 @@ mod tests {
         for i in 0..5 {
             let id = logger.start_backup_record("scheduled").await.unwrap();
             logger
-                .complete_backup_record(
-                    id,
-                    100 * (i + 1),
-                    &format!("backups/{i}.tar.gz"),
-                    "{}",
-                )
+                .complete_backup_record(id, 100 * (i + 1), &format!("backups/{i}.tar.gz"), "{}")
                 .await
                 .unwrap();
         }

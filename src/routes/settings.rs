@@ -736,12 +736,30 @@ async fn backups_page(
 
     // Credential status
     let credential_status: Vec<minijinja::Value> = [
-        ("SUBSTRUKT_S3_ENDPOINT", std::env::var("SUBSTRUKT_S3_ENDPOINT").is_ok()),
-        ("SUBSTRUKT_S3_BUCKET", std::env::var("SUBSTRUKT_S3_BUCKET").is_ok()),
-        ("SUBSTRUKT_S3_ACCESS_KEY", std::env::var("SUBSTRUKT_S3_ACCESS_KEY").is_ok()),
-        ("SUBSTRUKT_S3_SECRET_KEY", std::env::var("SUBSTRUKT_S3_SECRET_KEY").is_ok()),
-        ("SUBSTRUKT_S3_REGION", std::env::var("SUBSTRUKT_S3_REGION").is_ok()),
-        ("SUBSTRUKT_S3_PATH_STYLE", std::env::var("SUBSTRUKT_S3_PATH_STYLE").is_ok()),
+        (
+            "SUBSTRUKT_S3_ENDPOINT",
+            std::env::var("SUBSTRUKT_S3_ENDPOINT").is_ok(),
+        ),
+        (
+            "SUBSTRUKT_S3_BUCKET",
+            std::env::var("SUBSTRUKT_S3_BUCKET").is_ok(),
+        ),
+        (
+            "SUBSTRUKT_S3_ACCESS_KEY",
+            std::env::var("SUBSTRUKT_S3_ACCESS_KEY").is_ok(),
+        ),
+        (
+            "SUBSTRUKT_S3_SECRET_KEY",
+            std::env::var("SUBSTRUKT_S3_SECRET_KEY").is_ok(),
+        ),
+        (
+            "SUBSTRUKT_S3_REGION",
+            std::env::var("SUBSTRUKT_S3_REGION").is_ok(),
+        ),
+        (
+            "SUBSTRUKT_S3_PATH_STYLE",
+            std::env::var("SUBSTRUKT_S3_PATH_STYLE").is_ok(),
+        ),
     ]
     .iter()
     .map(|(name, present)| {

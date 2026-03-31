@@ -979,10 +979,7 @@ async fn api_fire_deployment(
     }
 }
 
-async fn api_backup_status(
-    State(state): State<AppState>,
-    token: BearerToken,
-) -> impl IntoResponse {
+async fn api_backup_status(State(state): State<AppState>, token: BearerToken) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "admin") {
         return e.into_response();
     }
@@ -1038,25 +1035,23 @@ async fn api_trigger_backup(
             .into_response();
     }
 
-    if let Some(tx) = &state.backup_trigger {
-        if tx.try_send(()).is_err() {
-            return (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({"error": "Backup already in progress"})),
-            )
-                .into_response();
-        }
+    if let Some(tx) = &state.backup_trigger
+        && tx.try_send(()).is_err()
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "Backup already in progress"})),
+        )
+            .into_response();
     }
 
-    state
-        .audit
-        .log(
-            "api",
-            "backup_triggered",
-            "backup",
-            "",
-            Some(&serde_json::json!({"trigger": "manual"}).to_string()),
-        );
+    state.audit.log(
+        "api",
+        "backup_triggered",
+        "backup",
+        "",
+        Some(&serde_json::json!({"trigger": "manual"}).to_string()),
+    );
 
     Json(serde_json::json!({"status": "triggered"})).into_response()
 }
