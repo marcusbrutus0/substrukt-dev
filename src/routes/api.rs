@@ -49,7 +49,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/uploads/{hash}", get(get_upload))
         .route("/export", post(export_bundle))
         .route("/import", post(import_bundle))
-        .route("/publish/{environment}", post(publish))
+        .route("/deployments", get(api_list_deployments))
+        .route("/deployments/{slug}/fire", post(api_fire_deployment))
         .layer(middleware::from_fn_with_state(state, api_rate_limit))
 }
 
@@ -891,41 +892,93 @@ async fn import_bundle(
         .into_response()
 }
 
-async fn publish(
+async fn api_list_deployments(
+    State(state): State<AppState>,
+    _token: BearerToken,
+) -> impl IntoResponse {
+    match state.audit.list_deployments().await {
+        Ok(deployments) => {
+            let data: Vec<serde_json::Value> = deployments
+                .iter()
+                .map(|d| {
+                    serde_json::json!({
+                        "name": d.name,
+                        "slug": d.slug,
+                        "webhook_url": d.webhook_url,
+                        "include_drafts": d.include_drafts,
+                        "auto_deploy": d.auto_deploy,
+                        "debounce_seconds": d.debounce_seconds,
+                    })
+                })
+                .collect();
+            Json(serde_json::json!(data)).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_fire_deployment(
     State(state): State<AppState>,
     token: BearerToken,
-    Path(environment): Path<String>,
+    Path(slug): Path<String>,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "editor") {
         return e.into_response();
     }
-    if !matches!(environment.as_str(), "staging" | "production") {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Unknown environment"})),
-        )
-            .into_response();
-    }
+
+    let dep = match state.audit.get_deployment_by_slug(&slug).await {
+        Ok(Some(d)) => d,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "Deployment not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
 
     match crate::webhooks::fire_webhook(
         &state.http_client,
         &state.audit,
-        &state.config,
-        &environment,
+        &dep,
         crate::webhooks::TriggerSource::Manual,
     )
     .await
     {
-        Ok(true) => Json(serde_json::json!({"status": "triggered"})).into_response(),
-        Ok(false) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "Webhook URL not configured"})),
-        )
-            .into_response(),
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Ok(_) => {
+            state.audit.log(
+                "api",
+                "deployment_fired",
+                "deployment",
+                &dep.slug,
+                None,
+            );
+            Json(serde_json::json!({"status": "triggered"})).into_response()
+        }
+        Err(e) => {
+            state.audit.log(
+                "api",
+                "deployment_fired",
+                "deployment",
+                &dep.slug,
+                None,
+            );
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
     }
 }
