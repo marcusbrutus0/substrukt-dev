@@ -1004,6 +1004,175 @@ mod tests {
         assert!(history.is_empty());
     }
 
+    // ── Additional deployment tests ─────────────────────────────
+
+    #[tokio::test]
+    async fn test_is_dirty_detects_entry_unpublished() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let dep = logger
+            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .await
+            .unwrap();
+        logger.mark_deployment_fired(dep.id).await.unwrap();
+        let future_ts = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
+        let query = format!(
+            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{future_ts}', 'test', 'entry_unpublished', 'content', 'posts/1')"
+        );
+        logger.execute_raw(&query).await.unwrap();
+        assert!(logger.is_dirty_for_deployment(dep.id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_list_auto_deploy_deployments() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        logger
+            .create_deployment("Manual", "manual", "https://m.com", None, false, false, 300)
+            .await
+            .unwrap();
+        logger
+            .create_deployment("Auto", "auto", "https://a.com", None, false, true, 60)
+            .await
+            .unwrap();
+        logger
+            .create_deployment(
+                "Also Auto",
+                "also-auto",
+                "https://aa.com",
+                None,
+                false,
+                true,
+                120,
+            )
+            .await
+            .unwrap();
+
+        let auto = logger.list_auto_deploy_deployments().await.unwrap();
+        assert_eq!(auto.len(), 2);
+        // Sorted by name
+        assert_eq!(auto[0].slug, "also-auto");
+        assert_eq!(auto[1].slug, "auto");
+        // Manual deployment should not be included
+        assert!(auto.iter().all(|d| d.auto_deploy));
+    }
+
+    #[tokio::test]
+    async fn test_get_deployment_by_id_nonexistent() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        assert!(logger.get_deployment_by_id(999).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_deployment_no_auth_token() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let dep = logger
+            .create_deployment(
+                "NoToken",
+                "no-token",
+                "https://n.com",
+                None,
+                false,
+                false,
+                300,
+            )
+            .await
+            .unwrap();
+        assert!(dep.webhook_auth_token.is_none());
+
+        let fetched = logger
+            .get_deployment_by_slug("no-token")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched.webhook_auth_token.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_is_dirty_independent_per_deployment() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let dep1 = logger
+            .create_deployment("D1", "d1", "https://d1.com", None, false, false, 300)
+            .await
+            .unwrap();
+        let dep2 = logger
+            .create_deployment("D2", "d2", "https://d2.com", None, false, false, 300)
+            .await
+            .unwrap();
+
+        // Both start dirty (never fired)
+        assert!(logger.is_dirty_for_deployment(dep1.id).await.unwrap());
+        assert!(logger.is_dirty_for_deployment(dep2.id).await.unwrap());
+
+        // Fire dep1 only
+        logger.mark_deployment_fired(dep1.id).await.unwrap();
+        assert!(!logger.is_dirty_for_deployment(dep1.id).await.unwrap());
+        // dep2 still dirty (never fired)
+        assert!(logger.is_dirty_for_deployment(dep2.id).await.unwrap());
+
+        // Fire dep2
+        logger.mark_deployment_fired(dep2.id).await.unwrap();
+        assert!(!logger.is_dirty_for_deployment(dep2.id).await.unwrap());
+
+        // Add a mutation -- both become dirty
+        let future_ts = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
+        let query = format!(
+            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{future_ts}', 'test', 'content_update', 'content', 'posts/1')"
+        );
+        logger.execute_raw(&query).await.unwrap();
+        assert!(logger.is_dirty_for_deployment(dep1.id).await.unwrap());
+        assert!(logger.is_dirty_for_deployment(dep2.id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_update_deployment_slug_change() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let dep = logger
+            .create_deployment(
+                "Staging",
+                "staging",
+                "https://s.com",
+                None,
+                false,
+                false,
+                300,
+            )
+            .await
+            .unwrap();
+        logger
+            .update_deployment(
+                dep.id,
+                "Staging",
+                "staging-v2",
+                "https://s.com",
+                None,
+                false,
+                false,
+                300,
+            )
+            .await
+            .unwrap();
+        // Old slug no longer resolves
+        assert!(
+            logger
+                .get_deployment_by_slug("staging")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // New slug works
+        let fetched = logger
+            .get_deployment_by_slug("staging-v2")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.id, dep.id);
+    }
+
     // ── Audit log tests ──────────────────────────────────────────
 
     #[tokio::test]
