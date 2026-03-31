@@ -874,6 +874,192 @@ mod tests {
         assert_eq!(delay, std::time::Duration::ZERO);
     }
 
+    #[test]
+    fn test_calculate_next_backup_delay_unparseable_timestamp() {
+        let record = BackupRecord {
+            id: 1,
+            started_at: "not-a-timestamp".to_string(),
+            completed_at: None,
+            status: "success".to_string(),
+            trigger_source: "scheduled".to_string(),
+            error_message: None,
+            size_bytes: None,
+            s3_key: None,
+            manifest: None,
+        };
+        let delay = calculate_next_backup_delay(Some(&record), 24);
+        assert_eq!(
+            delay,
+            std::time::Duration::ZERO,
+            "Unparseable timestamp should return ZERO (backup immediately)"
+        );
+    }
+
+    #[test]
+    fn test_is_backup_stuck_completed_record() {
+        let record = BackupRecord {
+            id: 1,
+            started_at: (chrono::Utc::now() - chrono::Duration::hours(3)).to_rfc3339(),
+            completed_at: Some(chrono::Utc::now().to_rfc3339()),
+            status: "success".to_string(),
+            trigger_source: "scheduled".to_string(),
+            error_message: None,
+            size_bytes: Some(1024),
+            s3_key: Some("backups/test.tar.gz".to_string()),
+            manifest: None,
+        };
+        assert!(
+            !is_backup_stuck(&record),
+            "Completed backups should not be considered stuck"
+        );
+    }
+
+    #[test]
+    fn test_is_backup_stuck_failed_record() {
+        let record = BackupRecord {
+            id: 1,
+            started_at: (chrono::Utc::now() - chrono::Duration::hours(3)).to_rfc3339(),
+            completed_at: Some(chrono::Utc::now().to_rfc3339()),
+            status: "failed".to_string(),
+            trigger_source: "manual".to_string(),
+            error_message: Some("connection refused".to_string()),
+            size_bytes: None,
+            s3_key: None,
+            manifest: None,
+        };
+        assert!(
+            !is_backup_stuck(&record),
+            "Failed backups should not be considered stuck"
+        );
+    }
+
+    #[test]
+    fn test_is_backup_stuck_invalid_timestamp() {
+        let record = BackupRecord {
+            id: 1,
+            started_at: "garbage".to_string(),
+            completed_at: None,
+            status: "running".to_string(),
+            trigger_source: "scheduled".to_string(),
+            error_message: None,
+            size_bytes: None,
+            s3_key: None,
+            manifest: None,
+        };
+        assert!(
+            !is_backup_stuck(&record),
+            "Invalid timestamp should return false (cannot determine if stuck)"
+        );
+    }
+
+    #[test]
+    fn test_should_exclude_no_extension_at_root() {
+        let data_dir = Path::new("/data");
+        assert!(
+            !should_exclude(Path::new("/data/some_file"), data_dir),
+            "Files without .db extension should not be excluded"
+        );
+        assert!(
+            !should_exclude(Path::new("/data/README"), data_dir),
+            "Files without extension at root should not be excluded"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_archive_empty_data_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        // Empty data dir -- no schemas, content, or uploads
+
+        let main_db = tmp.path().join("main.db");
+        let main_pool = crate::db::init_pool(&main_db).await.unwrap();
+        let audit_db = tmp.path().join("audit.db");
+        let audit_pool = crate::audit::init_pool(&audit_db).await.unwrap();
+
+        let (archive_path, manifest) = create_archive(&data_dir, &main_pool, &audit_pool)
+            .await
+            .unwrap();
+
+        assert!(archive_path.exists());
+
+        // Should still contain DB snapshots and manifest
+        let file = std::fs::File::open(&archive_path).unwrap();
+        let dec = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(dec);
+        let entries: Vec<String> = archive
+            .entries()
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.path().ok().map(|p| p.to_string_lossy().to_string()))
+            .collect();
+
+        assert!(entries.contains(&"substrukt.db".to_string()));
+        assert!(entries.contains(&"audit.db".to_string()));
+        assert!(entries.contains(&"manifest.json".to_string()));
+
+        // Manifest should show 3 total files (2 DBs + manifest)
+        assert_eq!(manifest["total_files"], 3);
+        assert!(manifest["data_dir_entries"].as_array().unwrap().is_empty());
+
+        let _ = std::fs::remove_file(&archive_path);
+    }
+
+    #[tokio::test]
+    async fn test_create_archive_excludes_db_at_root_includes_subdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(data_dir.join("content/myschema")).unwrap();
+
+        // DB files at root (should be excluded from walk, replaced by VACUUM snapshots)
+        std::fs::write(data_dir.join("substrukt.db"), "fake-db").unwrap();
+        std::fs::write(data_dir.join("substrukt.db-wal"), "fake-wal").unwrap();
+        std::fs::write(data_dir.join("audit.db"), "fake-audit").unwrap();
+
+        // DB file in subdirectory (should be included)
+        std::fs::write(data_dir.join("content/myschema/data.db"), "subdir-db").unwrap();
+        std::fs::write(data_dir.join("content/myschema/entry.json"), "{}").unwrap();
+
+        let main_db = tmp.path().join("main.db");
+        let main_pool = crate::db::init_pool(&main_db).await.unwrap();
+        let audit_db = tmp.path().join("audit.db");
+        let audit_pool = crate::audit::init_pool(&audit_db).await.unwrap();
+
+        let (archive_path, _manifest) = create_archive(&data_dir, &main_pool, &audit_pool)
+            .await
+            .unwrap();
+
+        let file = std::fs::File::open(&archive_path).unwrap();
+        let dec = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(dec);
+        let entries: Vec<String> = archive
+            .entries()
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.path().ok().map(|p| p.to_string_lossy().to_string()))
+            .collect();
+
+        // DB files in subdir should be present
+        assert!(
+            entries.contains(&"content/myschema/data.db".to_string()),
+            "DB files in subdirectories should be included: {:?}",
+            entries
+        );
+        assert!(entries.contains(&"content/myschema/entry.json".to_string()));
+
+        // substrukt.db and audit.db should come from VACUUM snapshots, not raw files
+        assert!(entries.contains(&"substrukt.db".to_string()));
+        assert!(entries.contains(&"audit.db".to_string()));
+
+        // The raw data-dir DB-wal file should NOT be included
+        assert!(
+            !entries.contains(&"substrukt.db-wal".to_string()),
+            "WAL files at data root should be excluded"
+        );
+
+        let _ = std::fs::remove_file(&archive_path);
+    }
+
     // ── S3 integration tests (require Minio) ────────────────
     // Start Minio: docker run -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
     // Run: SUBSTRUKT_S3_ENDPOINT=http://localhost:9000 SUBSTRUKT_S3_BUCKET=test-backups SUBSTRUKT_S3_ACCESS_KEY=minioadmin SUBSTRUKT_S3_SECRET_KEY=minioadmin cargo test -- --ignored test_full_backup

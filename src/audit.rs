@@ -1642,4 +1642,69 @@ mod tests {
         assert_eq!(history[0].size_bytes, Some(500));
         assert_eq!(history[1].size_bytes, Some(400));
     }
+
+    #[tokio::test]
+    async fn test_latest_backup_returns_none_when_empty() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let latest = logger.latest_backup().await.unwrap();
+        assert!(latest.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_last_successful_backup_returns_none_when_only_failed() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        let id = logger.start_backup_record("scheduled").await.unwrap();
+        logger
+            .fail_backup_record(id, "connection refused")
+            .await
+            .unwrap();
+
+        let last_success = logger.last_successful_backup().await.unwrap();
+        assert!(
+            last_success.is_none(),
+            "Should return None when no successful backups exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_backup_history_respects_limit() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        for i in 0..5 {
+            let id = logger.start_backup_record("scheduled").await.unwrap();
+            logger
+                .complete_backup_record(id, 100 * (i + 1), &format!("backups/{i}.tar.gz"), "{}")
+                .await
+                .unwrap();
+        }
+
+        let history = logger.list_backup_history(3).await.unwrap();
+        assert_eq!(history.len(), 3, "Should return at most 3 records");
+        // Most recent first
+        assert_eq!(history[0].size_bytes, Some(500));
+        assert_eq!(history[1].size_bytes, Some(400));
+        assert_eq!(history[2].size_bytes, Some(300));
+    }
+
+    #[tokio::test]
+    async fn test_prune_backup_history_noop_when_fewer_than_keep() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        let id = logger.start_backup_record("manual").await.unwrap();
+        logger
+            .complete_backup_record(id, 256, "backups/only.tar.gz", "{}")
+            .await
+            .unwrap();
+
+        // Prune with keep=10, but only 1 record exists
+        logger.prune_backup_history(10).await.unwrap();
+        let history = logger.list_backup_history(10).await.unwrap();
+        assert_eq!(history.len(), 1, "Should not delete when fewer than keep");
+        assert_eq!(history[0].size_bytes, Some(256));
+    }
 }

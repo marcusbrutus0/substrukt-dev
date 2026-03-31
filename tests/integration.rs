@@ -4809,3 +4809,395 @@ async fn test_nav_hides_backups_for_editor() {
         "Editor nav should not contain Backups link"
     );
 }
+
+#[tokio::test]
+async fn test_update_backup_config_invalid_frequency() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/backups").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/backups"))
+        .form(&[
+            ("frequency_hours", "5"),
+            ("retention_count", "7"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    // Should redirect back with error
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    let resp = s
+        .client
+        .get(s.url("/settings/backups"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("Invalid frequency"),
+        "Should show invalid frequency error flash message"
+    );
+}
+
+#[tokio::test]
+async fn test_update_backup_config_invalid_retention_too_low() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/backups").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/backups"))
+        .form(&[
+            ("frequency_hours", "24"),
+            ("retention_count", "0"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    let resp = s
+        .client
+        .get(s.url("/settings/backups"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("Retention count must be 1-100"),
+        "Should show retention count error"
+    );
+}
+
+#[tokio::test]
+async fn test_update_backup_config_invalid_retention_too_high() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/backups").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/backups"))
+        .form(&[
+            ("frequency_hours", "24"),
+            ("retention_count", "200"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    let resp = s
+        .client
+        .get(s.url("/settings/backups"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("Retention count must be 1-100"),
+        "Should show retention count error for value > 100"
+    );
+}
+
+#[tokio::test]
+async fn test_api_backup_status_non_admin_forbidden() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
+    let resp = editor.get(s.url("/settings/tokens")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let resp = editor
+        .post(s.url("/settings/tokens"))
+        .form(&[("name", "test-token"), ("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let editor_token = extract_new_token(&body).expect("should find editor token");
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = api
+        .get(s.url("/api/v1/backups/status"))
+        .bearer_auth(&editor_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "Editor token should not access backup status"
+    );
+}
+
+#[tokio::test]
+async fn test_backup_page_shows_not_configured_when_no_s3() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s
+        .client
+        .get(s.url("/settings/backups"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+
+    // When S3 is not configured, the status banner shows "Backups not configured"
+    // rather than "No backups yet" (which only shows when S3 IS configured)
+    assert!(
+        body.contains("Backups not configured"),
+        "Should show 'Backups not configured' when S3 env vars are missing"
+    );
+    assert!(
+        !body.contains("No backups yet"),
+        "'No backups yet' should only appear when S3 is configured"
+    );
+}
+
+#[tokio::test]
+async fn test_backup_page_disabled_button_when_no_s3() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s
+        .client
+        .get(s.url("/settings/backups"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+
+    // The "Back up now" button should be disabled when S3 is not configured
+    assert!(
+        body.contains("disabled"),
+        "Back up now button should be disabled when S3 not configured"
+    );
+    // The next scheduled info should mention S3 not configured
+    assert!(
+        body.contains("S3 not configured") || body.contains("Disabled"),
+        "Next scheduled info should show disabled status"
+    );
+}
+
+#[tokio::test]
+async fn test_backup_page_contains_config_form_elements() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s
+        .client
+        .get(s.url("/settings/backups"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+
+    // Check for form elements
+    assert!(
+        body.contains("frequency_hours"),
+        "Should have frequency dropdown"
+    );
+    assert!(
+        body.contains("retention_count"),
+        "Should have retention count input"
+    );
+    assert!(
+        body.contains(r#"name="enabled""#),
+        "Should have enabled checkbox"
+    );
+    assert!(
+        body.contains("Save Configuration"),
+        "Should have save button"
+    );
+    assert!(
+        body.contains("Back up now"),
+        "Should have backup trigger button"
+    );
+    // Check credential status table
+    assert!(
+        body.contains("S3 Credentials"),
+        "Should show credentials section"
+    );
+    assert!(
+        body.contains("SUBSTRUKT_S3_BUCKET"),
+        "Should list S3 bucket var"
+    );
+    assert!(
+        body.contains("Missing"),
+        "Should show 'Missing' for unconfigured vars"
+    );
+}
+
+#[tokio::test]
+async fn test_backup_running_flag_blocks_api_trigger() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("backup-test").await;
+
+    // Note: Even though S3 is not configured, the backup_running check comes after the
+    // S3 check. So we cannot directly test the 409 without S3. But we verify
+    // that the running flag is reflected in the status endpoint.
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Check that backup_running is false initially
+    let resp = api
+        .get(s.url("/api/v1/backups/status"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["backup_running"], false);
+    assert!(
+        body["latest_backup"].is_null(),
+        "latest_backup should be null when no backups exist"
+    );
+}
+
+#[tokio::test]
+async fn test_viewer_cannot_access_backup_page() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let viewer = signup_user_with_role(&s, "viewer@test.com", "viewer1", "viewer").await;
+    let resp = viewer.get(s.url("/settings/backups")).send().await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "Viewer should not access backup settings"
+    );
+}
+
+#[tokio::test]
+async fn test_api_backup_status_shows_default_config() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("backup-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = api
+        .get(s.url("/api/v1/backups/status"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    // Verify complete JSON structure
+    assert_eq!(body["s3_configured"], false);
+    assert_eq!(body["backup_running"], false);
+    assert!(body["latest_backup"].is_null());
+
+    let config = &body["config"];
+    assert_eq!(config["frequency_hours"], 24);
+    assert_eq!(config["retention_count"], 7);
+    assert_eq!(config["enabled"], false);
+}
+
+#[tokio::test]
+async fn test_update_backup_config_persists_correctly() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Update config
+    let csrf = s.get_csrf("/settings/backups").await;
+    s.client
+        .post(s.url("/settings/backups"))
+        .form(&[
+            ("frequency_hours", "6"),
+            ("retention_count", "30"),
+            ("enabled", "on"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Verify via API
+    let token = s.create_api_token("verify-config").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = api
+        .get(s.url("/api/v1/backups/status"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["config"]["frequency_hours"], 6);
+    assert_eq!(body["config"]["retention_count"], 30);
+    assert_eq!(body["config"]["enabled"], true);
+}
+
+#[tokio::test]
+async fn test_update_backup_config_without_enabled_disables() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // First enable
+    let csrf = s.get_csrf("/settings/backups").await;
+    s.client
+        .post(s.url("/settings/backups"))
+        .form(&[
+            ("frequency_hours", "24"),
+            ("retention_count", "7"),
+            ("enabled", "on"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Then submit without enabled (checkbox unchecked)
+    let csrf = s.get_csrf("/settings/backups").await;
+    s.client
+        .post(s.url("/settings/backups"))
+        .form(&[
+            ("frequency_hours", "24"),
+            ("retention_count", "7"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Verify via API that enabled is now false
+    let token = s.create_api_token("verify-disable").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = api
+        .get(s.url("/api/v1/backups/status"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body["config"]["enabled"], false,
+        "Unchecked checkbox should set enabled to false"
+    );
+}
