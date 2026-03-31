@@ -1,0 +1,139 @@
+{% extends base_template %}
+{% block title %}Deployments — Substrukt{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold tracking-tight">Deployments</h1>
+  {% if user_role == "admin" %}
+  <a href="/deployments/new"
+    class="px-4 py-2 bg-accent text-white rounded-md hover:bg-accent-hover text-sm font-medium">
+    Create Deployment
+  </a>
+  {% endif %}
+</div>
+
+{% if flash_message %}
+<div class="mb-4 p-4 rounded {% if flash_kind == 'success' %}bg-success-soft text-success{% else %}bg-danger-soft text-danger{% endif %}">
+  {{ flash_message }}
+</div>
+{% endif %}
+
+{% if deployments %}
+<div class="bg-card border border-border-light rounded-lg overflow-hidden mb-8">
+  <table class="w-full">
+    <thead class="bg-card-alt">
+      <tr>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted w-8"></th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Name</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">URL</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Mode</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Drafts</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Last Fired</th>
+        <th class="px-4 py-2.5 text-right text-sm font-medium text-muted">Actions</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-border-light">
+      {% for dep in deployments %}
+      <tr class="hover:bg-card-alt">
+        <td class="px-4 py-2.5">
+          <span class="w-2.5 h-2.5 rounded-full inline-block {% if dep.is_dirty %}bg-accent{% else %}bg-success{% endif %}"
+            title="{% if dep.is_dirty %}Changes pending{% else %}Up to date{% endif %}"></span>
+        </td>
+        <td class="px-4 py-2.5 text-sm font-medium">{{ dep.name }}</td>
+        <td class="px-4 py-2.5 text-sm text-muted font-mono truncate max-w-xs" title="{{ dep.webhook_url }}">
+          {{ dep.webhook_url[:40] }}{% if dep.webhook_url|length > 40 %}...{% endif %}
+        </td>
+        <td class="px-4 py-2.5 text-sm">
+          {% if dep.auto_deploy %}
+          <span class="px-2 py-0.5 rounded text-xs font-medium bg-accent-soft text-accent">Auto ({{ dep.debounce_seconds }}s)</span>
+          {% else %}
+          <span class="px-2 py-0.5 rounded text-xs font-medium bg-card-alt text-muted">Manual</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-2.5 text-sm">
+          {% if dep.include_drafts %}
+          <span class="px-2 py-0.5 rounded text-xs font-medium bg-accent-soft text-accent">Yes</span>
+          {% else %}
+          <span class="text-muted text-xs">No</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-2.5 text-sm text-muted font-mono">
+          {% if dep.last_fired %}{{ dep.last_fired[:19] }}{% else %}Never{% endif %}
+        </td>
+        <td class="px-4 py-2.5 text-right">
+          <div class="flex items-center justify-end gap-2">
+            <form method="post" action="/deployments/{{ dep.slug }}/fire" class="inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button type="submit" class="text-accent hover:underline text-sm font-medium">Fire</button>
+            </form>
+            {% if user_role == "admin" %}
+            <a href="/deployments/{{ dep.slug }}/edit" class="text-muted hover:text-fg text-sm">Edit</a>
+            <form method="post" action="/deployments/{{ dep.slug }}/delete" class="inline"
+              onsubmit="return confirm('Delete deployment {{ dep.name }}?')">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button type="submit" class="text-danger hover:underline text-sm">Delete</button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted mb-8">
+  No deployments configured. Create one to start deploying.
+</div>
+{% endif %}
+
+{% if history %}
+<h2 class="text-lg font-semibold mb-4">Webhook History</h2>
+<div class="bg-card border border-border-light rounded-lg overflow-hidden">
+  <table class="w-full">
+    <thead class="bg-card-alt">
+      <tr>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Time</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Deployment</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Source</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Status</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">HTTP</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Time (ms)</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Attempts</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-border-light">
+      {% for entry in history %}
+      <tr class="hover:bg-card-alt">
+        <td class="px-4 py-2.5 text-sm text-muted font-mono">{{ entry.created_at[:19] }}</td>
+        <td class="px-4 py-2.5 text-sm">
+          <span class="px-2 py-0.5 rounded text-xs font-medium bg-accent-soft text-accent">{{ entry.deployment_name }}</span>
+        </td>
+        <td class="px-4 py-2.5 text-sm text-muted">{{ entry.trigger_source }}</td>
+        <td class="px-4 py-2.5 text-sm">
+          {% if entry.status == "success" %}
+          <span class="text-success font-medium">Success</span>
+          {% else %}
+          <span class="text-danger font-medium">Failed</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-2.5 text-sm text-muted font-mono">{{ entry.http_status if entry.http_status else "\u2014" }}</td>
+        <td class="px-4 py-2.5 text-sm text-muted font-mono">{{ entry.response_time_ms if entry.response_time_ms else "\u2014" }}</td>
+        <td class="px-4 py-2.5 text-sm">
+          {% if entry.attempt_count > 1 %}
+          <span class="px-2 py-0.5 rounded bg-card-alt text-xs font-medium">{{ entry.attempt_count }} attempts</span>
+          {% else %}
+          <span class="text-muted text-xs">1</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% if entry.status == "failed" and entry.error_message %}
+      <tr class="bg-card">
+        <td colspan="7" class="px-4 py-2 text-xs text-danger font-mono">{{ entry.error_message }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
