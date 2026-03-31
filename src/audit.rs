@@ -135,21 +135,35 @@ impl AuditLogger {
             .fetch_optional(self.pool.as_ref())
             .await?;
 
-        Ok(row.map(|(id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at)| {
-            Deployment {
+        Ok(row.map(
+            |(
                 id,
                 app_id,
                 name,
                 slug,
                 webhook_url,
                 webhook_auth_token,
-                include_drafts: include_drafts != 0,
-                auto_deploy: auto_deploy != 0,
+                include_drafts,
+                auto_deploy,
                 debounce_seconds,
                 created_at,
                 updated_at,
-            }
-        }))
+            )| {
+                Deployment {
+                    id,
+                    app_id,
+                    name,
+                    slug,
+                    webhook_url,
+                    webhook_auth_token,
+                    include_drafts: include_drafts != 0,
+                    auto_deploy: auto_deploy != 0,
+                    debounce_seconds,
+                    created_at,
+                    updated_at,
+                }
+            },
+        ))
     }
 
     pub async fn get_deployment_by_id(&self, id: i64) -> eyre::Result<Option<Deployment>> {
@@ -161,21 +175,35 @@ impl AuditLogger {
             .fetch_optional(self.pool.as_ref())
             .await?;
 
-        Ok(row.map(|(id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at)| {
-            Deployment {
+        Ok(row.map(
+            |(
                 id,
                 app_id,
                 name,
                 slug,
                 webhook_url,
                 webhook_auth_token,
-                include_drafts: include_drafts != 0,
-                auto_deploy: auto_deploy != 0,
+                include_drafts,
+                auto_deploy,
                 debounce_seconds,
                 created_at,
                 updated_at,
-            }
-        }))
+            )| {
+                Deployment {
+                    id,
+                    app_id,
+                    name,
+                    slug,
+                    webhook_url,
+                    webhook_auth_token,
+                    include_drafts: include_drafts != 0,
+                    auto_deploy: auto_deploy != 0,
+                    debounce_seconds,
+                    created_at,
+                    updated_at,
+                }
+            },
+        ))
     }
 
     pub async fn list_deployments(&self) -> eyre::Result<Vec<Deployment>> {
@@ -186,21 +214,38 @@ impl AuditLogger {
             .fetch_all(self.pool.as_ref())
             .await?;
 
-        Ok(rows.into_iter().map(|(id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at)| {
-            Deployment {
-                id,
-                app_id,
-                name,
-                slug,
-                webhook_url,
-                webhook_auth_token,
-                include_drafts: include_drafts != 0,
-                auto_deploy: auto_deploy != 0,
-                debounce_seconds,
-                created_at,
-                updated_at,
-            }
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    app_id,
+                    name,
+                    slug,
+                    webhook_url,
+                    webhook_auth_token,
+                    include_drafts,
+                    auto_deploy,
+                    debounce_seconds,
+                    created_at,
+                    updated_at,
+                )| {
+                    Deployment {
+                        id,
+                        app_id,
+                        name,
+                        slug,
+                        webhook_url,
+                        webhook_auth_token,
+                        include_drafts: include_drafts != 0,
+                        auto_deploy: auto_deploy != 0,
+                        debounce_seconds,
+                        created_at,
+                        updated_at,
+                    }
+                },
+            )
+            .collect())
     }
 
     pub async fn update_deployment(
@@ -248,21 +293,38 @@ impl AuditLogger {
             .fetch_all(self.pool.as_ref())
             .await?;
 
-        Ok(rows.into_iter().map(|(id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at)| {
-            Deployment {
-                id,
-                app_id,
-                name,
-                slug,
-                webhook_url,
-                webhook_auth_token,
-                include_drafts: include_drafts != 0,
-                auto_deploy: auto_deploy != 0,
-                debounce_seconds,
-                created_at,
-                updated_at,
-            }
-        }).collect())
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    app_id,
+                    name,
+                    slug,
+                    webhook_url,
+                    webhook_auth_token,
+                    include_drafts,
+                    auto_deploy,
+                    debounce_seconds,
+                    created_at,
+                    updated_at,
+                )| {
+                    Deployment {
+                        id,
+                        app_id,
+                        name,
+                        slug,
+                        webhook_url,
+                        webhook_auth_token,
+                        include_drafts: include_drafts != 0,
+                        auto_deploy: auto_deploy != 0,
+                        debounce_seconds,
+                        created_at,
+                        updated_at,
+                    }
+                },
+            )
+            .collect())
     }
 
     // ── Dirty detection ──────────────────────────────────────────
@@ -607,18 +669,16 @@ mod tests {
         assert_eq!(fetched.id, dep.id);
         assert_eq!(fetched.name, "Production");
 
-        let fetched2 = logger
-            .get_deployment_by_id(dep.id)
-            .await
-            .unwrap()
-            .unwrap();
+        let fetched2 = logger.get_deployment_by_id(dep.id).await.unwrap().unwrap();
         assert_eq!(fetched2.slug, "production");
 
-        assert!(logger
-            .get_deployment_by_slug("nonexistent")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            logger
+                .get_deployment_by_slug("nonexistent")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -832,7 +892,16 @@ mod tests {
             .await
             .unwrap();
         let id = logger
-            .record_webhook_attempt(dep.id, "manual", "success", Some(200), None, Some(150), 1, "g1")
+            .record_webhook_attempt(
+                dep.id,
+                "manual",
+                "success",
+                Some(200),
+                None,
+                Some(150),
+                1,
+                "g1",
+            )
             .await
             .unwrap();
         assert!(id > 0);
@@ -852,11 +921,29 @@ mod tests {
             .unwrap();
 
         logger
-            .record_webhook_attempt(dep1.id, "manual", "success", Some(200), None, Some(100), 1, "g1")
+            .record_webhook_attempt(
+                dep1.id,
+                "manual",
+                "success",
+                Some(200),
+                None,
+                Some(100),
+                1,
+                "g1",
+            )
             .await
             .unwrap();
         logger
-            .record_webhook_attempt(dep2.id, "manual", "failed", Some(500), Some("err"), Some(200), 1, "g2")
+            .record_webhook_attempt(
+                dep2.id,
+                "manual",
+                "failed",
+                Some(500),
+                Some("err"),
+                Some(200),
+                1,
+                "g2",
+            )
             .await
             .unwrap();
 
@@ -895,7 +982,16 @@ mod tests {
             .unwrap();
         logger.mark_deployment_fired(dep.id).await.unwrap();
         logger
-            .record_webhook_attempt(dep.id, "manual", "success", Some(200), None, Some(100), 1, "g1")
+            .record_webhook_attempt(
+                dep.id,
+                "manual",
+                "success",
+                Some(200),
+                None,
+                Some(100),
+                1,
+                "g1",
+            )
             .await
             .unwrap();
         logger.delete_deployment(dep.id).await.unwrap();

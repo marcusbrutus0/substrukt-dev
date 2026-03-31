@@ -30,8 +30,8 @@ impl TestServer {
             Some(db_path),
             Some(0),
             false,
-            10,         // version_history_count
-            10,         // max_body_size_mb
+            10, // version_history_count
+            10, // max_body_size_mb
         );
         config.ensure_dirs().unwrap();
 
@@ -3783,12 +3783,7 @@ async fn test_create_deployment_via_ui() {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     assert_eq!(resp.headers().get("location").unwrap(), "/deployments");
 
-    let resp = s
-        .client
-        .get(s.url("/deployments"))
-        .send()
-        .await
-        .unwrap();
+    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("Production"));
 }
@@ -3797,7 +3792,8 @@ async fn test_create_deployment_via_ui() {
 async fn test_create_deployment_duplicate_slug() {
     let s = TestServer::start().await;
     s.setup_admin().await;
-    s.create_deployment("Prod", "prod", "https://example.com/hook").await;
+    s.create_deployment("Prod", "prod", "https://example.com/hook")
+        .await;
 
     let csrf = s.get_csrf("/deployments/new").await;
     let resp = s
@@ -3842,7 +3838,8 @@ async fn test_create_deployment_invalid_slug() {
 async fn test_edit_deployment() {
     let s = TestServer::start().await;
     s.setup_admin().await;
-    s.create_deployment("Staging", "staging", "https://example.com/hook").await;
+    s.create_deployment("Staging", "staging", "https://example.com/hook")
+        .await;
 
     // Edit page loads
     let resp = s
@@ -3872,12 +3869,7 @@ async fn test_edit_deployment() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
-    let resp = s
-        .client
-        .get(s.url("/deployments"))
-        .send()
-        .await
-        .unwrap();
+    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("Updated Staging"));
 }
@@ -3886,7 +3878,8 @@ async fn test_edit_deployment() {
 async fn test_delete_deployment() {
     let s = TestServer::start().await;
     s.setup_admin().await;
-    s.create_deployment("ToDelete", "to-delete", "https://example.com/hook").await;
+    s.create_deployment("ToDelete", "to-delete", "https://example.com/hook")
+        .await;
 
     let csrf = s.get_csrf("/deployments").await;
     let resp = s
@@ -3898,12 +3891,7 @@ async fn test_delete_deployment() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
-    let resp = s
-        .client
-        .get(s.url("/deployments"))
-        .send()
-        .await
-        .unwrap();
+    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
     let body = resp.text().await.unwrap();
     // Check the deployment row is gone from the table (not just the flash message)
     assert!(
@@ -3975,7 +3963,8 @@ async fn test_fire_deployment_via_api() {
 
     let s = TestServer::start().await;
     s.setup_admin().await;
-    s.create_deployment("Staging", "staging", &webhook_url).await;
+    s.create_deployment("Staging", "staging", &webhook_url)
+        .await;
     let token = s.create_api_token("deploy-test").await;
 
     let api = Client::builder()
@@ -4003,8 +3992,10 @@ async fn test_fire_deployment_via_api() {
 async fn test_list_deployments_api() {
     let s = TestServer::start().await;
     s.setup_admin().await;
-    s.create_deployment("Alpha", "alpha", "https://a.com/hook").await;
-    s.create_deployment("Beta", "beta", "https://b.com/hook").await;
+    s.create_deployment("Alpha", "alpha", "https://a.com/hook")
+        .await;
+    s.create_deployment("Beta", "beta", "https://b.com/hook")
+        .await;
     let token = s.create_api_token("list-test").await;
 
     let api = Client::builder()
@@ -4033,11 +4024,7 @@ async fn test_viewer_cannot_access_deployments() {
     s.setup_admin().await;
 
     let viewer = signup_user_with_role(&s, "viewer-dep@test.com", "viewer1", "viewer").await;
-    let resp = viewer
-        .get(s.url("/deployments"))
-        .send()
-        .await
-        .unwrap();
+    let resp = viewer.get(s.url("/deployments")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
@@ -4045,32 +4032,21 @@ async fn test_viewer_cannot_access_deployments() {
 async fn test_editor_can_see_but_not_crud_deployments() {
     let s = TestServer::start().await;
     s.setup_admin().await;
-    s.create_deployment("Existing", "existing", "https://example.com/hook").await;
+    s.create_deployment("Existing", "existing", "https://example.com/hook")
+        .await;
 
     let editor = signup_user_with_role(&s, "editor-dep@test.com", "editor1", "editor").await;
 
     // Editor CAN see deployments list
-    let resp = editor
-        .get(s.url("/deployments"))
-        .send()
-        .await
-        .unwrap();
+    let resp = editor.get(s.url("/deployments")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     // Editor CANNOT create deployments
-    let resp = editor
-        .get(s.url("/deployments/new"))
-        .send()
-        .await
-        .unwrap();
+    let resp = editor.get(s.url("/deployments/new")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     // Editor CAN fire deployments (would get redirect to /deployments)
-    let csrf_resp = editor
-        .get(s.url("/deployments"))
-        .send()
-        .await
-        .unwrap();
+    let csrf_resp = editor.get(s.url("/deployments")).send().await.unwrap();
     let body = csrf_resp.text().await.unwrap();
     let csrf = extract_csrf_token(&body).unwrap();
 
@@ -4228,7 +4204,8 @@ async fn test_fire_deployment_include_drafts_in_payload() {
 async fn test_fire_deployment_unreachable_url() {
     let s = TestServer::start().await;
     s.setup_admin().await;
-    s.create_deployment("Unreachable", "unreachable", "http://127.0.0.1:1/hook").await;
+    s.create_deployment("Unreachable", "unreachable", "http://127.0.0.1:1/hook")
+        .await;
 
     // Fire via UI — should redirect with error flash
     let csrf = s.get_csrf("/deployments").await;
@@ -4242,12 +4219,7 @@ async fn test_fire_deployment_unreachable_url() {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
     // Follow redirect — flash should indicate failure
-    let resp = s
-        .client
-        .get(s.url("/deployments"))
-        .send()
-        .await
-        .unwrap();
+    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("failed") || body.contains("retries"));
 

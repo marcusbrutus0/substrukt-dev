@@ -957,23 +957,15 @@ async fn api_fire_deployment(
     .await
     {
         Ok(_) => {
-            state.audit.log(
-                "api",
-                "deployment_fired",
-                "deployment",
-                &dep.slug,
-                None,
-            );
+            state
+                .audit
+                .log("api", "deployment_fired", "deployment", &dep.slug, None);
             Json(serde_json::json!({"status": "triggered"})).into_response()
         }
         Err(e) => {
-            state.audit.log(
-                "api",
-                "deployment_fired",
-                "deployment",
-                &dep.slug,
-                None,
-            );
+            state
+                .audit
+                .log("api", "deployment_fired", "deployment", &dep.slug, None);
             (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({"error": e.to_string()})),

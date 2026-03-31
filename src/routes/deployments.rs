@@ -71,7 +71,7 @@ async fn list_deployments(
                 "SELECT last_fired_at FROM deployment_state WHERE deployment_id = ?",
             )
             .bind(dep.id)
-            .fetch_optional(&*state.audit.pool_ref())
+            .fetch_optional(state.audit.pool_ref())
             .await
             .unwrap_or(None);
             row.and_then(|(ts,)| ts)
@@ -176,7 +176,14 @@ async fn create_deployment(
     let webhook_url = form.webhook_url.trim();
 
     if name.is_empty() || webhook_url.is_empty() {
-        return render_form_with_error(&state, &session, is_htmx, "Name and Webhook URL are required", None).await;
+        return render_form_with_error(
+            &state,
+            &session,
+            is_htmx,
+            "Name and Webhook URL are required",
+            None,
+        )
+        .await;
     }
 
     if let Err(e) = validate_deployment_slug(slug) {
@@ -217,7 +224,12 @@ async fn create_deployment(
             if dep.auto_deploy {
                 webhooks::spawn_auto_deploy_task(&state, dep);
             }
-            auth::set_flash(&session, "success", &format!("Deployment '{}' created", name)).await;
+            auth::set_flash(
+                &session,
+                "success",
+                &format!("Deployment '{}' created", name),
+            )
+            .await;
             Ok(Redirect::to("/deployments").into_response())
         }
         Err(e) => {
@@ -248,7 +260,11 @@ async fn edit_deployment_form(
         .map_err(|e| format!("DB error: {e}"))?;
 
     let Some(dep) = dep else {
-        return Ok((axum::http::StatusCode::NOT_FOUND, Html("Not found".to_string())).into_response());
+        return Ok((
+            axum::http::StatusCode::NOT_FOUND,
+            Html("Not found".to_string()),
+        )
+            .into_response());
     };
 
     let has_token = dep.webhook_auth_token.is_some();
@@ -297,7 +313,11 @@ async fn update_deployment(
         .map_err(|e| format!("DB error: {e}"))?;
 
     let Some(dep) = dep else {
-        return Ok((axum::http::StatusCode::NOT_FOUND, Html("Not found".to_string())).into_response());
+        return Ok((
+            axum::http::StatusCode::NOT_FOUND,
+            Html("Not found".to_string()),
+        )
+            .into_response());
     };
 
     let name = form.name.trim();
@@ -305,7 +325,14 @@ async fn update_deployment(
     let webhook_url = form.webhook_url.trim();
 
     if name.is_empty() || webhook_url.is_empty() {
-        return render_form_with_error(&state, &session, is_htmx, "Name and Webhook URL are required", Some(&dep)).await;
+        return render_form_with_error(
+            &state,
+            &session,
+            is_htmx,
+            "Name and Webhook URL are required",
+            Some(&dep),
+        )
+        .await;
     }
 
     if let Err(e) = validate_deployment_slug(new_slug) {
@@ -361,13 +388,16 @@ async fn update_deployment(
 
     // Cancel old auto-deploy task, optionally spawn new one
     webhooks::cancel_auto_deploy_task(&state, dep.id);
-    if auto_deploy {
-        if let Ok(Some(updated_dep)) = state.audit.get_deployment_by_id(dep.id).await {
-            webhooks::spawn_auto_deploy_task(&state, updated_dep);
-        }
+    if auto_deploy && let Ok(Some(updated_dep)) = state.audit.get_deployment_by_id(dep.id).await {
+        webhooks::spawn_auto_deploy_task(&state, updated_dep);
     }
 
-    auth::set_flash(&session, "success", &format!("Deployment '{}' updated", name)).await;
+    auth::set_flash(
+        &session,
+        "success",
+        &format!("Deployment '{}' updated", name),
+    )
+    .await;
     Ok(Redirect::to("/deployments").into_response())
 }
 
@@ -385,7 +415,11 @@ async fn delete_deployment(
         .map_err(|e| format!("DB error: {e}"))?;
 
     let Some(dep) = dep else {
-        return Ok((axum::http::StatusCode::NOT_FOUND, Html("Not found".to_string())).into_response());
+        return Ok((
+            axum::http::StatusCode::NOT_FOUND,
+            Html("Not found".to_string()),
+        )
+            .into_response());
     };
 
     webhooks::cancel_auto_deploy_task(&state, dep.id);
@@ -403,7 +437,12 @@ async fn delete_deployment(
         Some(&serde_json::json!({"name": dep.name}).to_string()),
     );
 
-    auth::set_flash(&session, "success", &format!("Deployment '{}' deleted", dep.name)).await;
+    auth::set_flash(
+        &session,
+        "success",
+        &format!("Deployment '{}' deleted", dep.name),
+    )
+    .await;
     Ok(Redirect::to("/deployments").into_response())
 }
 
@@ -421,7 +460,11 @@ async fn fire_deployment(
         .map_err(|e| format!("DB error: {e}"))?;
 
     let Some(dep) = dep else {
-        return Ok((axum::http::StatusCode::NOT_FOUND, Html("Not found".to_string())).into_response());
+        return Ok((
+            axum::http::StatusCode::NOT_FOUND,
+            Html("Not found".to_string()),
+        )
+            .into_response());
     };
 
     match webhooks::fire_webhook(

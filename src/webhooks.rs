@@ -134,10 +134,7 @@ pub async fn fire_webhook(
     let group_id_clone = group_id.clone();
 
     tokio::spawn(async move {
-        let delays = [
-            Duration::from_secs(5),
-            Duration::from_secs(30),
-        ];
+        let delays = [Duration::from_secs(5), Duration::from_secs(30)];
 
         for (i, delay) in delays.iter().enumerate() {
             tokio::time::sleep(*delay).await;
