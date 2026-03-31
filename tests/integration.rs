@@ -23,22 +23,6 @@ struct TestServer {
 
 impl TestServer {
     async fn start() -> Self {
-        Self::start_with_webhooks(None, None).await
-    }
-
-    async fn start_with_webhooks(
-        staging_webhook_url: Option<String>,
-        production_webhook_url: Option<String>,
-    ) -> Self {
-        Self::start_with_webhook_auth(staging_webhook_url, None, production_webhook_url, None).await
-    }
-
-    async fn start_with_webhook_auth(
-        staging_webhook_url: Option<String>,
-        staging_webhook_auth_token: Option<String>,
-        production_webhook_url: Option<String>,
-        production_webhook_auth_token: Option<String>,
-    ) -> Self {
         let data_dir = tempfile::tempdir().unwrap();
         let db_path = data_dir.path().join("test.db");
         let config = Config::new(
@@ -46,13 +30,8 @@ impl TestServer {
             Some(db_path),
             Some(0),
             false,
-            staging_webhook_url,
-            staging_webhook_auth_token,
-            production_webhook_url,
-            production_webhook_auth_token,
-            Some(3600), // long interval so cron doesn't fire during tests
-            10,         // version_history_count
-            10,         // max_body_size_mb
+            10, // version_history_count
+            10, // max_body_size_mb
         );
         config.ensure_dirs().unwrap();
 
@@ -65,8 +44,7 @@ impl TestServer {
         let audit_pool = substrukt::audit::init_pool(&audit_db_path).await.unwrap();
         let audit_logger = substrukt::audit::AuditLogger::new(audit_pool);
 
-        let reloader =
-            templates::create_reloader(config.schemas_dir(), audit_logger.clone(), config.clone());
+        let reloader = templates::create_reloader(config.schemas_dir());
         let content_cache = DashMap::new();
         cache::populate(&content_cache, &config.schemas_dir(), &config.content_dir());
 
@@ -84,6 +62,7 @@ impl TestServer {
             metrics_handle,
             audit: audit_logger,
             http_client: reqwest::Client::new(),
+            deploy_tasks: DashMap::new(),
         });
 
         let app = routes::build_router(state).layer(session_layer);
@@ -162,6 +141,22 @@ impl TestServer {
             .unwrap();
         let body = resp.text().await.unwrap();
         extract_new_token(&body).expect("should find new token in response")
+    }
+
+    /// Create a deployment via the admin UI.
+    async fn create_deployment(&self, name: &str, slug: &str, webhook_url: &str) {
+        let csrf = self.get_csrf("/deployments/new").await;
+        self.client
+            .post(self.url("/deployments/new"))
+            .form(&[
+                ("name", name),
+                ("slug", slug),
+                ("webhook_url", webhook_url),
+                ("_csrf", &csrf),
+            ])
+            .send()
+            .await
+            .unwrap();
     }
 }
 
@@ -1322,229 +1317,7 @@ async fn single_full_workflow() {
 
 // ── Publish webhook tests ────────────────────────────────────
 
-#[tokio::test]
-async fn test_publish_api_no_webhook_configured() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-    let token = s.create_api_token("publish-test").await;
-
-    let api = Client::builder()
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    // Staging publish should 404 when no webhook URL configured
-    let resp = api
-        .post(s.url("/api/v1/publish/staging"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-
-    // Production publish should 404 when no webhook URL configured
-    let resp = api
-        .post(s.url("/api/v1/publish/production"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-
-    // Unknown environment should 404
-    let resp = api
-        .post(s.url("/api/v1/publish/unknown"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn test_publish_api_fires_webhook() {
-    // Start a mock webhook receiver
-    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<String>(1);
-    let mock_app = axum::Router::new().route(
-        "/webhook",
-        axum::routing::post(move |body: String| {
-            let tx = webhook_tx.clone();
-            async move {
-                let _ = tx.send(body).await;
-                "ok"
-            }
-        }),
-    );
-    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mock_addr = mock_listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(mock_listener, mock_app).await.unwrap() });
-
-    let webhook_url = format!("http://{mock_addr}/webhook");
-
-    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
-    s.setup_admin().await;
-    let token = s.create_api_token("webhook-test").await;
-    s.create_schema(BLOG_SCHEMA).await;
-
-    let api = Client::builder()
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    // Fire staging publish
-    let resp = api
-        .post(s.url("/api/v1/publish/staging"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["status"], "triggered");
-
-    // Verify webhook was received
-    let payload = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
-    assert_eq!(payload["event_type"], "substrukt-publish");
-    assert_eq!(payload["environment"], "staging");
-    assert_eq!(payload["triggered_by"], "manual");
-}
-
-#[tokio::test]
-async fn test_webhook_sends_auth_token() {
-    // Mock webhook that captures the Authorization header
-    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<Option<String>>(1);
-    let mock_app = axum::Router::new().route(
-        "/webhook",
-        axum::routing::post(move |headers: axum::http::HeaderMap, _body: String| {
-            let tx = webhook_tx.clone();
-            async move {
-                let auth = headers
-                    .get("authorization")
-                    .map(|v| v.to_str().unwrap().to_string());
-                let _ = tx.send(auth).await;
-                "ok"
-            }
-        }),
-    );
-    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mock_addr = mock_listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(mock_listener, mock_app).await.unwrap() });
-
-    let webhook_url = format!("http://{mock_addr}/webhook");
-    let s = TestServer::start_with_webhook_auth(
-        Some(webhook_url.clone()),
-        Some("ghp_test_token_123".to_string()),
-        Some(webhook_url),
-        None,
-    )
-    .await;
-    s.setup_admin().await;
-    let token = s.create_api_token("auth-test").await;
-    s.create_schema(BLOG_SCHEMA).await;
-
-    let api = Client::builder()
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    // Fire staging — should include auth token
-    let resp = api
-        .post(s.url("/api/v1/publish/staging"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let auth_header = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(auth_header.as_deref(), Some("Bearer ghp_test_token_123"));
-
-    // Fire production — no auth token configured
-    let resp = api
-        .post(s.url("/api/v1/publish/production"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    let auth_header = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(
-        auth_header.is_none(),
-        "production webhook should have no auth header"
-    );
-}
-
-#[tokio::test]
-async fn test_dirty_state_tracking() {
-    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<String>(10);
-    let mock_app = axum::Router::new().route(
-        "/webhook",
-        axum::routing::post(move |body: String| {
-            let tx = webhook_tx.clone();
-            async move {
-                let _ = tx.send(body).await;
-                "ok"
-            }
-        }),
-    );
-    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mock_addr = mock_listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(mock_listener, mock_app).await.unwrap() });
-
-    let webhook_url = format!("http://{mock_addr}/webhook");
-    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
-    s.setup_admin().await;
-    let token = s.create_api_token("dirty-test").await;
-    s.create_schema(BLOG_SCHEMA).await;
-
-    let api = Client::builder()
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    // Publish staging
-    let resp = api
-        .post(s.url("/api/v1/publish/staging"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let _ = webhook_rx.recv().await;
-
-    // Publish again — should still fire (buttons always fire)
-    let resp = api
-        .post(s.url("/api/v1/publish/staging"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let _ = webhook_rx.recv().await;
-
-    // Production was never published — fires too
-    let resp = api
-        .post(s.url("/api/v1/publish/production"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let payload = webhook_rx.recv().await.unwrap();
-    let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
-    assert_eq!(payload["environment"], "production");
-}
+// Old publish/webhook tests removed — replaced by deployment tests below
 
 // ── Invitation & Signup tests ────────────────────────────────
 
@@ -2522,173 +2295,7 @@ async fn rbac_api_token_inherits_role() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
-#[tokio::test]
-async fn webhook_fire_records_history() {
-    // Start a mock webhook receiver
-    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<String>(10);
-    let mock_app = axum::Router::new().route(
-        "/webhook",
-        axum::routing::post(move |body: String| {
-            let tx = webhook_tx.clone();
-            async move {
-                tx.send(body).await.ok();
-                "ok"
-            }
-        }),
-    );
-    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mock_addr = mock_listener.local_addr().unwrap();
-    tokio::spawn(axum::serve(mock_listener, mock_app).into_future());
-    let webhook_url = format!("http://{mock_addr}/webhook");
-
-    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
-    s.setup_admin().await;
-
-    // Trigger staging publish
-    let csrf = s.get_csrf("/").await;
-    s.client
-        .post(s.url("/publish/staging"))
-        .form(&[("_csrf", csrf.as_str())])
-        .send()
-        .await
-        .unwrap();
-
-    // Wait for webhook to arrive
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
-        .await
-        .unwrap();
-
-    // Check webhooks page shows history
-    let resp = s
-        .client
-        .get(s.url("/settings/webhooks"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("staging"));
-    assert!(body.contains("Success") || body.contains("success"));
-}
-
-#[tokio::test]
-async fn webhook_failure_triggers_retries() {
-    // Mock server that fails the first request, succeeds on 2nd (first retry at 5s)
-    let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-    let count_clone = call_count.clone();
-    let mock_app = axum::Router::new().route(
-        "/webhook",
-        axum::routing::post(move || {
-            let count = count_clone.clone();
-            async move {
-                let n = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if n < 1 {
-                    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "fail")
-                } else {
-                    (axum::http::StatusCode::OK, "ok")
-                }
-            }
-        }),
-    );
-    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mock_addr = mock_listener.local_addr().unwrap();
-    tokio::spawn(axum::serve(mock_listener, mock_app).into_future());
-    let webhook_url = format!("http://{mock_addr}/webhook");
-
-    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), None).await;
-    s.setup_admin().await;
-
-    // Trigger publish (first attempt will fail)
-    let csrf = s.get_csrf("/").await;
-    let resp = s
-        .client
-        .post(s.url("/publish/staging"))
-        .form(&[("_csrf", csrf.as_str())])
-        .send()
-        .await
-        .unwrap();
-    // Should redirect (flash says failed)
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-
-    // Wait for first retry to complete (5s delay + margin)
-    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
-
-    // Should have 2 total calls (initial + first retry at 5s which succeeds)
-    assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
-
-    // Webhooks page should show the group with multiple attempts
-    let resp = s
-        .client
-        .get(s.url("/settings/webhooks"))
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("2 attempts") || body.contains("attempts"));
-}
-
-#[tokio::test]
-async fn webhook_retry_button_fires_new_webhook() {
-    // Mock server that always succeeds
-    let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-    let count_clone = call_count.clone();
-    let mock_app = axum::Router::new().route(
-        "/webhook",
-        axum::routing::post(move || {
-            let count = count_clone.clone();
-            async move {
-                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                "ok"
-            }
-        }),
-    );
-    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mock_addr = mock_listener.local_addr().unwrap();
-    tokio::spawn(axum::serve(mock_listener, mock_app).into_future());
-    let webhook_url = format!("http://{mock_addr}/webhook");
-
-    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
-    s.setup_admin().await;
-
-    // Use the retry button to fire a webhook
-    let csrf = s.get_csrf("/settings/webhooks").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/webhooks/retry"))
-        .form(&[("_csrf", csrf.as_str()), ("environment", "staging")])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-
-    // Webhook should have been called
-    assert!(call_count.load(std::sync::atomic::Ordering::SeqCst) >= 1);
-
-    // History page should show the entry
-    let resp = s
-        .client
-        .get(s.url("/settings/webhooks"))
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("staging"));
-    assert!(body.contains("Success") || body.contains("success"));
-}
-
-#[tokio::test]
-async fn non_admin_cannot_access_webhooks_page() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let editor = signup_user_with_role(&s, "wheditor@test.com", "wheditor", "editor").await;
-    let resp = editor
-        .get(s.url("/settings/webhooks"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-}
+// Old webhook history/retry/access tests removed — replaced by deployment tests
 
 // ── Draft / Published tests ────────────────────────────────────
 
@@ -3536,82 +3143,7 @@ async fn api_publish_single_entry() {
     assert_eq!(body["status"], "draft");
 }
 
-#[tokio::test]
-async fn webhook_publish_no_longer_flips_drafts() {
-    // Start with a mock webhook server
-    let webhook_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let webhook_addr = webhook_listener.local_addr().unwrap();
-    let webhook_url = format!("http://{webhook_addr}/hook");
-
-    // Spawn a simple handler that accepts POST and returns 200
-    tokio::spawn(async move {
-        let app = axum::Router::new().route("/hook", axum::routing::post(|| async { "ok" }));
-        axum::serve(webhook_listener, app).await.unwrap();
-    });
-
-    let s = TestServer::start_with_webhooks(None, Some(webhook_url)).await;
-    s.setup_admin().await;
-    let token = s.create_api_token("webhook-test").await;
-
-    let api = Client::builder()
-        .cookie_store(false)
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    let schema_json = r#"{
-        "x-substrukt": {"title": "WH Test", "slug": "wh-test", "storage": "directory"},
-        "type": "object",
-        "properties": {"title": {"type": "string"}},
-        "required": ["title"]
-    }"#;
-    s.create_schema(schema_json).await;
-
-    // Create a draft entry
-    let resp = api
-        .post(s.url("/api/v1/content/wh-test"))
-        .bearer_auth(&token)
-        .json(&serde_json::json!({"title": "Draft Post"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::CREATED);
-
-    // Fire production publish webhook
-    let resp = api
-        .post(s.url("/api/v1/publish/production"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    // Wait briefly for any async effects
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-    // Entry should STILL be draft (publish no longer flips drafts)
-    let resp = api
-        .get(s.url("/api/v1/content/wh-test?status=all"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
-    assert_eq!(entries.len(), 1);
-
-    let resp = api
-        .get(s.url("/api/v1/content/wh-test"))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
-    assert_eq!(
-        entries.len(),
-        0,
-        "draft entry should NOT be flipped to published by webhook"
-    );
-}
+// Old webhook_publish_no_longer_flips_drafts test removed — publish routes replaced by deployments
 
 #[tokio::test]
 async fn ui_publish_entry_via_form() {
@@ -4226,4 +3758,482 @@ async fn api_create_entry_defaults_to_draft() {
         .unwrap();
     let entries: Vec<serde_json::Value> = resp.json().await.unwrap();
     assert_eq!(entries.len(), 1, "entry should appear in status=draft list");
+}
+
+// ── Deployment tests ─────────────────────────────────────────
+
+#[tokio::test]
+async fn test_create_deployment_via_ui() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/deployments/new").await;
+    let resp = s
+        .client
+        .post(s.url("/deployments/new"))
+        .form(&[
+            ("name", "Production"),
+            ("slug", "production"),
+            ("webhook_url", "https://example.com/hook"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/deployments");
+
+    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Production"));
+}
+
+#[tokio::test]
+async fn test_create_deployment_duplicate_slug() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_deployment("Prod", "prod", "https://example.com/hook")
+        .await;
+
+    let csrf = s.get_csrf("/deployments/new").await;
+    let resp = s
+        .client
+        .post(s.url("/deployments/new"))
+        .form(&[
+            ("name", "Prod 2"),
+            ("slug", "prod"),
+            ("webhook_url", "https://example2.com/hook"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("already exists"));
+}
+
+#[tokio::test]
+async fn test_create_deployment_invalid_slug() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/deployments/new").await;
+    let resp = s
+        .client
+        .post(s.url("/deployments/new"))
+        .form(&[
+            ("name", "Bad"),
+            ("slug", "My Slug"),
+            ("webhook_url", "https://example.com/hook"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("lowercase") || body.contains("Slug"));
+}
+
+#[tokio::test]
+async fn test_edit_deployment() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_deployment("Staging", "staging", "https://example.com/hook")
+        .await;
+
+    // Edit page loads
+    let resp = s
+        .client
+        .get(s.url("/deployments/staging/edit"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Staging"));
+
+    // Update
+    let csrf = s.get_csrf("/deployments/staging/edit").await;
+    let resp = s
+        .client
+        .post(s.url("/deployments/staging"))
+        .form(&[
+            ("name", "Updated Staging"),
+            ("slug", "staging"),
+            ("webhook_url", "https://new.example.com/hook"),
+            ("_token_action", "keep"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Updated Staging"));
+}
+
+#[tokio::test]
+async fn test_delete_deployment() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_deployment("ToDelete", "to-delete", "https://example.com/hook")
+        .await;
+
+    let csrf = s.get_csrf("/deployments").await;
+    let resp = s
+        .client
+        .post(s.url("/deployments/to-delete/delete"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    // Check the deployment row is gone from the table (not just the flash message)
+    assert!(
+        !body.contains("/deployments/to-delete/fire"),
+        "Deployment row should no longer appear in the table after deletion"
+    );
+}
+
+#[tokio::test]
+async fn test_fire_deployment_via_ui() {
+    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<String>(1);
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move |body: String| {
+            let tx = webhook_tx.clone();
+            async move {
+                let _ = tx.send(body).await;
+                "ok"
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(mock_listener, mock_app).await.unwrap() });
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_deployment("Prod", "prod", &webhook_url).await;
+
+    let csrf = s.get_csrf("/deployments").await;
+    let resp = s
+        .client
+        .post(s.url("/deployments/prod/fire"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    let payload = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(payload["event_type"], "substrukt-publish");
+    assert_eq!(payload["deployment"], "prod");
+    assert_eq!(payload["triggered_by"], "manual");
+    assert!(payload.get("include_drafts").is_some());
+}
+
+#[tokio::test]
+async fn test_fire_deployment_via_api() {
+    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<String>(1);
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move |body: String| {
+            let tx = webhook_tx.clone();
+            async move {
+                let _ = tx.send(body).await;
+                "ok"
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(mock_listener, mock_app).await.unwrap() });
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_deployment("Staging", "staging", &webhook_url)
+        .await;
+    let token = s.create_api_token("deploy-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/deployments/staging/fire"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "triggered");
+
+    let _payload = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_list_deployments_api() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_deployment("Alpha", "alpha", "https://a.com/hook")
+        .await;
+    s.create_deployment("Beta", "beta", "https://b.com/hook")
+        .await;
+    let token = s.create_api_token("list-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url("/api/v1/deployments"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(body.len(), 2);
+    assert_eq!(body[0]["name"], "Alpha");
+    assert_eq!(body[1]["name"], "Beta");
+    // Auth token should NOT be in the response
+    assert!(body[0].get("webhook_auth_token").is_none());
+}
+
+#[tokio::test]
+async fn test_viewer_cannot_access_deployments() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let viewer = signup_user_with_role(&s, "viewer-dep@test.com", "viewer1", "viewer").await;
+    let resp = viewer.get(s.url("/deployments")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_editor_can_see_but_not_crud_deployments() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_deployment("Existing", "existing", "https://example.com/hook")
+        .await;
+
+    let editor = signup_user_with_role(&s, "editor-dep@test.com", "editor1", "editor").await;
+
+    // Editor CAN see deployments list
+    let resp = editor.get(s.url("/deployments")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Editor CANNOT create deployments
+    let resp = editor.get(s.url("/deployments/new")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Editor CAN fire deployments (would get redirect to /deployments)
+    let csrf_resp = editor.get(s.url("/deployments")).send().await.unwrap();
+    let body = csrf_resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+
+    let resp = editor
+        .post(s.url("/deployments/existing/fire"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    // Should redirect (webhook will fail since URL is unreachable, but fire attempt was allowed)
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn test_old_publish_routes_404() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("404-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Old API publish route should 404
+    let resp = api
+        .post(s.url("/api/v1/publish/staging"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    // Old UI publish route should 404
+    let csrf = s.get_csrf("/").await;
+    let resp = s
+        .client
+        .post(s.url("/publish/staging"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_fire_deployment_sends_auth_token() {
+    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<Option<String>>(1);
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move |headers: axum::http::HeaderMap, _body: String| {
+            let tx = webhook_tx.clone();
+            async move {
+                let auth = headers
+                    .get("authorization")
+                    .map(|v| v.to_str().unwrap().to_string());
+                let _ = tx.send(auth).await;
+                "ok"
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(mock_listener, mock_app).await.unwrap() });
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create deployment with auth token via direct form POST
+    let csrf = s.get_csrf("/deployments/new").await;
+    s.client
+        .post(s.url("/deployments/new"))
+        .form(&[
+            ("name", "Auth Deploy"),
+            ("slug", "auth-deploy"),
+            ("webhook_url", &webhook_url),
+            ("webhook_auth_token", "ghp_test_token_123"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Fire it
+    let csrf = s.get_csrf("/deployments").await;
+    s.client
+        .post(s.url("/deployments/auth-deploy/fire"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let auth_header = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(auth_header.as_deref(), Some("Bearer ghp_test_token_123"));
+}
+
+#[tokio::test]
+async fn test_fire_deployment_include_drafts_in_payload() {
+    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<String>(1);
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move |body: String| {
+            let tx = webhook_tx.clone();
+            async move {
+                let _ = tx.send(body).await;
+                "ok"
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(mock_listener, mock_app).await.unwrap() });
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create deployment with include_drafts enabled
+    let csrf = s.get_csrf("/deployments/new").await;
+    s.client
+        .post(s.url("/deployments/new"))
+        .form(&[
+            ("name", "Drafts Deploy"),
+            ("slug", "drafts-deploy"),
+            ("webhook_url", &webhook_url),
+            ("include_drafts", "on"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Fire it
+    let csrf = s.get_csrf("/deployments").await;
+    s.client
+        .post(s.url("/deployments/drafts-deploy/fire"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let payload = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+    assert_eq!(payload["include_drafts"], true);
+}
+
+#[tokio::test]
+async fn test_fire_deployment_unreachable_url() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_deployment("Unreachable", "unreachable", "http://127.0.0.1:1/hook")
+        .await;
+
+    // Fire via UI — should redirect with error flash
+    let csrf = s.get_csrf("/deployments").await;
+    let resp = s
+        .client
+        .post(s.url("/deployments/unreachable/fire"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Follow redirect — flash should indicate failure
+    let resp = s.client.get(s.url("/deployments")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("failed") || body.contains("retries"));
+
+    // Fire via API — should return 502
+    let token = s.create_api_token("unreachable-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = api
+        .post(s.url("/api/v1/deployments/unreachable/fire"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
 }

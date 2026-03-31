@@ -9,7 +9,8 @@ pub async fn init_pool(db_path: &Path) -> eyre::Result<SqlitePool> {
     let url = format!("sqlite:{}?mode=rwc", db_path.display());
     let options = SqliteConnectOptions::from_str(&url)?
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-        .create_if_missing(true);
+        .create_if_missing(true)
+        .pragma("foreign_keys", "ON");
     let pool = SqlitePool::connect_with(options).await?;
     sqlx::migrate!("./audit_migrations").run(&pool).await?;
     Ok(pool)
@@ -21,9 +22,26 @@ pub struct AuditLogger {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+pub struct Deployment {
+    pub id: i64,
+    pub app_id: Option<i64>,
+    pub name: String,
+    pub slug: String,
+    pub webhook_url: String,
+    pub webhook_auth_token: Option<String>,
+    pub include_drafts: bool,
+    pub auto_deploy: bool,
+    pub debounce_seconds: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct WebhookHistoryGroup {
     pub id: i64,
-    pub environment: String,
+    pub deployment_id: i64,
+    pub deployment_name: String,
+    pub deployment_slug: String,
     pub trigger_source: String,
     pub status: String,
     pub http_status: Option<i32>,
@@ -52,26 +70,282 @@ impl AuditLogger {
         }
     }
 
+    pub fn pool_ref(&self) -> &SqlitePool {
+        self.pool.as_ref()
+    }
+
     #[cfg(test)]
     pub async fn execute_raw(&self, query: &str) -> eyre::Result<()> {
         sqlx::query(query).execute(self.pool.as_ref()).await?;
         Ok(())
     }
 
-    pub async fn is_dirty(&self, environment: &str) -> eyre::Result<bool> {
+    // ── Deployment CRUD ──────────────────────────────────────────
+
+    pub async fn create_deployment(
+        &self,
+        name: &str,
+        slug: &str,
+        webhook_url: &str,
+        webhook_auth_token: Option<&str>,
+        include_drafts: bool,
+        auto_deploy: bool,
+        debounce_seconds: i64,
+    ) -> eyre::Result<Deployment> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let include_drafts_i = if include_drafts { 1i32 } else { 0 };
+        let auto_deploy_i = if auto_deploy { 1i32 } else { 0 };
+        let result = sqlx::query(
+            "INSERT INTO deployments (name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(name)
+        .bind(slug)
+        .bind(webhook_url)
+        .bind(webhook_auth_token)
+        .bind(include_drafts_i)
+        .bind(auto_deploy_i)
+        .bind(debounce_seconds)
+        .bind(&now)
+        .bind(&now)
+        .execute(self.pool.as_ref())
+        .await?;
+
+        let id = result.last_insert_rowid();
+        Ok(Deployment {
+            id,
+            app_id: None,
+            name: name.to_string(),
+            slug: slug.to_string(),
+            webhook_url: webhook_url.to_string(),
+            webhook_auth_token: webhook_auth_token.map(|s| s.to_string()),
+            include_drafts,
+            auto_deploy,
+            debounce_seconds,
+            created_at: now.clone(),
+            updated_at: now,
+        })
+    }
+
+    pub async fn get_deployment_by_slug(&self, slug: &str) -> eyre::Result<Option<Deployment>> {
+        let row: Option<(i64, Option<i64>, String, String, String, Option<String>, i32, i32, i64, String, String)> =
+            sqlx::query_as(
+                "SELECT id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at FROM deployments WHERE slug = ?"
+            )
+            .bind(slug)
+            .fetch_optional(self.pool.as_ref())
+            .await?;
+
+        Ok(row.map(
+            |(
+                id,
+                app_id,
+                name,
+                slug,
+                webhook_url,
+                webhook_auth_token,
+                include_drafts,
+                auto_deploy,
+                debounce_seconds,
+                created_at,
+                updated_at,
+            )| {
+                Deployment {
+                    id,
+                    app_id,
+                    name,
+                    slug,
+                    webhook_url,
+                    webhook_auth_token,
+                    include_drafts: include_drafts != 0,
+                    auto_deploy: auto_deploy != 0,
+                    debounce_seconds,
+                    created_at,
+                    updated_at,
+                }
+            },
+        ))
+    }
+
+    pub async fn get_deployment_by_id(&self, id: i64) -> eyre::Result<Option<Deployment>> {
+        let row: Option<(i64, Option<i64>, String, String, String, Option<String>, i32, i32, i64, String, String)> =
+            sqlx::query_as(
+                "SELECT id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at FROM deployments WHERE id = ?"
+            )
+            .bind(id)
+            .fetch_optional(self.pool.as_ref())
+            .await?;
+
+        Ok(row.map(
+            |(
+                id,
+                app_id,
+                name,
+                slug,
+                webhook_url,
+                webhook_auth_token,
+                include_drafts,
+                auto_deploy,
+                debounce_seconds,
+                created_at,
+                updated_at,
+            )| {
+                Deployment {
+                    id,
+                    app_id,
+                    name,
+                    slug,
+                    webhook_url,
+                    webhook_auth_token,
+                    include_drafts: include_drafts != 0,
+                    auto_deploy: auto_deploy != 0,
+                    debounce_seconds,
+                    created_at,
+                    updated_at,
+                }
+            },
+        ))
+    }
+
+    pub async fn list_deployments(&self) -> eyre::Result<Vec<Deployment>> {
+        let rows: Vec<(i64, Option<i64>, String, String, String, Option<String>, i32, i32, i64, String, String)> =
+            sqlx::query_as(
+                "SELECT id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at FROM deployments ORDER BY name"
+            )
+            .fetch_all(self.pool.as_ref())
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    app_id,
+                    name,
+                    slug,
+                    webhook_url,
+                    webhook_auth_token,
+                    include_drafts,
+                    auto_deploy,
+                    debounce_seconds,
+                    created_at,
+                    updated_at,
+                )| {
+                    Deployment {
+                        id,
+                        app_id,
+                        name,
+                        slug,
+                        webhook_url,
+                        webhook_auth_token,
+                        include_drafts: include_drafts != 0,
+                        auto_deploy: auto_deploy != 0,
+                        debounce_seconds,
+                        created_at,
+                        updated_at,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    pub async fn update_deployment(
+        &self,
+        id: i64,
+        name: &str,
+        slug: &str,
+        webhook_url: &str,
+        webhook_auth_token: Option<&str>,
+        include_drafts: bool,
+        auto_deploy: bool,
+        debounce_seconds: i64,
+    ) -> eyre::Result<()> {
+        let include_drafts_i = if include_drafts { 1i32 } else { 0 };
+        let auto_deploy_i = if auto_deploy { 1i32 } else { 0 };
+        sqlx::query(
+            "UPDATE deployments SET name = ?, slug = ?, webhook_url = ?, webhook_auth_token = ?, include_drafts = ?, auto_deploy = ?, debounce_seconds = ?, updated_at = datetime('now') WHERE id = ?"
+        )
+        .bind(name)
+        .bind(slug)
+        .bind(webhook_url)
+        .bind(webhook_auth_token)
+        .bind(include_drafts_i)
+        .bind(auto_deploy_i)
+        .bind(debounce_seconds)
+        .bind(id)
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_deployment(&self, id: i64) -> eyre::Result<()> {
+        sqlx::query("DELETE FROM deployments WHERE id = ?")
+            .bind(id)
+            .execute(self.pool.as_ref())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_auto_deploy_deployments(&self) -> eyre::Result<Vec<Deployment>> {
+        let rows: Vec<(i64, Option<i64>, String, String, String, Option<String>, i32, i32, i64, String, String)> =
+            sqlx::query_as(
+                "SELECT id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at FROM deployments WHERE auto_deploy = 1 ORDER BY name"
+            )
+            .fetch_all(self.pool.as_ref())
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(
+                    id,
+                    app_id,
+                    name,
+                    slug,
+                    webhook_url,
+                    webhook_auth_token,
+                    include_drafts,
+                    auto_deploy,
+                    debounce_seconds,
+                    created_at,
+                    updated_at,
+                )| {
+                    Deployment {
+                        id,
+                        app_id,
+                        name,
+                        slug,
+                        webhook_url,
+                        webhook_auth_token,
+                        include_drafts: include_drafts != 0,
+                        auto_deploy: auto_deploy != 0,
+                        debounce_seconds,
+                        created_at,
+                        updated_at,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    // ── Dirty detection ──────────────────────────────────────────
+
+    pub async fn is_dirty_for_deployment(&self, deployment_id: i64) -> eyre::Result<bool> {
         let last_fired: Option<(Option<String>,)> =
-            sqlx::query_as("SELECT last_fired_at FROM webhook_state WHERE environment = ?")
-                .bind(environment)
+            sqlx::query_as("SELECT last_fired_at FROM deployment_state WHERE deployment_id = ?")
+                .bind(deployment_id)
                 .fetch_optional(self.pool.as_ref())
                 .await?;
 
         let last_fired_at = match last_fired {
             Some((Some(ts),)) => ts,
-            _ => return Ok(true),
+            _ => return Ok(true), // Never fired -> dirty
         };
 
         let latest_mutation: (Option<String>,) = sqlx::query_as(
-            "SELECT MAX(timestamp) FROM audit_log WHERE action IN ('content_create', 'content_update', 'content_delete', 'schema_create', 'schema_update', 'schema_delete')",
+            "SELECT MAX(timestamp) FROM audit_log WHERE action IN (\
+                'content_create', 'content_update', 'content_delete', \
+                'schema_create', 'schema_update', 'schema_delete', \
+                'entry_published', 'entry_unpublished')",
         )
         .fetch_one(self.pool.as_ref())
         .await?;
@@ -82,19 +356,24 @@ impl AuditLogger {
         }
     }
 
-    pub async fn mark_fired(&self, environment: &str) -> eyre::Result<String> {
+    pub async fn mark_deployment_fired(&self, deployment_id: i64) -> eyre::Result<String> {
         let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query("UPDATE webhook_state SET last_fired_at = ? WHERE environment = ?")
-            .bind(&now)
-            .bind(environment)
-            .execute(self.pool.as_ref())
-            .await?;
+        sqlx::query(
+            "INSERT INTO deployment_state (deployment_id, last_fired_at) VALUES (?, ?) \
+             ON CONFLICT(deployment_id) DO UPDATE SET last_fired_at = excluded.last_fired_at",
+        )
+        .bind(deployment_id)
+        .bind(&now)
+        .execute(self.pool.as_ref())
+        .await?;
         Ok(now)
     }
 
+    // ── Webhook history ──────────────────────────────────────────
+
     pub async fn record_webhook_attempt(
         &self,
-        environment: &str,
+        deployment_id: i64,
         trigger_source: &str,
         status: &str,
         http_status: Option<u16>,
@@ -105,9 +384,9 @@ impl AuditLogger {
     ) -> eyre::Result<i64> {
         let now = chrono::Utc::now().to_rfc3339();
         let result = sqlx::query(
-            "INSERT INTO webhook_history (environment, trigger_source, status, http_status, error_message, response_time_ms, attempt, group_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO webhook_history (deployment_id, trigger_source, status, http_status, error_message, response_time_ms, attempt, group_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
-        .bind(environment)
+        .bind(deployment_id)
         .bind(trigger_source)
         .bind(status)
         .bind(http_status.map(|s| s as i32))
@@ -121,22 +400,23 @@ impl AuditLogger {
         Ok(result.last_insert_rowid())
     }
 
-    pub async fn list_webhook_history(
+    pub async fn list_webhook_history_for_deployment(
         &self,
-        environment_filter: Option<&str>,
+        deployment_id: Option<i64>,
         status_filter: Option<&str>,
     ) -> eyre::Result<Vec<WebhookHistoryGroup>> {
-        let base = "SELECT h.id, h.environment, h.trigger_source, h.status, h.http_status, h.error_message, h.response_time_ms, g.attempt_count, h.group_id, h.created_at
+        let base = "SELECT h.id, h.deployment_id, d.name, d.slug, h.trigger_source, h.status, h.http_status, h.error_message, h.response_time_ms, g.attempt_count, h.group_id, h.created_at
             FROM webhook_history h
             INNER JOIN (
                 SELECT group_id, MAX(id) AS max_id, COUNT(*) AS attempt_count
                 FROM webhook_history
                 GROUP BY group_id
-            ) g ON h.id = g.max_id";
+            ) g ON h.id = g.max_id
+            INNER JOIN deployments d ON h.deployment_id = d.id";
 
         let mut conditions = Vec::new();
-        if environment_filter.is_some() {
-            conditions.push("h.environment = ?");
+        if deployment_id.is_some() {
+            conditions.push("h.deployment_id = ?");
         }
         if status_filter.is_some() {
             conditions.push("h.status = ?");
@@ -155,6 +435,8 @@ impl AuditLogger {
             _,
             (
                 i64,
+                i64,
+                String,
                 String,
                 String,
                 String,
@@ -167,8 +449,8 @@ impl AuditLogger {
             ),
         >(&query);
 
-        if let Some(env) = environment_filter {
-            q = q.bind(env);
+        if let Some(dep_id) = deployment_id {
+            q = q.bind(dep_id);
         }
         if let Some(status) = status_filter {
             q = q.bind(status);
@@ -181,7 +463,9 @@ impl AuditLogger {
             .map(
                 |(
                     id,
-                    environment,
+                    deployment_id,
+                    deployment_name,
+                    deployment_slug,
                     trigger_source,
                     status,
                     http_status,
@@ -193,7 +477,9 @@ impl AuditLogger {
                 )| {
                     WebhookHistoryGroup {
                         id,
-                        environment,
+                        deployment_id,
+                        deployment_name,
+                        deployment_slug,
                         trigger_source,
                         status,
                         http_status,
@@ -207,6 +493,8 @@ impl AuditLogger {
             )
             .collect())
     }
+
+    // ── Audit log ────────────────────────────────────────────────
 
     pub async fn list_audit_log(
         &self,
@@ -315,12 +603,31 @@ impl AuditLogger {
     }
 }
 
+pub fn validate_deployment_slug(slug: &str) -> Result<(), String> {
+    if slug.is_empty() || slug.len() > 64 {
+        return Err("Slug must be 1-64 characters".to_string());
+    }
+    if slug.starts_with('-') || slug.ends_with('-') {
+        return Err("Slug cannot start or end with a hyphen".to_string());
+    }
+    if !slug
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err("Slug must contain only lowercase letters, numbers, and hyphens".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     async fn test_pool() -> SqlitePool {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .pragma("foreign_keys", "ON");
+        let pool = SqlitePool::connect_with(options).await.unwrap();
         sqlx::migrate!("./audit_migrations")
             .run(&pool)
             .await
@@ -328,65 +635,272 @@ mod tests {
         pool
     }
 
+    // ── Deployment CRUD tests ────────────────────────────────────
+
     #[tokio::test]
-    async fn test_is_dirty_when_no_mutations() {
+    async fn test_create_and_get_deployment() {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
-        assert!(logger.is_dirty("staging").await.unwrap());
+        let dep = logger
+            .create_deployment(
+                "Production",
+                "production",
+                "https://example.com/hook",
+                Some("secret123"),
+                true,
+                false,
+                300,
+            )
+            .await
+            .unwrap();
+        assert_eq!(dep.name, "Production");
+        assert_eq!(dep.slug, "production");
+        assert_eq!(dep.webhook_url, "https://example.com/hook");
+        assert_eq!(dep.webhook_auth_token.as_deref(), Some("secret123"));
+        assert!(dep.include_drafts);
+        assert!(!dep.auto_deploy);
+        assert_eq!(dep.debounce_seconds, 300);
+
+        let fetched = logger
+            .get_deployment_by_slug("production")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.id, dep.id);
+        assert_eq!(fetched.name, "Production");
+
+        let fetched2 = logger.get_deployment_by_id(dep.id).await.unwrap().unwrap();
+        assert_eq!(fetched2.slug, "production");
+
+        assert!(
+            logger
+                .get_deployment_by_slug("nonexistent")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_deployments_sorted() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        logger
+            .create_deployment("Zulu", "zulu", "https://z.com", None, false, false, 300)
+            .await
+            .unwrap();
+        logger
+            .create_deployment("Alpha", "alpha", "https://a.com", None, false, false, 300)
+            .await
+            .unwrap();
+        let all = logger.list_deployments().await.unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].name, "Alpha");
+        assert_eq!(all[1].name, "Zulu");
+    }
+
+    #[tokio::test]
+    async fn test_update_deployment() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let dep = logger
+            .create_deployment(
+                "Staging",
+                "staging",
+                "https://old.com",
+                None,
+                false,
+                false,
+                300,
+            )
+            .await
+            .unwrap();
+        // Small sleep to ensure updated_at differs
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        logger
+            .update_deployment(
+                dep.id,
+                "New Staging",
+                "staging",
+                "https://new.com",
+                Some("token"),
+                true,
+                true,
+                60,
+            )
+            .await
+            .unwrap();
+        let updated = logger
+            .get_deployment_by_slug("staging")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.name, "New Staging");
+        assert_eq!(updated.webhook_url, "https://new.com");
+        assert_eq!(updated.webhook_auth_token.as_deref(), Some("token"));
+        assert!(updated.include_drafts);
+        assert!(updated.auto_deploy);
+        assert_eq!(updated.debounce_seconds, 60);
+        // updated_at should differ from created_at
+        assert_ne!(updated.created_at, updated.updated_at);
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_slug_fails() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        logger
+            .create_deployment(
+                "First",
+                "same-slug",
+                "https://a.com",
+                None,
+                false,
+                false,
+                300,
+            )
+            .await
+            .unwrap();
+        let result = logger
+            .create_deployment(
+                "Second",
+                "same-slug",
+                "https://b.com",
+                None,
+                false,
+                false,
+                300,
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_deployment_slug() {
+        assert!(validate_deployment_slug("production").is_ok());
+        assert!(validate_deployment_slug("my-deploy-1").is_ok());
+        assert!(validate_deployment_slug("a").is_ok());
+
+        assert!(validate_deployment_slug("").is_err());
+        assert!(validate_deployment_slug("My Slug").is_err());
+        assert!(validate_deployment_slug("UPPER").is_err());
+        assert!(validate_deployment_slug("-leading").is_err());
+        assert!(validate_deployment_slug("trailing-").is_err());
+        assert!(validate_deployment_slug("has space").is_err());
+        assert!(validate_deployment_slug("has_underscore").is_err());
+        assert!(validate_deployment_slug(&"a".repeat(65)).is_err());
+    }
+
+    // ── Dirty detection tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_is_dirty_never_fired() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let dep = logger
+            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .await
+            .unwrap();
+        assert!(logger.is_dirty_for_deployment(dep.id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_is_dirty_after_mark_fired_no_mutations() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let dep = logger
+            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .await
+            .unwrap();
+        logger.mark_deployment_fired(dep.id).await.unwrap();
+        assert!(!logger.is_dirty_for_deployment(dep.id).await.unwrap());
     }
 
     #[tokio::test]
     async fn test_is_dirty_after_mutation() {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
-        logger.mark_fired("staging").await.unwrap();
-        // Insert a mutation with a timestamp in the future (RFC3339 format to match mark_fired)
+        let dep = logger
+            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .await
+            .unwrap();
+        logger.mark_deployment_fired(dep.id).await.unwrap();
+        // Insert a mutation with a future timestamp
         let future_ts = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
         let query = format!(
             "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{future_ts}', 'test', 'content_create', 'content', 'test/1')"
         );
         logger.execute_raw(&query).await.unwrap();
-        assert!(logger.is_dirty("staging").await.unwrap());
+        assert!(logger.is_dirty_for_deployment(dep.id).await.unwrap());
     }
 
     #[tokio::test]
-    async fn test_not_dirty_after_mark_fired() {
+    async fn test_is_dirty_ignores_non_mutation_events() {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
-        logger
-            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES (datetime('now'), 'test', 'content_create', 'content', 'test/1')")
+        let dep = logger
+            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
             .await
             .unwrap();
-        logger.mark_fired("staging").await.unwrap();
-        assert!(!logger.is_dirty("staging").await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_dirty_ignores_non_mutation_events() {
-        let pool = test_pool().await;
-        let logger = AuditLogger::new(pool);
-        logger.mark_fired("staging").await.unwrap();
+        logger.mark_deployment_fired(dep.id).await.unwrap();
         logger
             .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES (datetime('now', '+1 second'), 'test', 'login', 'session', '')")
             .await
             .unwrap();
-        assert!(!logger.is_dirty("staging").await.unwrap());
+        assert!(!logger.is_dirty_for_deployment(dep.id).await.unwrap());
     }
 
     #[tokio::test]
-    async fn test_record_webhook_attempt() {
+    async fn test_is_dirty_detects_entry_published() {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
+        let dep = logger
+            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .await
+            .unwrap();
+        logger.mark_deployment_fired(dep.id).await.unwrap();
+        let future_ts = (chrono::Utc::now() + chrono::Duration::seconds(10)).to_rfc3339();
+        let query = format!(
+            "INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES ('{future_ts}', 'test', 'entry_published', 'content', 'posts/1')"
+        );
+        logger.execute_raw(&query).await.unwrap();
+        assert!(logger.is_dirty_for_deployment(dep.id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_mark_deployment_fired_upsert() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let dep = logger
+            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .await
+            .unwrap();
+        let ts1 = logger.mark_deployment_fired(dep.id).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let ts2 = logger.mark_deployment_fired(dep.id).await.unwrap();
+        assert_ne!(ts1, ts2);
+    }
+
+    // ── Webhook history tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_record_webhook_attempt_with_deployment() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let dep = logger
+            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .await
+            .unwrap();
         let id = logger
             .record_webhook_attempt(
-                "staging",
+                dep.id,
                 "manual",
                 "success",
                 Some(200),
                 None,
                 Some(150),
                 1,
-                "test-group-1",
+                "g1",
             )
             .await
             .unwrap();
@@ -394,91 +908,103 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_webhook_history_grouped() {
+    async fn test_list_webhook_history_for_deployment() {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
-
-        // Two attempts in same group
-        logger
-            .record_webhook_attempt(
-                "staging",
-                "manual",
-                "failed",
-                Some(500),
-                Some("Server error"),
-                Some(200),
-                1,
-                "group-a",
-            )
+        let dep1 = logger
+            .create_deployment("Alpha", "alpha", "https://a.com", None, false, false, 300)
             .await
             .unwrap();
+        let dep2 = logger
+            .create_deployment("Beta", "beta", "https://b.com", None, false, false, 300)
+            .await
+            .unwrap();
+
         logger
             .record_webhook_attempt(
-                "staging",
-                "retry",
+                dep1.id,
+                "manual",
                 "success",
                 Some(200),
                 None,
                 Some(100),
-                2,
-                "group-a",
+                1,
+                "g1",
+            )
+            .await
+            .unwrap();
+        logger
+            .record_webhook_attempt(
+                dep2.id,
+                "manual",
+                "failed",
+                Some(500),
+                Some("err"),
+                Some(200),
+                1,
+                "g2",
             )
             .await
             .unwrap();
 
-        // One attempt in different group
+        // All
+        let all = logger
+            .list_webhook_history_for_deployment(None, None)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Filter to dep1
+        let filtered = logger
+            .list_webhook_history_for_deployment(Some(dep1.id), None)
+            .await
+            .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].deployment_name, "Alpha");
+        assert_eq!(filtered[0].deployment_slug, "alpha");
+
+        // Filter by status
+        let failed = logger
+            .list_webhook_history_for_deployment(None, Some("failed"))
+            .await
+            .unwrap();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].deployment_slug, "beta");
+    }
+
+    #[tokio::test]
+    async fn test_delete_deployment_cascades() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let dep = logger
+            .create_deployment("D", "d", "https://d.com", None, false, false, 300)
+            .await
+            .unwrap();
+        logger.mark_deployment_fired(dep.id).await.unwrap();
         logger
             .record_webhook_attempt(
-                "production",
+                dep.id,
                 "manual",
                 "success",
                 Some(200),
                 None,
-                Some(50),
+                Some(100),
                 1,
-                "group-b",
+                "g1",
             )
             .await
             .unwrap();
+        logger.delete_deployment(dep.id).await.unwrap();
 
-        let all = logger.list_webhook_history(None, None).await.unwrap();
-        assert_eq!(all.len(), 2); // two groups
-
-        // Most recent first (group-b then group-a)
-        assert_eq!(all[0].group_id, "group-b");
-        assert_eq!(all[0].attempt_count, 1);
-        assert_eq!(all[1].group_id, "group-a");
-        assert_eq!(all[1].attempt_count, 2);
-        assert_eq!(all[1].status, "success"); // latest attempt
-
-        // Filter by environment
-        let staging = logger
-            .list_webhook_history(Some("staging"), None)
+        assert!(logger.get_deployment_by_id(dep.id).await.unwrap().is_none());
+        let history = logger
+            .list_webhook_history_for_deployment(Some(dep.id), None)
             .await
             .unwrap();
-        assert_eq!(staging.len(), 1);
-        assert_eq!(staging[0].environment, "staging");
-
-        // Filter by status
-        let successful = logger
-            .list_webhook_history(None, Some("success"))
-            .await
-            .unwrap();
-        assert_eq!(successful.len(), 2); // both groups ended in success
+        assert!(history.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_staging_and_production_independent() {
-        let pool = test_pool().await;
-        let logger = AuditLogger::new(pool);
-        logger
-            .execute_raw("INSERT INTO audit_log (timestamp, actor, action, resource_type, resource_id) VALUES (datetime('now'), 'test', 'content_create', 'content', 'test/1')")
-            .await
-            .unwrap();
-        logger.mark_fired("staging").await.unwrap();
-        assert!(!logger.is_dirty("staging").await.unwrap());
-        assert!(logger.is_dirty("production").await.unwrap());
-    }
+    // ── Audit log tests ──────────────────────────────────────────
 
     #[tokio::test]
     async fn test_list_audit_log_order_and_basic() {

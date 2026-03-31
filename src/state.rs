@@ -4,6 +4,7 @@ use dashmap::DashMap;
 use metrics_exporter_prometheus::PrometheusHandle;
 use minijinja_autoreload::AutoReloader;
 use sqlx::SqlitePool;
+use tokio_util::sync::CancellationToken;
 
 use crate::audit::AuditLogger;
 use crate::config::Config;
@@ -21,6 +22,7 @@ pub struct AppStateInner {
     pub metrics_handle: PrometheusHandle,
     pub audit: AuditLogger,
     pub http_client: reqwest::Client,
+    pub deploy_tasks: DashMap<i64, CancellationToken>,
 }
 
 pub type AppState = Arc<AppStateInner>;

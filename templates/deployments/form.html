@@ -1,0 +1,135 @@
+{% extends base_template %}
+{% block title %}{% if editing %}Edit Deployment{% else %}Create Deployment{% endif %} — Substrukt{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold tracking-tight mb-6">{% if editing %}Edit Deployment{% else %}Create Deployment{% endif %}</h1>
+
+{% if error %}
+<div class="mb-4 p-4 rounded bg-danger-soft text-danger">
+  {{ error }}
+</div>
+{% endif %}
+
+<form method="post" action="{% if editing %}/deployments/{{ deployment.slug }}{% else %}/deployments/new{% endif %}"
+  class="max-w-xl space-y-5">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+  <div>
+    <label for="name" class="block text-sm font-medium mb-1">Deployment Name</label>
+    <input type="text" id="name" name="name" required
+      value="{% if deployment %}{{ deployment.name }}{% endif %}"
+      placeholder="e.g., Production, Staging, Preview"
+      class="w-full px-3 py-2 border border-border rounded-md bg-input-bg text-sm">
+  </div>
+
+  <div>
+    <label for="slug" class="block text-sm font-medium mb-1">Slug</label>
+    <input type="text" id="slug" name="slug" required
+      value="{% if deployment %}{{ deployment.slug }}{% endif %}"
+      placeholder="e.g., production"
+      class="w-full px-3 py-2 border border-border rounded-md bg-input-bg text-sm font-mono">
+    <p class="mt-1 text-xs text-muted">Used in webhook payload and URLs. Lowercase letters, numbers, and hyphens.</p>
+  </div>
+
+  <div>
+    <label for="webhook_url" class="block text-sm font-medium mb-1">Webhook URL</label>
+    <input type="url" id="webhook_url" name="webhook_url" required
+      value="{% if deployment %}{{ deployment.webhook_url }}{% endif %}"
+      placeholder="https://api.example.com/deploy"
+      class="w-full px-3 py-2 border border-border rounded-md bg-input-bg text-sm">
+  </div>
+
+  <div>
+    <label for="webhook_auth_token" class="block text-sm font-medium mb-1">Auth Token</label>
+    {% if editing %}
+    <div class="space-y-2">
+      <select id="token_action" name="_token_action" onchange="toggleTokenInput()"
+        class="w-full px-3 py-2 border border-border rounded-md bg-input-bg text-sm">
+        <option value="keep" selected>{% if has_token %}Keep existing token{% else %}No token set{% endif %}</option>
+        {% if has_token %}
+        <option value="clear">Remove token</option>
+        {% endif %}
+        <option value="update">Set new token</option>
+      </select>
+      <input type="password" id="webhook_auth_token" name="webhook_auth_token"
+        class="w-full px-3 py-2 border border-border rounded-md bg-input-bg text-sm hidden"
+        placeholder="Enter new token">
+    </div>
+    {% else %}
+    <input type="password" id="webhook_auth_token" name="webhook_auth_token"
+      class="w-full px-3 py-2 border border-border rounded-md bg-input-bg text-sm"
+      placeholder="Optional">
+    {% endif %}
+    <p class="mt-1 text-xs text-muted">Sent as Bearer token in webhook requests. Leave blank for no auth.</p>
+  </div>
+
+  <div class="flex items-center gap-2">
+    <input type="checkbox" id="include_drafts" name="include_drafts" value="on"
+      {% if deployment and deployment.include_drafts %}checked{% endif %}
+      class="rounded border-border">
+    <label for="include_drafts" class="text-sm">Include draft content</label>
+  </div>
+  <p class="text-xs text-muted -mt-3 ml-6">When enabled, the webhook payload includes <code class="bg-card-alt px-1 rounded">include_drafts: true</code>.</p>
+
+  <div class="flex items-center gap-2">
+    <input type="checkbox" id="auto_deploy" name="auto_deploy" value="on"
+      {% if deployment and deployment.auto_deploy %}checked{% endif %}
+      onchange="toggleDebounce()"
+      class="rounded border-border">
+    <label for="auto_deploy" class="text-sm">Auto-deploy on content changes</label>
+  </div>
+
+  <div id="debounce_group" class="{% if not deployment or not deployment.auto_deploy %}hidden{% endif %}">
+    <label for="debounce_seconds" class="block text-sm font-medium mb-1">Debounce (seconds)</label>
+    <input type="number" id="debounce_seconds" name="debounce_seconds" min="10"
+      value="{% if deployment %}{{ deployment.debounce_seconds }}{% else %}300{% endif %}"
+      class="w-full px-3 py-2 border border-border rounded-md bg-input-bg text-sm">
+    <p class="mt-1 text-xs text-muted">Wait this long after the last change before auto-deploying. Prevents rapid re-deploys during editing sessions.</p>
+  </div>
+
+  <div class="flex gap-3">
+    <button type="submit"
+      class="px-4 py-2 bg-accent text-white rounded-md hover:bg-accent-hover text-sm font-medium">
+      {% if editing %}Save Deployment{% else %}Create Deployment{% endif %}
+    </button>
+    <a href="/deployments" class="px-4 py-2 border border-border rounded-md hover:bg-card-alt text-sm">Cancel</a>
+  </div>
+</form>
+
+<script>
+(function() {
+  var nameInput = document.getElementById('name');
+  var slugInput = document.getElementById('slug');
+  var editing = {{ editing | lower }};
+  if (!editing && nameInput && slugInput) {
+    nameInput.addEventListener('input', function() {
+      slugInput.value = nameInput.value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+    });
+  }
+})();
+
+function toggleDebounce() {
+  var cb = document.getElementById('auto_deploy');
+  var group = document.getElementById('debounce_group');
+  if (cb.checked) {
+    group.classList.remove('hidden');
+  } else {
+    group.classList.add('hidden');
+  }
+}
+
+function toggleTokenInput() {
+  var select = document.getElementById('token_action');
+  var input = document.getElementById('webhook_auth_token');
+  if (select.value === 'update') {
+    input.classList.remove('hidden');
+    input.focus();
+  } else {
+    input.classList.add('hidden');
+    input.value = '';
+  }
+}
+</script>
+{% endblock %}
