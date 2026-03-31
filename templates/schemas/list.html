@@ -4,7 +4,7 @@
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-2xl font-bold tracking-tight">Schemas</h1>
   {% if user_role == "admin" %}
-  <a href="/schemas/new" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">New Schema</a>
+  <a href="/apps/{{ app.slug }}/schemas/new" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">New Schema</a>
   {% endif %}
 </div>
 
@@ -25,7 +25,7 @@
       {% for schema in schemas %}
       <tr class="hover:bg-card-alt">
         <td class="px-4 py-2.5">
-          <a href="/content/{{ schema.slug }}" class="text-accent hover:underline font-medium">{{ schema.title }}</a>
+          <a href="/apps/{{ app.slug }}/content/{{ schema.slug }}" class="text-accent hover:underline font-medium">{{ schema.title }}</a>
         </td>
         <td class="px-4 py-2.5 text-muted text-sm font-mono">{{ schema.slug }}</td>
         <td class="px-4 py-2.5 text-muted text-sm">{{ schema.storage }}</td>
@@ -33,7 +33,7 @@
         <td class="px-4 py-2.5 text-muted text-sm">{{ schema.field_count }}</td>
         {% if user_role == "admin" %}
         <td class="px-4 py-2.5 text-right">
-          <a href="/schemas/{{ schema.slug }}/edit" class="text-muted hover:text-accent text-sm">Edit</a>
+          <a href="/apps/{{ app.slug }}/schemas/{{ schema.slug }}/edit" class="text-muted hover:text-accent text-sm">Edit</a>
         </td>
         {% else %}
         <td class="px-4 py-2.5"></td>
@@ -46,7 +46,7 @@
 {% else %}
 <div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
   {% if user_role == "admin" %}
-  No schemas yet. <a href="/schemas/new" class="text-accent hover:underline">Create your first schema</a>.
+  No schemas yet. <a href="/apps/{{ app.slug }}/schemas/new" class="text-accent hover:underline">Create your first schema</a>.
   {% else %}
   No schemas yet.
   {% endif %}

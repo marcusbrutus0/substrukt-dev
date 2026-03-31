@@ -7,6 +7,7 @@ use axum::{
 use axum_htmx::HxRequest;
 use tower_sessions::Session;
 
+use crate::app_context::AppContext;
 use crate::auth;
 use crate::schema;
 use crate::state::AppState;
@@ -29,9 +30,11 @@ async fn list_schemas(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
+    app: AppContext,
 ) -> axum::response::Result<Html<String>> {
-    let schemas = schema::list_schemas(&state.config.schemas_dir())
-        .map_err(|e| format!("Failed to list schemas: {e}"))?;
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let schemas =
+        schema::list_schemas(&schemas_dir).map_err(|e| format!("Failed to list schemas: {e}"))?;
 
     let schema_data: Vec<minijinja::Value> = schemas
         .iter()
@@ -61,6 +64,8 @@ async fn list_schemas(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             schemas => schema_data,
             flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
             flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
@@ -73,9 +78,11 @@ async fn new_schema_page(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
+    app: AppContext,
 ) -> axum::response::Result<Html<String>> {
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let default_schema = serde_json::json!({
         "x-substrukt": {
             "title": "",
@@ -98,6 +105,9 @@ async fn new_schema_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             is_new => true,
             schema_json => serde_json::to_string_pretty(&default_schema).unwrap_or_default(),
         })
@@ -113,14 +123,17 @@ pub struct SchemaForm {
 async fn create_schema(
     State(state): State<AppState>,
     session: Session,
+    app: AppContext,
     Form(form): Form<SchemaForm>,
 ) -> impl IntoResponse {
     let user_id = auth::require_role(&session, "admin").await.unwrap_or(0);
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
     let schema_value: serde_json::Value = match serde_json::from_str(&form.schema_json) {
         Ok(v) => v,
         Err(e) => {
             return render_schema_edit(
                 &state,
+                &app,
                 true,
                 &form.schema_json,
                 &format!("Invalid JSON: {e}"),
@@ -131,7 +144,7 @@ async fn create_schema(
     };
 
     if let Err(e) = schema::validate_schema(&schema_value) {
-        return render_schema_edit(&state, true, &form.schema_json, &format!("{e}"))
+        return render_schema_edit(&state, &app, true, &form.schema_json, &format!("{e}"))
             .await
             .into_response();
     }
@@ -146,6 +159,7 @@ async fn create_schema(
         _ => {
             return render_schema_edit(
                 &state,
+                &app,
                 true,
                 &form.schema_json,
                 "Schema must have a title and slug in x-substrukt",
@@ -155,28 +169,42 @@ async fn create_schema(
         }
     };
 
-    if let Err(e) = schema::save_schema(&state.config.schemas_dir(), &slug, &schema_value) {
-        return render_schema_edit(&state, true, &form.schema_json, &format!("Save error: {e}"))
-            .await
-            .into_response();
+    if let Err(e) = schema::save_schema(&schemas_dir, &slug, &schema_value) {
+        return render_schema_edit(
+            &state,
+            &app,
+            true,
+            &form.schema_json,
+            &format!("Save error: {e}"),
+        )
+        .await
+        .into_response();
     }
 
-    state
-        .audit
-        .log(&user_id.to_string(), "schema_create", "schema", &slug, None);
+    state.audit.log_with_app(
+        &user_id.to_string(),
+        "schema_create",
+        "schema",
+        &slug,
+        None,
+        Some(app.app.id),
+    );
     auth::set_flash(&session, "success", "Schema created").await;
-    Redirect::to("/schemas").into_response()
+    Redirect::to(&format!("/apps/{}/schemas", app.app.slug)).into_response()
 }
 
 async fn edit_schema_page(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
-    Path(slug): Path<String>,
+    app: AppContext,
+    Path((_app_slug, slug)): Path<(String, String)>,
 ) -> axum::response::Result<impl IntoResponse> {
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
-    let schema = schema::get_schema(&state.config.schemas_dir(), &slug)
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let schema = schema::get_schema(&schemas_dir, &slug)
         .map_err(|e| format!("Error: {e}"))?
         .ok_or("Schema not found")?;
 
@@ -191,6 +219,9 @@ async fn edit_schema_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             is_new => false,
             slug => slug,
             schema_json => serde_json::to_string_pretty(&schema.schema).unwrap_or_default(),
@@ -202,15 +233,18 @@ async fn edit_schema_page(
 async fn update_schema(
     State(state): State<AppState>,
     session: Session,
-    Path(slug): Path<String>,
+    app: AppContext,
+    Path((_app_slug, slug)): Path<(String, String)>,
     Form(form): Form<SchemaForm>,
 ) -> impl IntoResponse {
     let user_id = auth::require_role(&session, "admin").await.unwrap_or(0);
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
     let schema_value: serde_json::Value = match serde_json::from_str(&form.schema_json) {
         Ok(v) => v,
         Err(e) => {
             return render_schema_edit(
                 &state,
+                &app,
                 false,
                 &form.schema_json,
                 &format!("Invalid JSON: {e}"),
@@ -221,14 +255,15 @@ async fn update_schema(
     };
 
     if let Err(e) = schema::validate_schema(&schema_value) {
-        return render_schema_edit(&state, false, &form.schema_json, &format!("{e}"))
+        return render_schema_edit(&state, &app, false, &form.schema_json, &format!("{e}"))
             .await
             .into_response();
     }
 
-    if let Err(e) = schema::save_schema(&state.config.schemas_dir(), &slug, &schema_value) {
+    if let Err(e) = schema::save_schema(&schemas_dir, &slug, &schema_value) {
         return render_schema_edit(
             &state,
+            &app,
             false,
             &form.schema_json,
             &format!("Save error: {e}"),
@@ -237,28 +272,41 @@ async fn update_schema(
         .into_response();
     }
 
-    state
-        .audit
-        .log(&user_id.to_string(), "schema_update", "schema", &slug, None);
+    state.audit.log_with_app(
+        &user_id.to_string(),
+        "schema_update",
+        "schema",
+        &slug,
+        None,
+        Some(app.app.id),
+    );
     auth::set_flash(&session, "success", "Schema updated").await;
-    Redirect::to("/schemas").into_response()
+    Redirect::to(&format!("/apps/{}/schemas", app.app.slug)).into_response()
 }
 
 async fn delete_schema(
     State(state): State<AppState>,
     session: Session,
-    Path(slug): Path<String>,
+    app: AppContext,
+    Path((_app_slug, slug)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let user_id = auth::require_role(&session, "admin").await.unwrap_or(0);
-    let _ = schema::delete_schema(&state.config.schemas_dir(), &slug);
-    state
-        .audit
-        .log(&user_id.to_string(), "schema_delete", "schema", &slug, None);
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let _ = schema::delete_schema(&schemas_dir, &slug);
+    state.audit.log_with_app(
+        &user_id.to_string(),
+        "schema_delete",
+        "schema",
+        &slug,
+        None,
+        Some(app.app.id),
+    );
     axum::http::StatusCode::NO_CONTENT
 }
 
 async fn render_schema_edit(
     state: &AppState,
+    app: &AppContext,
     is_new: bool,
     schema_json: &str,
     error: &str,
@@ -272,6 +320,8 @@ async fn render_schema_edit(
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
         .render(minijinja::context! {
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             is_new => is_new,
             schema_json => schema_json,
             error => error,

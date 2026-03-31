@@ -3,7 +3,7 @@
 {% block content %}
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-2xl font-bold tracking-tight">{% if is_new %}New Schema{% else %}Edit Schema{% endif %}</h1>
-  <a href="/schemas" class="text-muted hover:text-primary text-sm">Back to Schemas</a>
+  <a href="/apps/{{ app.slug }}/schemas" class="text-muted hover:text-primary text-sm">Back to Schemas</a>
 </div>
 
 {% if error %}
@@ -11,7 +11,7 @@
 {% endif %}
 
 <div class="bg-card border border-border-light rounded-lg p-6">
-  <form id="schema-form" method="post" action="{% if is_new %}/schemas/new{% else %}/schemas/{{ slug }}{% endif %}">
+  <form id="schema-form" method="post" action="{% if is_new %}/apps/{{ app.slug }}/schemas/new{% else %}/apps/{{ app.slug }}/schemas/{{ slug }}{% endif %}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <input type="hidden" id="schema_json" name="schema_json" value="">
     <div class="mb-4">
@@ -72,10 +72,10 @@ document.getElementById('schema-form').addEventListener('submit', function(e) {
 <script>
 function deleteSchema() {
   if (confirm('Delete this schema? This cannot be undone.')) {
-    fetch('/schemas/{{ slug }}', {
+    fetch('/apps/{{ app.slug }}/schemas/{{ slug }}', {
       method: 'DELETE',
       headers: { 'X-CSRF-Token': '{{ csrf_token }}' }
-    }).then(() => window.location.href = '/schemas');
+    }).then(() => window.location.href = '/apps/{{ app.slug }}/schemas');
   }
 }
 </script>

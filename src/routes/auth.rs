@@ -325,6 +325,14 @@ async fn signup_submit(
         Ok(user) => {
             // Delete the invitation
             let _ = models::delete_invitation(&state.pool, invitation.id).await;
+            // Grant access to all apps (non-admins need explicit app_access rows)
+            if user.role != "admin"
+                && let Ok(apps) = models::list_apps(&state.pool).await
+            {
+                for app in &apps {
+                    let _ = models::grant_app_access(&state.pool, app.id, user.id).await;
+                }
+            }
             // Auto-login
             let _ = auth::login_user(&session, user.id, &user.role).await;
             state.audit.log(

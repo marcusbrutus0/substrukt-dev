@@ -5,17 +5,23 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use sqlx::SqlitePool;
 
-/// Export schemas, content, and uploads into a tar.gz bundle.
+/// Export schemas, content, uploads, and history into a tar.gz bundle.
 /// Includes uploads-manifest.json from SQLite instead of .meta.json sidecars.
-pub async fn export_bundle(data_dir: &Path, pool: &SqlitePool, output: &Path) -> eyre::Result<()> {
+pub async fn export_bundle(
+    app_dir: &Path,
+    pool: &SqlitePool,
+    app_id: i64,
+    output: &Path,
+) -> eyre::Result<()> {
     let file = std::fs::File::create(output)?;
     let enc = GzEncoder::new(file, Compression::default());
     let mut tar = tar::Builder::new(enc);
 
-    // Write uploads-manifest.json from SQLite
+    // Write uploads-manifest.json from SQLite, filtered by app_id
     let upload_rows = sqlx::query_as::<_, (String, String, String, i64, String)>(
-        "SELECT hash, filename, mime, size, created_at FROM uploads",
+        "SELECT hash, filename, mime, size, created_at FROM uploads WHERE app_id = ?",
     )
+    .bind(app_id)
     .fetch_all(pool)
     .await?;
 
@@ -41,9 +47,9 @@ pub async fn export_bundle(data_dir: &Path, pool: &SqlitePool, output: &Path) ->
     header.set_cksum();
     tar.append(&header, manifest_bytes)?;
 
-    let dirs = ["schemas", "content", "uploads"];
+    let dirs = ["schemas", "content", "uploads", "_history"];
     for dir_name in &dirs {
-        let dir = data_dir.join(dir_name);
+        let dir = app_dir.join(dir_name);
         if dir.exists() {
             tar.append_dir_all(*dir_name, &dir)?;
         }
@@ -53,58 +59,61 @@ pub async fn export_bundle(data_dir: &Path, pool: &SqlitePool, output: &Path) ->
     Ok(())
 }
 
-/// Import a tar.gz bundle into the data directory (overwrite strategy).
+/// Import a tar.gz bundle into the app directory (overwrite strategy).
 pub async fn import_bundle(
-    data_dir: &Path,
+    app_dir: &Path,
     pool: &SqlitePool,
+    app_id: i64,
     input: &Path,
 ) -> eyre::Result<Vec<String>> {
     let file = std::fs::File::open(input)?;
     let dec = GzDecoder::new(file);
     let mut archive = tar::Archive::new(dec);
-    archive.unpack(data_dir)?;
+    archive.unpack(app_dir)?;
 
-    import_upload_metadata(data_dir, pool).await?;
+    import_upload_metadata(app_dir, pool, app_id).await?;
 
-    let warnings = validate_imported_content(data_dir);
+    let warnings = validate_imported_content(app_dir);
     Ok(warnings)
 }
 
 /// Import from bytes (for API endpoint).
 pub async fn import_bundle_from_bytes(
-    data_dir: &Path,
+    app_dir: &Path,
     pool: &SqlitePool,
+    app_id: i64,
     data: &[u8],
 ) -> eyre::Result<Vec<String>> {
     let dec = GzDecoder::new(data);
     let mut archive = tar::Archive::new(dec);
-    archive.unpack(data_dir)?;
+    archive.unpack(app_dir)?;
 
-    import_upload_metadata(data_dir, pool).await?;
+    import_upload_metadata(app_dir, pool, app_id).await?;
 
-    let warnings = validate_imported_content(data_dir);
+    let warnings = validate_imported_content(app_dir);
     Ok(warnings)
 }
 
 /// Handle upload metadata after import — manifest or legacy sidecars.
-async fn import_upload_metadata(data_dir: &Path, pool: &SqlitePool) -> eyre::Result<()> {
-    let manifest_path = data_dir.join("uploads-manifest.json");
+async fn import_upload_metadata(
+    app_dir: &Path,
+    pool: &SqlitePool,
+    app_id: i64,
+) -> eyre::Result<()> {
+    let manifest_path = app_dir.join("uploads-manifest.json");
     if manifest_path.exists() {
         // New format: read manifest
         let manifest_str = std::fs::read_to_string(&manifest_path)?;
         let manifest: Vec<crate::uploads::UploadMeta> = serde_json::from_str(&manifest_str)?;
         for meta in &manifest {
-            crate::uploads::db_insert_upload(pool, meta).await?;
+            crate::uploads::db_insert_upload(pool, app_id, meta).await?;
         }
         std::fs::remove_file(&manifest_path)?;
-    } else {
-        // Legacy format: migrate .meta.json sidecars
-        let uploads_dir = data_dir.join("uploads");
-        crate::uploads::migrate_meta_sidecars(&uploads_dir, data_dir, pool).await?;
     }
+    // Note: legacy sidecar migration is now handled by migrate_meta_sidecars at startup
 
     // Rebuild upload references from imported content
-    crate::uploads::populate_references_from_content(data_dir, pool).await?;
+    crate::uploads::populate_references_from_content(app_dir, pool, app_id).await?;
 
     Ok(())
 }

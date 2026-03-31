@@ -1,3 +1,4 @@
+pub mod app_context;
 pub mod audit;
 pub mod auth;
 pub mod backup;

@@ -6,7 +6,7 @@
 </div>
 
 <div class="bg-card border border-border-light rounded-lg p-6">
-  <form class="flex gap-4 mb-6" hx-get="/uploads" hx-target="#uploads-table" hx-select="#uploads-table" hx-push-url="true" hx-swap="outerHTML">
+  <form class="flex gap-4 mb-6" hx-get="/apps/{{ app.slug }}/uploads" hx-target="#uploads-table" hx-select="#uploads-table" hx-push-url="true" hx-swap="outerHTML">
     <input type="text" name="q" value="{{ filter_q }}" placeholder="Search by filename..."
       class="px-3 py-2 bg-input-bg border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent flex-1">
     <select name="schema" class="px-3 py-2 bg-input-bg border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent">
@@ -41,7 +41,7 @@
           <td class="py-2.5">
             {% if upload.references %}
               {% for ref in upload.references %}
-              <a href="/content/{{ ref.schema_slug }}/{{ ref.entry_id }}/edit"
+              <a href="/apps/{{ app.slug }}/content/{{ ref.schema_slug }}/{{ ref.entry_id }}/edit"
                  class="text-accent hover:underline text-xs">{{ ref.schema_slug }}/{{ ref.entry_id }}</a>{% if not loop.last %}, {% endif %}
               {% endfor %}
             {% else %}
@@ -49,9 +49,9 @@
             {% endif %}
           </td>
           <td class="py-2.5">
-            <a href="/uploads/file/{{ upload.hash }}/{{ upload.filename }}" target="_blank"
+            <a href="/apps/{{ app.slug }}/uploads/file/{{ upload.hash }}/{{ upload.filename }}" target="_blank"
                class="text-accent hover:underline text-xs mr-2">View</a>
-            <a href="/uploads/file/{{ upload.hash }}/{{ upload.filename }}" download
+            <a href="/apps/{{ app.slug }}/uploads/file/{{ upload.hash }}/{{ upload.filename }}" download
                class="text-accent hover:underline text-xs">Download</a>
           </td>
         </tr>

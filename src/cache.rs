@@ -8,65 +8,112 @@ use crate::content;
 use crate::schema;
 use crate::state::ContentCache;
 
-/// Populate the cache from disk on startup.
-pub fn populate(cache: &ContentCache, schemas_dir: &Path, content_dir: &Path) {
-    let schemas = match schema::list_schemas(schemas_dir) {
-        Ok(s) => s,
+/// Populate the cache from disk on startup. Auto-discovers app directories.
+pub fn populate(cache: &ContentCache, data_dir: &Path) {
+    if !data_dir.exists() {
+        return;
+    }
+
+    let entries = match std::fs::read_dir(data_dir) {
+        Ok(e) => e,
         Err(e) => {
-            tracing::error!("Failed to list schemas for cache: {e}");
+            tracing::error!("Failed to read data dir for cache: {e}");
             return;
         }
     };
 
-    for s in &schemas {
-        let entries = match content::list_entries(content_dir, s) {
-            Ok(e) => e,
-            Err(e) => {
-                tracing::warn!("Failed to list entries for {}: {e}", s.meta.slug);
-                continue;
-            }
-        };
-        for entry in entries {
-            let key = format!("{}/{}", s.meta.slug, entry.id);
-            cache.insert(key, entry.data);
+    for dir_entry in entries.flatten() {
+        if !dir_entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+            continue;
         }
+        let app_dir = dir_entry.path();
+        let schemas_dir = app_dir.join("schemas");
+        if !schemas_dir.exists() {
+            continue;
+        }
+        let app_slug = dir_entry.file_name().to_string_lossy().to_string();
+        populate_app(cache, &app_dir, &app_slug);
     }
 
     tracing::info!("Cache populated with {} entries", cache.len());
 }
 
-/// Reload all entries for a specific schema.
+/// Populate cache entries for a single app.
+fn populate_app(cache: &ContentCache, app_dir: &Path, app_slug: &str) {
+    let schemas_dir = app_dir.join("schemas");
+    let content_dir = app_dir.join("content");
+
+    let schemas = match schema::list_schemas(&schemas_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("Failed to list schemas for app '{}': {e}", app_slug);
+            return;
+        }
+    };
+
+    for s in &schemas {
+        let entries = match content::list_entries(&content_dir, s) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to list entries for {}/{}: {e}",
+                    app_slug,
+                    s.meta.slug
+                );
+                continue;
+            }
+        };
+        for entry in entries {
+            let key = format!("{}/{}/{}", app_slug, s.meta.slug, entry.id);
+            cache.insert(key, entry.data);
+        }
+    }
+}
+
+/// Remove all cache entries for an app.
+pub fn remove_app(cache: &ContentCache, app_slug: &str) {
+    let prefix = format!("{app_slug}/");
+    cache.retain(|k, _| !k.starts_with(&prefix));
+}
+
+/// Reload all entries for a specific schema within an app.
 pub fn reload_schema(
     cache: &ContentCache,
     content_dir: &Path,
     schema: &schema::models::SchemaFile,
+    app_slug: &str,
 ) {
-    let prefix = format!("{}/", schema.meta.slug);
-    // Remove old entries for this schema
+    let prefix = format!("{}/{}/", app_slug, schema.meta.slug);
+    // Remove old entries for this schema in this app
     cache.retain(|k, _| !k.starts_with(&prefix));
 
     // Reload
     match content::list_entries(content_dir, schema) {
         Ok(entries) => {
             for entry in entries {
-                let key = format!("{}/{}", schema.meta.slug, entry.id);
+                let key = format!("{}/{}/{}", app_slug, schema.meta.slug, entry.id);
                 cache.insert(key, entry.data);
             }
         }
         Err(e) => {
-            tracing::warn!("Failed to reload cache for {}: {e}", schema.meta.slug);
+            tracing::warn!(
+                "Failed to reload cache for {}/{}: {e}",
+                app_slug,
+                schema.meta.slug
+            );
         }
     }
 }
 
-/// Reload a single entry.
+/// Reload a single entry within an app.
 pub fn reload_entry(
     cache: &ContentCache,
     content_dir: &Path,
     schema: &schema::models::SchemaFile,
     entry_id: &str,
+    app_slug: &str,
 ) {
-    let key = format!("{}/{}", schema.meta.slug, entry_id);
+    let key = format!("{}/{}/{}", app_slug, schema.meta.slug, entry_id);
     match content::get_entry(content_dir, schema, entry_id) {
         Ok(Some(entry)) => {
             cache.insert(key, entry.data);
@@ -80,24 +127,20 @@ pub fn reload_entry(
     }
 }
 
-/// Clear and rebuild the entire cache.
-pub fn rebuild(cache: &ContentCache, schemas_dir: &Path, content_dir: &Path) {
+/// Clear and rebuild the entire cache from all apps.
+pub fn rebuild(cache: &ContentCache, data_dir: &Path) {
     cache.clear();
-    populate(cache, schemas_dir, content_dir);
+    populate(cache, data_dir);
 }
 
 /// Spawn a file watcher that rebuilds the cache on content/schema changes.
+/// Watches the entire data directory recursively (covers all apps).
 /// Returns a guard that keeps the watcher alive; drop it to stop watching.
-pub fn spawn_watcher(
-    cache: Arc<ContentCache>,
-    schemas_dir: PathBuf,
-    content_dir: PathBuf,
-) -> Option<impl Drop> {
+pub fn spawn_watcher(cache: Arc<ContentCache>, data_dir: PathBuf) -> Option<impl Drop> {
     let cache_for_handler = cache.clone();
-    let schemas_for_handler = schemas_dir.clone();
-    let content_for_handler = content_dir.clone();
+    let data_dir_for_handler = data_dir.clone();
 
-    // Debounce events with a channel — coalesce rapid changes into one rebuild
+    // Debounce events with a channel -- coalesce rapid changes into one rebuild
     let (tx, rx) = std::sync::mpsc::channel();
 
     let mut watcher = match notify::recommended_watcher(move |res: Result<notify::Event, _>| {
@@ -114,11 +157,8 @@ pub fn spawn_watcher(
         }
     };
 
-    if let Err(e) = watcher.watch(&schemas_dir, RecursiveMode::Recursive) {
-        tracing::warn!("Failed to watch schemas dir: {e}");
-    }
-    if let Err(e) = watcher.watch(&content_dir, RecursiveMode::Recursive) {
-        tracing::warn!("Failed to watch content dir: {e}");
+    if let Err(e) = watcher.watch(&data_dir, RecursiveMode::Recursive) {
+        tracing::warn!("Failed to watch data dir: {e}");
     }
 
     // Background thread that debounces and rebuilds
@@ -132,14 +172,10 @@ pub fn spawn_watcher(
             while rx.recv_timeout(Duration::from_millis(200)).is_ok() {}
 
             tracing::debug!("File change detected, rebuilding cache");
-            rebuild(
-                &cache_for_handler,
-                &schemas_for_handler,
-                &content_for_handler,
-            );
+            rebuild(&cache_for_handler, &data_dir_for_handler);
         }
     });
 
-    tracing::info!("File watcher started for schemas and content dirs");
+    tracing::info!("File watcher started for data directory");
     Some(watcher)
 }

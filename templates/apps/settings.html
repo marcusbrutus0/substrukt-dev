@@ -1,0 +1,109 @@
+{% extends base_template %}
+{% block title %}{{ app.name }} Settings — Substrukt{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold tracking-tight">{{ app.name }} — Settings</h1>
+  <a href="/apps/{{ app.slug }}/schemas" class="text-muted hover:text-primary text-sm">Back to App</a>
+</div>
+
+{% if flash_kind == "token" %}
+<div class="bg-success-soft border border-success text-success p-4 rounded mb-6">
+  <div class="font-medium mb-1">Token created! Copy it now — it won't be shown again:</div>
+  <code class="block bg-card-alt text-primary p-2 rounded mt-2 text-sm font-mono break-all select-all">{{ flash_message | replace("Token created: ", "") }}</code>
+</div>
+{% elif flash_kind == "success" %}
+<div class="bg-success-soft border border-success text-success p-4 rounded mb-6">{{ flash_message }}</div>
+{% elif flash_kind == "error" %}
+<div class="bg-danger-soft border border-danger text-danger p-4 rounded mb-6">{{ flash_message }}</div>
+{% endif %}
+
+{# App Name #}
+<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
+  <h2 class="text-lg font-medium mb-4">App Name</h2>
+  <form method="post" action="/apps/{{ app.slug }}/settings" class="flex gap-3">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="text" name="name" value="{{ app.name }}" required
+      class="flex-1 px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+    <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
+      Update
+    </button>
+  </form>
+</div>
+
+{# User Access #}
+<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
+  <h2 class="text-lg font-medium mb-4">User Access</h2>
+  <p class="text-sm text-muted mb-4">Admins always have access to all apps. Check the users below to grant non-admin users access to this app.</p>
+  <form method="post" action="/apps/{{ app.slug }}/settings/access">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="space-y-2 mb-4">
+      {% for user in users %}
+      <label class="flex items-center gap-3 p-2 rounded hover:bg-card-alt">
+        <input type="checkbox" name="access" value="{{ user.id }}"
+          {% if user.has_access %}checked{% endif %}
+          {% if user.role == "admin" %}checked disabled{% endif %}
+          class="rounded border-border">
+        <span class="text-sm">{{ user.username }}</span>
+        <span class="text-xs text-muted px-2 py-0.5 bg-card-alt rounded">{{ user.role }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
+      Save Access
+    </button>
+  </form>
+</div>
+
+{# API Tokens #}
+<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
+  <h2 class="text-lg font-medium mb-4">API Tokens</h2>
+  <form method="post" action="/apps/{{ app.slug }}/settings/tokens" class="flex gap-3 mb-4">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="text" name="name" placeholder="Token name" required
+      class="flex-1 px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+    <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
+      Create Token
+    </button>
+  </form>
+  {% if tokens %}
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-border-light text-left text-muted">
+        <th class="pb-2 font-medium">Name</th>
+        <th class="pb-2 font-medium">Created</th>
+        <th class="pb-2"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-border-light">
+      {% for token in tokens %}
+      <tr class="hover:bg-card-alt">
+        <td class="py-2.5 font-medium">{{ token.name }}</td>
+        <td class="py-2.5 text-muted">{{ token.created_at }}</td>
+        <td class="py-2.5 text-right">
+          <form method="post" action="/apps/{{ app.slug }}/settings/tokens/{{ token.id }}/delete" class="inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit" class="text-danger hover:text-danger text-sm"
+              onclick="return confirm('Delete this token?')">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-muted text-sm">No API tokens yet.</p>
+  {% endif %}
+</div>
+
+{# Data & Danger Zone #}
+<div class="flex gap-4">
+  <a href="/apps/{{ app.slug }}/settings/data" class="text-accent hover:underline text-sm font-medium">Import / Export Data</a>
+  {% if app.slug != "default" %}
+  <form method="post" action="/apps/{{ app.slug }}/delete" class="inline"
+    onsubmit="return confirm('Delete app \'{{ app.name }}\'? This will permanently remove all schemas, content, uploads, and deployments for this app. This cannot be undone.')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="text-danger hover:underline text-sm font-medium">Delete App</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

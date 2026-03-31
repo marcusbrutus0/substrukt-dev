@@ -51,4 +51,35 @@ impl Config {
         std::fs::create_dir_all(self.uploads_dir())?;
         Ok(())
     }
+
+    // --- App-scoped path helpers ---
+
+    pub fn app_dir(&self, app_slug: &str) -> PathBuf {
+        self.data_dir.join(app_slug)
+    }
+
+    pub fn app_schemas_dir(&self, app_slug: &str) -> PathBuf {
+        self.app_dir(app_slug).join("schemas")
+    }
+
+    pub fn app_content_dir(&self, app_slug: &str) -> PathBuf {
+        self.app_dir(app_slug).join("content")
+    }
+
+    pub fn app_uploads_dir(&self, app_slug: &str) -> PathBuf {
+        self.app_dir(app_slug).join("uploads")
+    }
+
+    pub fn app_history_dir(&self, app_slug: &str) -> PathBuf {
+        self.app_dir(app_slug).join("_history")
+    }
+
+    /// Create the directory structure for a new app.
+    pub fn ensure_app_dirs(&self, app_slug: &str) -> eyre::Result<()> {
+        std::fs::create_dir_all(self.app_schemas_dir(app_slug))?;
+        std::fs::create_dir_all(self.app_content_dir(app_slug))?;
+        std::fs::create_dir_all(self.app_uploads_dir(app_slug))?;
+        std::fs::create_dir_all(self.app_history_dir(app_slug))?;
+        Ok(())
+    }
 }

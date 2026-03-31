@@ -7,6 +7,7 @@ use axum::{
 use axum_htmx::HxRequest;
 use tower_sessions::Session;
 
+use crate::app_context::AppContext;
 use crate::auth;
 use crate::content::form::ReferenceOptions;
 use crate::content::{self, form as content_form};
@@ -50,20 +51,27 @@ async fn list_entries(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
-    Path(schema_slug): Path<String>,
+    app: AppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
     Query(params): Query<ListParams>,
 ) -> axum::response::Result<axum::response::Response> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
-    let schema_file = schema::get_schema(&state.config.schemas_dir(), &schema_slug)
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = schema::get_schema(&schemas_dir, &schema_slug)
         .map_err(|e| format!("Error: {e}"))?
         .ok_or("Schema not found")?;
 
     if schema_file.meta.kind == Kind::Single {
-        return Ok(Redirect::to(&format!("/content/{schema_slug}/_single/edit")).into_response());
+        return Ok(Redirect::to(&format!(
+            "/apps/{}/content/{schema_slug}/_single/edit",
+            app.app.slug
+        ))
+        .into_response());
     }
 
-    let entries = content::list_entries(&state.config.content_dir(), &schema_file)
-        .map_err(|e| format!("Error: {e}"))?;
+    let entries =
+        content::list_entries(&content_dir, &schema_file).map_err(|e| format!("Error: {e}"))?;
 
     let total = entries.len();
     let q = params.q.trim().to_string();
@@ -120,6 +128,8 @@ async fn list_entries(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             columns => column_headers,
@@ -168,6 +178,7 @@ fn build_reference_options(
     schema: &serde_json::Value,
     cache: &ContentCache,
     prefix: &str,
+    app_slug: &str,
 ) -> ReferenceOptions {
     let mut opts = ReferenceOptions::new();
     let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
@@ -194,7 +205,7 @@ fn build_reference_options(
         } else {
             format!("{prefix}.{key}")
         };
-        let target_prefix = format!("{target_slug}/");
+        let target_prefix = format!("{app_slug}/{target_slug}/");
         let mut entries: Vec<(String, String)> = cache
             .iter()
             .filter(|entry| entry.key().starts_with(&target_prefix))
@@ -227,6 +238,7 @@ fn warn_dangling_references(
     data: &serde_json::Value,
     schema: &serde_json::Value,
     cache: &ContentCache,
+    app_slug: &str,
 ) {
     let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
         return;
@@ -249,7 +261,7 @@ fn warn_dangling_references(
         };
         if let Some(serde_json::Value::String(ref_id)) = obj.get(key) {
             if !ref_id.is_empty() {
-                let cache_key = format!("{target_slug}/{ref_id}");
+                let cache_key = format!("{app_slug}/{target_slug}/{ref_id}");
                 if cache.get(&cache_key).is_none() {
                     tracing::warn!(
                         field = key,
@@ -267,19 +279,26 @@ async fn new_entry_page(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
-    Path(schema_slug): Path<String>,
+    app: AppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
 ) -> axum::response::Result<axum::response::Response> {
     auth::require_role(&session, "editor").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
-    let schema_file = schema::get_schema(&state.config.schemas_dir(), &schema_slug)
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let schema_file = schema::get_schema(&schemas_dir, &schema_slug)
         .map_err(|e| format!("Error: {e}"))?
         .ok_or("Schema not found")?;
 
     if schema_file.meta.kind == Kind::Single {
-        return Ok(Redirect::to(&format!("/content/{schema_slug}/_single/edit")).into_response());
+        return Ok(Redirect::to(&format!(
+            "/apps/{}/content/{schema_slug}/_single/edit",
+            app.app.slug
+        ))
+        .into_response());
     }
 
-    let ref_options = build_reference_options(&schema_file.schema, &state.cache, "");
+    let ref_options = build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
     let form_html = content_form::render_form_fields(&schema_file.schema, None, "", &ref_options);
 
     let tmpl = state
@@ -293,6 +312,9 @@ async fn new_entry_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             is_new => true,
@@ -306,14 +328,17 @@ async fn edit_entry_page(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
+    app: AppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> axum::response::Result<Html<String>> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
-    let schema_file = schema::get_schema(&state.config.schemas_dir(), &schema_slug)
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = schema::get_schema(&schemas_dir, &schema_slug)
         .map_err(|e| format!("Error: {e}"))?
         .ok_or("Schema not found")?;
 
-    let entry = content::get_entry(&state.config.content_dir(), &schema_file, &entry_id)
+    let entry = content::get_entry(&content_dir, &schema_file, &entry_id)
         .map_err(|e| format!("Error: {e}"))?;
 
     let (existing_data, is_new) = if let Some(entry) = entry {
@@ -329,7 +354,7 @@ async fn edit_entry_page(
         .map(|d| content::get_entry_status(d).to_string())
         .unwrap_or_else(|| "draft".to_string());
 
-    let ref_options = build_reference_options(&schema_file.schema, &state.cache, "");
+    let ref_options = build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
     let form_html = content_form::render_form_fields(
         &schema_file.schema,
         existing_data.as_ref(),
@@ -351,6 +376,8 @@ async fn edit_entry_page(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             entry_id => entry_id,
@@ -366,7 +393,8 @@ async fn edit_entry_page(
 async fn create_entry(
     State(state): State<AppState>,
     session: Session,
-    Path(schema_slug): Path<String>,
+    app: AppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
     multipart: Multipart,
 ) -> impl IntoResponse {
     if auth::require_role(&session, "editor").await.is_err() {
@@ -376,110 +404,28 @@ async fn create_entry(
         )
             .into_response();
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
-        _ => return Redirect::to("/schemas").into_response(),
+        _ => {
+            return Redirect::to(&format!("/apps/{}/schemas", app.app.slug)).into_response();
+        }
     };
 
     if schema_file.meta.kind == Kind::Single {
-        return Redirect::to(&format!("/content/{schema_slug}/_single/edit")).into_response();
+        return Redirect::to(&format!(
+            "/apps/{}/content/{schema_slug}/_single/edit",
+            app.app.slug
+        ))
+        .into_response();
     }
 
     let (form_fields, upload_fields) = match parse_multipart(multipart).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Multipart parse error: {e}");
-            return Redirect::to(&format!("/content/{schema_slug}/new")).into_response();
-        }
-    };
-
-    // Verify CSRF token from multipart form fields
-    let csrf_value = form_fields
-        .iter()
-        .find(|(k, _)| k == "_csrf")
-        .map(|(_, v)| v.as_str());
-    if !matches!(csrf_value, Some(token) if auth::verify_csrf_token(&session, token).await) {
-        return (axum::http::StatusCode::FORBIDDEN, "Invalid CSRF token").into_response();
-    }
-
-    let mut data = content_form::form_data_to_json(&schema_file.schema, &form_fields, "");
-
-    // Process upload fields
-    process_uploads(&state, &mut data, &upload_fields).await;
-
-    warn_dangling_references(&data, &schema_file.schema, &state.cache);
-
-    // Validate
-    if let Err(errors) = content::validate_content(&schema_file, &data) {
-        let ref_options = build_reference_options(&schema_file.schema, &state.cache, "");
-        let form_html =
-            content_form::render_form_fields(&schema_file.schema, Some(&data), "", &ref_options);
-        if let Ok(tmpl) = state.templates.acquire_env()
-            && let Ok(template) = tmpl.get_template("content/edit.html")
-            && let Ok(html) = template.render(minijinja::context! {
-                schema_title => schema_file.meta.title,
-                schema_slug => schema_slug,
-                is_new => true,
-                form_fields => form_html,
-                errors => errors,
-            })
-        {
-            return Html(html).into_response();
-        }
-        return Redirect::to(&format!("/content/{schema_slug}/new")).into_response();
-    }
-
-    let hashes = uploads::extract_upload_hashes(&data);
-    match content::save_entry(&state.config.content_dir(), &schema_file, None, data) {
-        Ok(id) => {
-            crate::cache::reload_entry(
-                &state.cache,
-                &state.config.content_dir(),
-                &schema_file,
-                &id,
-            );
-            let _ = uploads::db_update_references(&state.pool, &schema_slug, &id, &hashes).await;
-            let user_id = auth::current_user_id(&session).await.unwrap_or(0);
-            state.audit.log(
-                &user_id.to_string(),
-                "content_create",
-                "content",
-                &format!("{schema_slug}/{id}"),
-                None,
-            );
-            auth::set_flash(&session, "success", "Entry created").await;
-            Redirect::to(&format!("/content/{schema_slug}")).into_response()
-        }
-        Err(e) => {
-            tracing::error!("Save error: {e}");
-            Redirect::to(&format!("/content/{schema_slug}/new")).into_response()
-        }
-    }
-}
-
-async fn update_entry(
-    State(state): State<AppState>,
-    session: Session,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
-    multipart: Multipart,
-) -> impl IntoResponse {
-    if auth::require_role(&session, "editor").await.is_err() {
-        return (
-            axum::http::StatusCode::FORBIDDEN,
-            "Insufficient permissions",
-        )
-            .into_response();
-    }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
-        Ok(Some(s)) => s,
-        _ => return Redirect::to("/schemas").into_response(),
-    };
-
-    let (form_fields, upload_fields) = match parse_multipart(multipart).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("Multipart parse error: {e}");
-            return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit"))
+            return Redirect::to(&format!("/apps/{}/content/{schema_slug}/new", app.app.slug))
                 .into_response();
         }
     };
@@ -495,17 +441,129 @@ async fn update_entry(
 
     let mut data = content_form::form_data_to_json(&schema_file.schema, &form_fields, "");
 
-    process_uploads(&state, &mut data, &upload_fields).await;
+    // Process upload fields
+    process_uploads(&state, &app, &mut data, &upload_fields).await;
 
-    warn_dangling_references(&data, &schema_file.schema, &state.cache);
+    warn_dangling_references(&data, &schema_file.schema, &state.cache, &app.app.slug);
 
+    // Validate
     if let Err(errors) = content::validate_content(&schema_file, &data) {
-        let ref_options = build_reference_options(&schema_file.schema, &state.cache, "");
+        let ref_options =
+            build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
         let form_html =
             content_form::render_form_fields(&schema_file.schema, Some(&data), "", &ref_options);
         if let Ok(tmpl) = state.templates.acquire_env()
             && let Ok(template) = tmpl.get_template("content/edit.html")
             && let Ok(html) = template.render(minijinja::context! {
+                app => app.template_context(),
+                nav_schemas => app.nav_schemas(&state.config),
+                schema_title => schema_file.meta.title,
+                schema_slug => schema_slug,
+                is_new => true,
+                form_fields => form_html,
+                errors => errors,
+            })
+        {
+            return Html(html).into_response();
+        }
+        return Redirect::to(&format!("/apps/{}/content/{schema_slug}/new", app.app.slug))
+            .into_response();
+    }
+
+    let hashes = uploads::extract_upload_hashes(&data);
+    match content::save_entry(&content_dir, &schema_file, None, data) {
+        Ok(id) => {
+            crate::cache::reload_entry(
+                &state.cache,
+                &content_dir,
+                &schema_file,
+                &id,
+                &app.app.slug,
+            );
+            let _ =
+                uploads::db_update_references(&state.pool, app.app.id, &schema_slug, &id, &hashes)
+                    .await;
+            let user_id = auth::current_user_id(&session).await.unwrap_or(0);
+            state.audit.log_with_app(
+                &user_id.to_string(),
+                "content_create",
+                "content",
+                &format!("{schema_slug}/{id}"),
+                None,
+                Some(app.app.id),
+            );
+            auth::set_flash(&session, "success", "Entry created").await;
+            Redirect::to(&format!("/apps/{}/content/{schema_slug}", app.app.slug)).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Save error: {e}");
+            Redirect::to(&format!("/apps/{}/content/{schema_slug}/new", app.app.slug))
+                .into_response()
+        }
+    }
+}
+
+async fn update_entry(
+    State(state): State<AppState>,
+    session: Session,
+    app: AppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
+    multipart: Multipart,
+) -> impl IntoResponse {
+    if auth::require_role(&session, "editor").await.is_err() {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
+        Ok(Some(s)) => s,
+        _ => {
+            return Redirect::to(&format!("/apps/{}/schemas", app.app.slug)).into_response();
+        }
+    };
+
+    let (form_fields, upload_fields) = match parse_multipart(multipart).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("Multipart parse error: {e}");
+            return Redirect::to(&format!(
+                "/apps/{}/content/{schema_slug}/{entry_id}/edit",
+                app.app.slug
+            ))
+            .into_response();
+        }
+    };
+
+    // Verify CSRF token from multipart form fields
+    let csrf_value = form_fields
+        .iter()
+        .find(|(k, _)| k == "_csrf")
+        .map(|(_, v)| v.as_str());
+    if !matches!(csrf_value, Some(token) if auth::verify_csrf_token(&session, token).await) {
+        return (axum::http::StatusCode::FORBIDDEN, "Invalid CSRF token").into_response();
+    }
+
+    let mut data = content_form::form_data_to_json(&schema_file.schema, &form_fields, "");
+
+    process_uploads(&state, &app, &mut data, &upload_fields).await;
+
+    warn_dangling_references(&data, &schema_file.schema, &state.cache, &app.app.slug);
+
+    if let Err(errors) = content::validate_content(&schema_file, &data) {
+        let ref_options =
+            build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
+        let form_html =
+            content_form::render_form_fields(&schema_file.schema, Some(&data), "", &ref_options);
+        if let Ok(tmpl) = state.templates.acquire_env()
+            && let Ok(template) = tmpl.get_template("content/edit.html")
+            && let Ok(html) = template.render(minijinja::context! {
+                app => app.template_context(),
+                nav_schemas => app.nav_schemas(&state.config),
                 schema_title => schema_file.meta.title,
                 schema_slug => schema_slug,
                 entry_id => entry_id,
@@ -516,15 +574,17 @@ async fn update_entry(
         {
             return Html(html).into_response();
         }
-        return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response();
+        return Redirect::to(&format!(
+            "/apps/{}/content/{schema_slug}/{entry_id}/edit",
+            app.app.slug
+        ))
+        .into_response();
     }
 
     // Snapshot current version for history
-    if let Ok(Some(current)) =
-        content::get_entry(&state.config.content_dir(), &schema_file, &entry_id)
-    {
+    if let Ok(Some(current)) = content::get_entry(&content_dir, &schema_file, &entry_id) {
         if let Err(e) = crate::history::snapshot_entry(
-            &state.config.data_dir,
+            &app_dir,
             &schema_slug,
             &entry_id,
             &current.data,
@@ -535,40 +595,47 @@ async fn update_entry(
     }
 
     let hashes = uploads::extract_upload_hashes(&data);
-    match content::save_entry(
-        &state.config.content_dir(),
-        &schema_file,
-        Some(&entry_id),
-        data,
-    ) {
+    match content::save_entry(&content_dir, &schema_file, Some(&entry_id), data) {
         Ok(_) => {
             crate::cache::reload_entry(
                 &state.cache,
-                &state.config.content_dir(),
+                &content_dir,
                 &schema_file,
                 &entry_id,
+                &app.app.slug,
             );
-            let _ =
-                uploads::db_update_references(&state.pool, &schema_slug, &entry_id, &hashes).await;
+            let _ = uploads::db_update_references(
+                &state.pool,
+                app.app.id,
+                &schema_slug,
+                &entry_id,
+                &hashes,
+            )
+            .await;
             let user_id = auth::current_user_id(&session).await.unwrap_or(0);
-            state.audit.log(
+            state.audit.log_with_app(
                 &user_id.to_string(),
                 "content_update",
                 "content",
                 &format!("{schema_slug}/{entry_id}"),
                 None,
+                Some(app.app.id),
             );
             auth::set_flash(&session, "success", "Entry updated").await;
             let redirect_url = if schema_file.meta.kind == Kind::Single {
-                format!("/content/{schema_slug}/_single/edit")
+                format!("/apps/{}/content/{schema_slug}/_single/edit", app.app.slug)
             } else {
-                format!("/content/{schema_slug}")
+                format!("/apps/{}/content/{schema_slug}", app.app.slug)
             };
             Redirect::to(&redirect_url).into_response()
         }
         Err(e) => {
             tracing::error!("Save error: {e}");
-            Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response()
+            Redirect::to(&format!(
+                "/apps/{}/content/{schema_slug}/{entry_id}/edit",
+                app.app.slug
+            ))
+            .into_response()
         }
     }
 }
@@ -576,29 +643,34 @@ async fn update_entry(
 async fn delete_entry(
     State(state): State<AppState>,
     session: Session,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
+    app: AppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
     if auth::require_role(&session, "editor").await.is_err() {
         return axum::http::StatusCode::FORBIDDEN;
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         _ => return axum::http::StatusCode::NOT_FOUND,
     };
 
-    let _ = uploads::db_delete_references(&state.pool, &schema_slug, &entry_id).await;
-    let _ = content::delete_entry(&state.config.content_dir(), &schema_file, &entry_id);
-    crate::history::delete_history(&state.config.data_dir, &schema_slug, &entry_id);
-    let key = format!("{schema_slug}/{entry_id}");
+    let _ = uploads::db_delete_references(&state.pool, app.app.id, &schema_slug, &entry_id).await;
+    let _ = content::delete_entry(&content_dir, &schema_file, &entry_id);
+    crate::history::delete_history(&app_dir, &schema_slug, &entry_id);
+    let key = format!("{}/{schema_slug}/{entry_id}", app.app.slug);
     state.cache.remove(&key);
 
     let user_id = auth::current_user_id(&session).await.unwrap_or(0);
-    state.audit.log(
+    state.audit.log_with_app(
         &user_id.to_string(),
         "content_delete",
         "content",
         &format!("{schema_slug}/{entry_id}"),
         None,
+        Some(app.app.id),
     );
 
     axum::http::StatusCode::NO_CONTENT
@@ -608,7 +680,8 @@ async fn publish_entry(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
+    app: AppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
     if auth::require_role(&session, "editor").await.is_err() {
         return (
@@ -617,39 +690,42 @@ async fn publish_entry(
         )
             .into_response();
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         _ => {
             auth::set_flash(&session, "error", "Schema not found").await;
-            return Redirect::to("/").into_response();
+            return Redirect::to(&format!("/apps/{}", app.app.slug)).into_response();
         }
     };
 
-    if let Err(e) = content::set_entry_status(
-        &state.config.content_dir(),
-        &schema_file,
-        &entry_id,
-        "published",
-    ) {
+    if let Err(e) = content::set_entry_status(&content_dir, &schema_file, &entry_id, "published") {
         tracing::error!("Publish failed: {e}");
         auth::set_flash(&session, "error", "Failed to publish entry").await;
-        return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response();
+        return Redirect::to(&format!(
+            "/apps/{}/content/{schema_slug}/{entry_id}/edit",
+            app.app.slug
+        ))
+        .into_response();
     }
 
     crate::cache::reload_entry(
         &state.cache,
-        &state.config.content_dir(),
+        &content_dir,
         &schema_file,
         &entry_id,
+        &app.app.slug,
     );
 
     let user_id = auth::current_user_id(&session).await.unwrap_or(0);
-    state.audit.log(
+    state.audit.log_with_app(
         &user_id.to_string(),
         "entry_published",
         "content",
         &format!("{schema_slug}/{entry_id}"),
         None,
+        Some(app.app.id),
     );
 
     if is_htmx {
@@ -668,6 +744,7 @@ async fn publish_entry(
             .render(minijinja::context! {
                 csrf_token => csrf_token,
                 user_role => user_role,
+                app => app.template_context(),
                 schema_slug => schema_slug,
                 entry_id => entry_id,
                 entry_status => "published",
@@ -678,14 +755,19 @@ async fn publish_entry(
     }
 
     auth::set_flash(&session, "success", "Entry published").await;
-    Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response()
+    Redirect::to(&format!(
+        "/apps/{}/content/{schema_slug}/{entry_id}/edit",
+        app.app.slug
+    ))
+    .into_response()
 }
 
 async fn unpublish_entry(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
+    app: AppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
     if auth::require_role(&session, "editor").await.is_err() {
         return (
@@ -694,39 +776,42 @@ async fn unpublish_entry(
         )
             .into_response();
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         _ => {
             auth::set_flash(&session, "error", "Schema not found").await;
-            return Redirect::to("/").into_response();
+            return Redirect::to(&format!("/apps/{}", app.app.slug)).into_response();
         }
     };
 
-    if let Err(e) = content::set_entry_status(
-        &state.config.content_dir(),
-        &schema_file,
-        &entry_id,
-        "draft",
-    ) {
+    if let Err(e) = content::set_entry_status(&content_dir, &schema_file, &entry_id, "draft") {
         tracing::error!("Unpublish failed: {e}");
         auth::set_flash(&session, "error", "Failed to unpublish entry").await;
-        return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response();
+        return Redirect::to(&format!(
+            "/apps/{}/content/{schema_slug}/{entry_id}/edit",
+            app.app.slug
+        ))
+        .into_response();
     }
 
     crate::cache::reload_entry(
         &state.cache,
-        &state.config.content_dir(),
+        &content_dir,
         &schema_file,
         &entry_id,
+        &app.app.slug,
     );
 
     let user_id = auth::current_user_id(&session).await.unwrap_or(0);
-    state.audit.log(
+    state.audit.log_with_app(
         &user_id.to_string(),
         "entry_unpublished",
         "content",
         &format!("{schema_slug}/{entry_id}"),
         None,
+        Some(app.app.id),
     );
 
     if is_htmx {
@@ -745,6 +830,7 @@ async fn unpublish_entry(
             .render(minijinja::context! {
                 csrf_token => csrf_token,
                 user_role => user_role,
+                app => app.template_context(),
                 schema_slug => schema_slug,
                 entry_id => entry_id,
                 entry_status => "draft",
@@ -755,7 +841,11 @@ async fn unpublish_entry(
     }
 
     auth::set_flash(&session, "success", "Entry unpublished").await;
-    Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response()
+    Redirect::to(&format!(
+        "/apps/{}/content/{schema_slug}/{entry_id}/edit",
+        app.app.slug
+    ))
+    .into_response()
 }
 
 struct UploadField {
@@ -794,7 +884,7 @@ async fn parse_multipart(
                     data: data.to_vec(),
                 });
             } else {
-                // Empty file input — treated as text field
+                // Empty file input -- treated as text field
                 form_fields.push((name, String::from_utf8_lossy(&data).to_string()));
             }
         } else {
@@ -807,13 +897,16 @@ async fn parse_multipart(
 
 async fn process_uploads(
     state: &AppState,
+    app: &AppContext,
     data: &mut serde_json::Value,
     upload_fields: &[UploadField],
 ) {
+    let uploads_dir = state.config.app_uploads_dir(&app.app.slug);
     for upload in upload_fields {
         match uploads::store_upload(
-            &state.config.uploads_dir(),
+            &uploads_dir,
             &state.pool,
+            app.app.id,
             &upload.filename,
             &upload.content_type,
             &upload.data,
@@ -857,14 +950,17 @@ async fn entry_history(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
+    app: AppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> axum::response::Result<Html<String>> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
-    let schema_file = schema::get_schema(&state.config.schemas_dir(), &schema_slug)
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = schema::get_schema(&schemas_dir, &schema_slug)
         .map_err(|e| format!("Error: {e}"))?
         .ok_or("Schema not found")?;
 
-    let versions = crate::history::list_versions(&state.config.data_dir, &schema_slug, &entry_id)
+    let versions = crate::history::list_versions(&app_dir, &schema_slug, &entry_id)
         .map_err(|e| format!("Error: {e}"))?;
 
     let version_data: Vec<minijinja::Value> = versions
@@ -890,6 +986,8 @@ async fn entry_history(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             entry_id => entry_id,
@@ -902,7 +1000,8 @@ async fn entry_history(
 async fn revert_entry(
     State(state): State<AppState>,
     session: Session,
-    Path((schema_slug, entry_id, timestamp)): Path<(String, String, u64)>,
+    app: AppContext,
+    Path((_app_slug, schema_slug, entry_id, timestamp)): Path<(String, String, String, u64)>,
     axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
     if auth::require_role(&session, "editor").await.is_err() {
@@ -918,31 +1017,34 @@ async fn revert_entry(
         return (axum::http::StatusCode::FORBIDDEN, "Invalid CSRF token").into_response();
     }
 
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
-        _ => return Redirect::to(&format!("/content/{schema_slug}")).into_response(),
-    };
-
-    let version_data = match crate::history::get_version(
-        &state.config.data_dir,
-        &schema_slug,
-        &entry_id,
-        timestamp,
-    ) {
-        Ok(Some(data)) => data,
         _ => {
-            auth::set_flash(&session, "error", "Version not found").await;
-            return Redirect::to(&format!("/content/{schema_slug}/{entry_id}/history"))
+            return Redirect::to(&format!("/apps/{}/content/{schema_slug}", app.app.slug))
                 .into_response();
         }
     };
 
+    let version_data =
+        match crate::history::get_version(&app_dir, &schema_slug, &entry_id, timestamp) {
+            Ok(Some(data)) => data,
+            _ => {
+                auth::set_flash(&session, "error", "Version not found").await;
+                return Redirect::to(&format!(
+                    "/apps/{}/content/{schema_slug}/{entry_id}/history",
+                    app.app.slug
+                ))
+                .into_response();
+            }
+        };
+
     // Snapshot current before reverting
-    if let Ok(Some(current)) =
-        content::get_entry(&state.config.content_dir(), &schema_file, &entry_id)
-    {
+    if let Ok(Some(current)) = content::get_entry(&content_dir, &schema_file, &entry_id) {
         if let Err(e) = crate::history::snapshot_entry(
-            &state.config.data_dir,
+            &app_dir,
             &schema_slug,
             &entry_id,
             &current.data,
@@ -952,34 +1054,39 @@ async fn revert_entry(
         }
     }
 
-    match content::save_entry(
-        &state.config.content_dir(),
-        &schema_file,
-        Some(&entry_id),
-        version_data,
-    ) {
+    match content::save_entry(&content_dir, &schema_file, Some(&entry_id), version_data) {
         Ok(_) => {
             crate::cache::reload_entry(
                 &state.cache,
-                &state.config.content_dir(),
+                &content_dir,
                 &schema_file,
                 &entry_id,
+                &app.app.slug,
             );
             let user_id = auth::current_user_id(&session).await.unwrap_or(0);
-            state.audit.log(
+            state.audit.log_with_app(
                 &user_id.to_string(),
                 "content_update",
                 "content",
                 &format!("{schema_slug}/{entry_id}"),
                 Some(&format!("reverted to version {timestamp}")),
+                Some(app.app.id),
             );
             auth::set_flash(&session, "success", "Entry reverted").await;
-            Redirect::to(&format!("/content/{schema_slug}/{entry_id}/edit")).into_response()
+            Redirect::to(&format!(
+                "/apps/{}/content/{schema_slug}/{entry_id}/edit",
+                app.app.slug
+            ))
+            .into_response()
         }
         Err(e) => {
             tracing::error!("Revert error: {e}");
             auth::set_flash(&session, "error", "Failed to revert").await;
-            Redirect::to(&format!("/content/{schema_slug}/{entry_id}/history")).into_response()
+            Redirect::to(&format!(
+                "/apps/{}/content/{schema_slug}/{entry_id}/history",
+                app.app.slug
+            ))
+            .into_response()
         }
     }
 }

@@ -9,6 +9,7 @@ use axum::{
     routing::{get, post},
 };
 
+use crate::app_context::ApiAppContext;
 use crate::auth::token::BearerToken;
 use crate::content;
 use crate::schema;
@@ -23,7 +24,13 @@ pub struct ListParams {
     pub status: String,
 }
 
-pub fn routes(state: AppState) -> Router<AppState> {
+pub fn api_global_routes() -> Router<AppState> {
+    Router::new()
+        .route("/backups/status", get(api_backup_status))
+        .route("/backups/trigger", post(api_trigger_backup))
+}
+
+pub fn api_app_routes() -> Router<AppState> {
     Router::new()
         .route("/schemas", get(list_schemas))
         .route("/schemas/{slug}", get(get_schema))
@@ -53,12 +60,9 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/import", post(import_bundle))
         .route("/deployments", get(api_list_deployments))
         .route("/deployments/{slug}/fire", post(api_fire_deployment))
-        .route("/backups/status", get(api_backup_status))
-        .route("/backups/trigger", post(api_trigger_backup))
-        .layer(middleware::from_fn_with_state(state, api_rate_limit))
 }
 
-async fn api_rate_limit(
+pub async fn api_rate_limit(
     State(state): State<AppState>,
     headers: HeaderMap,
     request: axum::extract::Request,
@@ -104,10 +108,25 @@ fn require_api_role(
     }
 }
 
+fn require_token_app(
+    token: &BearerToken,
+    app: &ApiAppContext,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    if token.token.app_id != Some(app.app.id) {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Token not authorized for this app"})),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn resolve_references(
     data: &mut serde_json::Value,
     schema: &serde_json::Value,
     cache: &crate::state::ContentCache,
+    app_slug: &str,
 ) {
     let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
         return;
@@ -129,7 +148,7 @@ fn resolve_references(
             continue;
         };
         if let Some(serde_json::Value::String(ref_id)) = obj.get(key).cloned() {
-            let cache_key = format!("{target_slug}/{ref_id}");
+            let cache_key = format!("{app_slug}/{target_slug}/{ref_id}");
             if let Some(entry) = cache.get(&cache_key) {
                 obj.insert(key.clone(), entry.value().clone());
             }
@@ -137,8 +156,16 @@ fn resolve_references(
     }
 }
 
-async fn list_schemas(State(state): State<AppState>, _token: BearerToken) -> impl IntoResponse {
-    match schema::list_schemas(&state.config.schemas_dir()) {
+async fn list_schemas(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+) -> impl IntoResponse {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    match schema::list_schemas(&schemas_dir) {
         Ok(schemas) => {
             let data: Vec<serde_json::Value> = schemas
                 .iter()
@@ -164,10 +191,15 @@ async fn list_schemas(State(state): State<AppState>, _token: BearerToken) -> imp
 
 async fn get_schema(
     State(state): State<AppState>,
-    _token: BearerToken,
-    Path(slug): Path<String>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, slug)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    match schema::get_schema(&state.config.schemas_dir(), &slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    match schema::get_schema(&schemas_dir, &slug) {
         Ok(Some(s)) => Json(s.schema).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => (
@@ -180,11 +212,17 @@ async fn get_schema(
 
 async fn list_entries(
     State(state): State<AppState>,
-    _token: BearerToken,
-    Path(schema_slug): Path<String>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
     Query(params): Query<ListParams>,
 ) -> impl IntoResponse {
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
@@ -196,7 +234,7 @@ async fn list_entries(
         }
     };
 
-    match content::list_entries(&state.config.content_dir(), &schema_file) {
+    match content::list_entries(&content_dir, &schema_file) {
         Ok(entries) => {
             // Filter by status (default: published only)
             let status = if params.status.is_empty() {
@@ -216,7 +254,7 @@ async fn list_entries(
                 .iter()
                 .map(|e| {
                     let mut d = content::strip_internal_status(&e.data);
-                    resolve_references(&mut d, &schema_file.schema, &state.cache);
+                    resolve_references(&mut d, &schema_file.schema, &state.cache, &app.app.slug);
                     d
                 })
                 .collect();
@@ -232,10 +270,16 @@ async fn list_entries(
 
 async fn get_entry(
     State(state): State<AppState>,
-    _token: BearerToken,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
@@ -247,10 +291,10 @@ async fn get_entry(
         }
     };
 
-    match content::get_entry(&state.config.content_dir(), &schema_file, &entry_id) {
+    match content::get_entry(&content_dir, &schema_file, &entry_id) {
         Ok(Some(entry)) => {
             let mut data = content::strip_internal_status(&entry.data);
-            resolve_references(&mut data, &schema_file.schema, &state.cache);
+            resolve_references(&mut data, &schema_file.schema, &state.cache, &app.app.slug);
             Json(data).into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
@@ -265,13 +309,19 @@ async fn get_entry(
 async fn create_entry(
     State(state): State<AppState>,
     token: BearerToken,
-    Path(schema_slug): Path<String>,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
     Json(data): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "editor") {
         return e.into_response();
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
@@ -300,21 +350,25 @@ async fn create_entry(
     }
 
     let hashes = uploads::extract_upload_hashes(&data);
-    match content::save_entry(&state.config.content_dir(), &schema_file, None, data) {
+    match content::save_entry(&content_dir, &schema_file, None, data) {
         Ok(id) => {
             crate::cache::reload_entry(
                 &state.cache,
-                &state.config.content_dir(),
+                &content_dir,
                 &schema_file,
                 &id,
+                &app.app.slug,
             );
-            let _ = uploads::db_update_references(&state.pool, &schema_slug, &id, &hashes).await;
-            state.audit.log(
+            let _ =
+                uploads::db_update_references(&state.pool, app.app.id, &schema_slug, &id, &hashes)
+                    .await;
+            state.audit.log_with_app(
                 "api",
                 "content_create",
                 "content",
                 &format!("{schema_slug}/{id}"),
                 None,
+                Some(app.app.id),
             );
             (StatusCode::CREATED, Json(serde_json::json!({"id": id}))).into_response()
         }
@@ -329,13 +383,20 @@ async fn create_entry(
 async fn update_entry(
     State(state): State<AppState>,
     token: BearerToken,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
     Json(data): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "editor") {
         return e.into_response();
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
@@ -356,11 +417,9 @@ async fn update_entry(
     }
 
     // Snapshot current version for history
-    if let Ok(Some(current)) =
-        content::get_entry(&state.config.content_dir(), &schema_file, &entry_id)
-    {
+    if let Ok(Some(current)) = content::get_entry(&content_dir, &schema_file, &entry_id) {
         if let Err(e) = crate::history::snapshot_entry(
-            &state.config.data_dir,
+            &app_dir,
             &schema_slug,
             &entry_id,
             &current.data,
@@ -371,27 +430,30 @@ async fn update_entry(
     }
 
     let hashes = uploads::extract_upload_hashes(&data);
-    match content::save_entry(
-        &state.config.content_dir(),
-        &schema_file,
-        Some(&entry_id),
-        data,
-    ) {
+    match content::save_entry(&content_dir, &schema_file, Some(&entry_id), data) {
         Ok(_) => {
             crate::cache::reload_entry(
                 &state.cache,
-                &state.config.content_dir(),
+                &content_dir,
                 &schema_file,
                 &entry_id,
+                &app.app.slug,
             );
-            let _ =
-                uploads::db_update_references(&state.pool, &schema_slug, &entry_id, &hashes).await;
-            state.audit.log(
+            let _ = uploads::db_update_references(
+                &state.pool,
+                app.app.id,
+                &schema_slug,
+                &entry_id,
+                &hashes,
+            )
+            .await;
+            state.audit.log_with_app(
                 "api",
                 "content_update",
                 "content",
                 &format!("{schema_slug}/{entry_id}"),
                 None,
+                Some(app.app.id),
             );
             StatusCode::OK.into_response()
         }
@@ -406,12 +468,19 @@ async fn update_entry(
 async fn delete_entry(
     State(state): State<AppState>,
     token: BearerToken,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "editor") {
         return e.into_response();
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
@@ -423,18 +492,19 @@ async fn delete_entry(
         }
     };
 
-    let _ = uploads::db_delete_references(&state.pool, &schema_slug, &entry_id).await;
-    match content::delete_entry(&state.config.content_dir(), &schema_file, &entry_id) {
+    let _ = uploads::db_delete_references(&state.pool, app.app.id, &schema_slug, &entry_id).await;
+    match content::delete_entry(&content_dir, &schema_file, &entry_id) {
         Ok(()) => {
-            crate::history::delete_history(&state.config.data_dir, &schema_slug, &entry_id);
-            let key = format!("{schema_slug}/{entry_id}");
+            crate::history::delete_history(&app_dir, &schema_slug, &entry_id);
+            let key = format!("{}/{schema_slug}/{entry_id}", app.app.slug);
             state.cache.remove(&key);
-            state.audit.log(
+            state.audit.log_with_app(
                 "api",
                 "content_delete",
                 "content",
                 &format!("{schema_slug}/{entry_id}"),
                 None,
+                Some(app.app.id),
             );
             StatusCode::NO_CONTENT.into_response()
         }
@@ -448,11 +518,17 @@ async fn delete_entry(
 
 async fn get_single(
     State(state): State<AppState>,
-    _token: BearerToken,
-    Path(schema_slug): Path<String>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
     Query(params): Query<ListParams>,
 ) -> impl IntoResponse {
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
@@ -464,7 +540,7 @@ async fn get_single(
         }
     };
 
-    match content::get_entry(&state.config.content_dir(), &schema_file, "_single") {
+    match content::get_entry(&content_dir, &schema_file, "_single") {
         Ok(Some(entry)) => {
             // Check status filter
             let status = if params.status.is_empty() {
@@ -477,7 +553,7 @@ async fn get_single(
             }
 
             let mut data = content::strip_internal_status(&entry.data);
-            resolve_references(&mut data, &schema_file.schema, &state.cache);
+            resolve_references(&mut data, &schema_file.schema, &state.cache, &app.app.slug);
             Json(data).into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
@@ -492,13 +568,20 @@ async fn get_single(
 async fn upsert_single(
     State(state): State<AppState>,
     token: BearerToken,
-    Path(schema_slug): Path<String>,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
     Json(data): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "editor") {
         return e.into_response();
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
@@ -519,11 +602,9 @@ async fn upsert_single(
     }
 
     // Snapshot current version for history
-    if let Ok(Some(current)) =
-        content::get_entry(&state.config.content_dir(), &schema_file, "_single")
-    {
+    if let Ok(Some(current)) = content::get_entry(&content_dir, &schema_file, "_single") {
         if let Err(e) = crate::history::snapshot_entry(
-            &state.config.data_dir,
+            &app_dir,
             &schema_slug,
             "_single",
             &current.data,
@@ -534,27 +615,30 @@ async fn upsert_single(
     }
 
     let hashes = uploads::extract_upload_hashes(&data);
-    match content::save_entry(
-        &state.config.content_dir(),
-        &schema_file,
-        Some("_single"),
-        data,
-    ) {
+    match content::save_entry(&content_dir, &schema_file, Some("_single"), data) {
         Ok(_) => {
             crate::cache::reload_entry(
                 &state.cache,
-                &state.config.content_dir(),
+                &content_dir,
                 &schema_file,
                 "_single",
+                &app.app.slug,
             );
-            let _ =
-                uploads::db_update_references(&state.pool, &schema_slug, "_single", &hashes).await;
-            state.audit.log(
+            let _ = uploads::db_update_references(
+                &state.pool,
+                app.app.id,
+                &schema_slug,
+                "_single",
+                &hashes,
+            )
+            .await;
+            state.audit.log_with_app(
                 "api",
                 "content_update",
                 "content",
                 &format!("{schema_slug}/_single"),
                 None,
+                Some(app.app.id),
             );
             StatusCode::OK.into_response()
         }
@@ -569,12 +653,19 @@ async fn upsert_single(
 async fn delete_single(
     State(state): State<AppState>,
     token: BearerToken,
-    Path(schema_slug): Path<String>,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "editor") {
         return e.into_response();
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
@@ -586,18 +677,19 @@ async fn delete_single(
         }
     };
 
-    let _ = uploads::db_delete_references(&state.pool, &schema_slug, "_single").await;
-    match content::delete_entry(&state.config.content_dir(), &schema_file, "_single") {
+    let _ = uploads::db_delete_references(&state.pool, app.app.id, &schema_slug, "_single").await;
+    match content::delete_entry(&content_dir, &schema_file, "_single") {
         Ok(()) => {
-            crate::history::delete_history(&state.config.data_dir, &schema_slug, "_single");
-            let key = format!("{schema_slug}/_single");
+            crate::history::delete_history(&app_dir, &schema_slug, "_single");
+            let key = format!("{}/_single/{schema_slug}", app.app.slug);
             state.cache.remove(&key);
-            state.audit.log(
+            state.audit.log_with_app(
                 "api",
                 "content_delete",
                 "content",
                 &format!("{schema_slug}/_single"),
                 None,
+                Some(app.app.id),
             );
             StatusCode::NO_CONTENT.into_response()
         }
@@ -612,12 +704,18 @@ async fn delete_single(
 async fn api_publish_entry(
     State(state): State<AppState>,
     token: BearerToken,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "editor") {
         return e.into_response();
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
@@ -629,12 +727,7 @@ async fn api_publish_entry(
         }
     };
 
-    if let Err(e) = content::set_entry_status(
-        &state.config.content_dir(),
-        &schema_file,
-        &entry_id,
-        "published",
-    ) {
+    if let Err(e) = content::set_entry_status(&content_dir, &schema_file, &entry_id, "published") {
         let msg = e.to_string();
         if msg.contains("not found") {
             return (
@@ -652,17 +745,19 @@ async fn api_publish_entry(
 
     crate::cache::reload_entry(
         &state.cache,
-        &state.config.content_dir(),
+        &content_dir,
         &schema_file,
         &entry_id,
+        &app.app.slug,
     );
 
-    state.audit.log(
+    state.audit.log_with_app(
         "api",
         "entry_published",
         "content",
         &format!("{schema_slug}/{entry_id}"),
         None,
+        Some(app.app.id),
     );
 
     Json(serde_json::json!({"status": "published", "entry_id": entry_id})).into_response()
@@ -671,12 +766,18 @@ async fn api_publish_entry(
 async fn api_unpublish_entry(
     State(state): State<AppState>,
     token: BearerToken,
-    Path((schema_slug, entry_id)): Path<(String, String)>,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "editor") {
         return e.into_response();
     }
-    let schema_file = match schema::get_schema(&state.config.schemas_dir(), &schema_slug) {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
@@ -688,12 +789,7 @@ async fn api_unpublish_entry(
         }
     };
 
-    if let Err(e) = content::set_entry_status(
-        &state.config.content_dir(),
-        &schema_file,
-        &entry_id,
-        "draft",
-    ) {
+    if let Err(e) = content::set_entry_status(&content_dir, &schema_file, &entry_id, "draft") {
         let msg = e.to_string();
         if msg.contains("not found") {
             return (
@@ -711,17 +807,19 @@ async fn api_unpublish_entry(
 
     crate::cache::reload_entry(
         &state.cache,
-        &state.config.content_dir(),
+        &content_dir,
         &schema_file,
         &entry_id,
+        &app.app.slug,
     );
 
-    state.audit.log(
+    state.audit.log_with_app(
         "api",
         "entry_unpublished",
         "content",
         &format!("{schema_slug}/{entry_id}"),
         None,
+        Some(app.app.id),
     );
 
     Json(serde_json::json!({"status": "draft", "entry_id": entry_id})).into_response()
@@ -730,11 +828,16 @@ async fn api_unpublish_entry(
 async fn upload_file(
     State(state): State<AppState>,
     token: BearerToken,
+    app: ApiAppContext,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "editor") {
         return e.into_response();
     }
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let uploads_dir = state.config.app_uploads_dir(&app.app.slug);
     while let Ok(Some(field)) = multipart.next_field().await {
         let filename = field.file_name().unwrap_or("file").to_string();
         let content_type = field
@@ -757,8 +860,9 @@ async fn upload_file(
         }
 
         match uploads::store_upload(
-            &state.config.uploads_dir(),
+            &uploads_dir,
             &state.pool,
+            app.app.id,
             &filename,
             &content_type,
             &data,
@@ -793,23 +897,38 @@ async fn upload_file(
 
 async fn get_upload(
     State(state): State<AppState>,
-    _token: BearerToken,
-    Path(hash): Path<String>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, hash)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    crate::routes::uploads::serve_upload_by_hash(&state, &hash).await
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let uploads_dir = state.config.app_uploads_dir(&app.app.slug);
+    crate::routes::uploads::serve_upload_by_hash(&state, app.app.id, &uploads_dir, &hash).await
 }
 
-async fn export_bundle(State(state): State<AppState>, token: BearerToken) -> impl IntoResponse {
+async fn export_bundle(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "admin") {
         return e.into_response();
     }
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let app_dir = state.config.app_dir(&app.app.slug);
     let tmp =
         std::env::temp_dir().join(format!("substrukt-export-{}.tar.gz", uuid::Uuid::new_v4()));
-    match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
+    match crate::sync::export_bundle(&app_dir, &state.pool, app.app.id, &tmp).await {
         Ok(()) => match std::fs::read(&tmp) {
             Ok(data) => {
                 let _ = std::fs::remove_file(&tmp);
-                state.audit.log("api", "export", "bundle", "", None);
+                state
+                    .audit
+                    .log_with_app("api", "export", "bundle", "", None, Some(app.app.id));
                 let mut response = axum::body::Body::from(data).into_response();
                 response.headers_mut().insert(
                     axum::http::header::CONTENT_TYPE,
@@ -841,11 +960,16 @@ async fn export_bundle(State(state): State<AppState>, token: BearerToken) -> imp
 async fn import_bundle(
     State(state): State<AppState>,
     token: BearerToken,
+    app: ApiAppContext,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "admin") {
         return e.into_response();
     }
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let app_dir = state.config.app_dir(&app.app.slug);
     while let Ok(Some(field)) = multipart.next_field().await {
         let data = match field.bytes().await {
             Ok(d) => d,
@@ -862,17 +986,14 @@ async fn import_bundle(
             continue;
         }
 
-        match crate::sync::import_bundle_from_bytes(&state.config.data_dir, &state.pool, &data)
-            .await
+        match crate::sync::import_bundle_from_bytes(&app_dir, &state.pool, app.app.id, &data).await
         {
             Ok(warnings) => {
                 // Rebuild cache after import
-                crate::cache::rebuild(
-                    &state.cache,
-                    &state.config.schemas_dir(),
-                    &state.config.content_dir(),
-                );
-                state.audit.log("api", "import", "bundle", "", None);
+                crate::cache::rebuild(&state.cache, &state.config.data_dir);
+                state
+                    .audit
+                    .log_with_app("api", "import", "bundle", "", None, Some(app.app.id));
                 return Json(serde_json::json!({
                     "status": "ok",
                     "warnings": warnings,
@@ -898,9 +1019,13 @@ async fn import_bundle(
 
 async fn api_list_deployments(
     State(state): State<AppState>,
-    _token: BearerToken,
+    token: BearerToken,
+    app: ApiAppContext,
 ) -> impl IntoResponse {
-    match state.audit.list_deployments().await {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    match state.audit.list_deployments_for_app(app.app.id).await {
         Ok(deployments) => {
             let data: Vec<serde_json::Value> = deployments
                 .iter()
@@ -928,13 +1053,21 @@ async fn api_list_deployments(
 async fn api_fire_deployment(
     State(state): State<AppState>,
     token: BearerToken,
-    Path(slug): Path<String>,
+    app: ApiAppContext,
+    Path((_app_slug, slug)): Path<(String, String)>,
 ) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "editor") {
         return e.into_response();
     }
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
 
-    let dep = match state.audit.get_deployment_by_slug(&slug).await {
+    let dep = match state
+        .audit
+        .get_deployment_by_slug_and_app(app.app.id, &slug)
+        .await
+    {
         Ok(Some(d)) => d,
         Ok(None) => {
             return (
@@ -957,19 +1090,30 @@ async fn api_fire_deployment(
         &state.audit,
         &dep,
         crate::webhooks::TriggerSource::Manual,
+        &app.app.slug,
     )
     .await
     {
         Ok(_) => {
-            state
-                .audit
-                .log("api", "deployment_fired", "deployment", &dep.slug, None);
+            state.audit.log_with_app(
+                "api",
+                "deployment_fired",
+                "deployment",
+                &dep.slug,
+                None,
+                Some(app.app.id),
+            );
             Json(serde_json::json!({"status": "triggered"})).into_response()
         }
         Err(e) => {
-            state
-                .audit
-                .log("api", "deployment_fired", "deployment", &dep.slug, None);
+            state.audit.log_with_app(
+                "api",
+                "deployment_fired",
+                "deployment",
+                &dep.slug,
+                None,
+                Some(app.app.id),
+            );
             (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({"error": e.to_string()})),

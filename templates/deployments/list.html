@@ -4,7 +4,7 @@
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-2xl font-bold tracking-tight">Deployments</h1>
   {% if user_role == "admin" %}
-  <a href="/deployments/new"
+  <a href="/apps/{{ app.slug }}/deployments/new"
     class="px-4 py-2 bg-accent text-white rounded-md hover:bg-accent-hover text-sm font-medium">
     Create Deployment
   </a>
@@ -61,13 +61,13 @@
         </td>
         <td class="px-4 py-2.5 text-right">
           <div class="flex items-center justify-end gap-2">
-            <form method="post" action="/deployments/{{ dep.slug }}/fire" class="inline">
+            <form method="post" action="/apps/{{ app.slug }}/deployments/{{ dep.slug }}/fire" class="inline">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
               <button type="submit" class="text-accent hover:underline text-sm font-medium">Fire</button>
             </form>
             {% if user_role == "admin" %}
-            <a href="/deployments/{{ dep.slug }}/edit" class="text-muted hover:text-fg text-sm">Edit</a>
-            <form method="post" action="/deployments/{{ dep.slug }}/delete" class="inline"
+            <a href="/apps/{{ app.slug }}/deployments/{{ dep.slug }}/edit" class="text-muted hover:text-fg text-sm">Edit</a>
+            <form method="post" action="/apps/{{ app.slug }}/deployments/{{ dep.slug }}/delete" class="inline"
               onsubmit="return confirm('Delete deployment {{ dep.name }}?')">
               <input type="hidden" name="_csrf" value="{{ csrf_token }}">
               <button type="submit" class="text-danger hover:underline text-sm">Delete</button>
