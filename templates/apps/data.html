@@ -1,0 +1,61 @@
+{% extends base_template %}
+{% block title %}Data — {{ app.name }} — Substrukt{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold tracking-tight">{{ app.name }} — Data</h1>
+  <a href="/apps/{{ app.slug }}/settings" class="text-muted hover:text-primary text-sm">Back to Settings</a>
+</div>
+
+{% if data_result %}
+{% if data_result.status == "success" %}
+<div class="bg-success-soft border border-success text-success p-4 rounded mb-6">
+  {{ data_result.message }}
+</div>
+{% elif data_result.status == "warning" %}
+<div class="bg-accent-soft border border-accent text-accent p-4 rounded mb-6">
+  <div class="font-medium">{{ data_result.message }}</div>
+  {% if data_result.warnings %}
+  <details class="mt-2">
+    <summary class="text-sm cursor-pointer hover:underline">Show warnings</summary>
+    <ul class="mt-2 text-sm list-disc list-inside space-y-1">
+      {% for w in data_result.warnings %}
+      <li>{{ w }}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</div>
+{% elif data_result.status == "error" %}
+<div class="bg-danger-soft border border-danger text-danger p-4 rounded mb-6">
+  {{ data_result.message }}
+</div>
+{% endif %}
+{% endif %}
+
+<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
+  <h2 class="text-lg font-medium mb-2">Export</h2>
+  <p class="text-muted text-sm mb-4">Export all schemas, content, and uploads for this app as a .tar.gz bundle.</p>
+  <form method="post" action="/apps/{{ app.slug }}/settings/data/export" hx-disable>
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
+      Download Bundle
+    </button>
+  </form>
+</div>
+
+<div class="bg-card border border-border-light rounded-lg p-6">
+  <h2 class="text-lg font-medium mb-2">Import</h2>
+  <p class="text-muted text-sm mb-4">Import a .tar.gz bundle. This will overwrite existing schemas, content, and uploads for this app.</p>
+  <form method="post" action="/apps/{{ app.slug }}/settings/data/import" enctype="multipart/form-data" hx-disable>
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="flex gap-3 items-end">
+      <input type="file" name="bundle" accept=".tar.gz,.tgz,application/gzip" required
+        class="flex-1 text-sm file:mr-3 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-card-alt file:text-primary hover:file:bg-sidebar-hover">
+      <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium"
+        onclick="return confirm('This will overwrite existing data for this app. Continue?')">
+        Import Bundle
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
