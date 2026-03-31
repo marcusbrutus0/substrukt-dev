@@ -63,6 +63,10 @@ impl TestServer {
             audit: audit_logger,
             http_client: reqwest::Client::new(),
             deploy_tasks: DashMap::new(),
+            s3_config: None,
+            backup_trigger: None,
+            backup_running: std::sync::atomic::AtomicBool::new(false),
+            backup_cancel: None,
         });
 
         let app = routes::build_router(state).layer(session_layer);

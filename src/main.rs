@@ -1,9 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use clap::{Parser, Subcommand};
 use dashmap::DashMap;
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 use tower_sessions::SessionManagerLayer;
 use tower_sessions_sqlx_store::SqliteStore;
 
@@ -167,6 +169,16 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
         .user_agent("Substrukt/0.1")
         .build()?;
 
+    // S3 backup configuration
+    let s3_config = substrukt::backup::S3Config::from_env();
+    let (backup_trigger_tx, backup_trigger_rx) = if s3_config.is_some() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<()>(1);
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+    let backup_cancel = s3_config.as_ref().map(|_| CancellationToken::new());
+
     let state = Arc::new(AppStateInner {
         pool,
         config: config.clone(),
@@ -178,6 +190,10 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
         audit: audit_logger,
         http_client,
         deploy_tasks: DashMap::new(),
+        s3_config,
+        backup_trigger: backup_trigger_tx,
+        backup_running: AtomicBool::new(false),
+        backup_cancel: backup_cancel.clone(),
     });
 
     // Spawn auto-deploy tasks for all enabled deployments
@@ -185,6 +201,18 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
         for deployment in deployments {
             substrukt::webhooks::spawn_auto_deploy_task(&state, deployment);
         }
+    }
+
+    // Spawn backup task if S3 is configured
+    if let (Some(s3_cfg), Some(rx), Some(cancel)) =
+        (state.s3_config.clone(), backup_trigger_rx, &backup_cancel)
+    {
+        substrukt::backup::spawn_backup_task(
+            state.clone(),
+            s3_cfg,
+            rx,
+            cancel.child_token(),
+        );
     }
 
     // File watcher for cache invalidation
@@ -206,6 +234,10 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+
+    if let Some(ref token) = backup_cancel {
+        token.cancel();
+    }
 
     Ok(())
 }

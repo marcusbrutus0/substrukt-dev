@@ -1,12 +1,15 @@
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use dashmap::DashMap;
 use metrics_exporter_prometheus::PrometheusHandle;
 use minijinja_autoreload::AutoReloader;
 use sqlx::SqlitePool;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::audit::AuditLogger;
+use crate::backup::S3Config;
 use crate::config::Config;
 use crate::rate_limit::RateLimiter;
 
@@ -23,6 +26,10 @@ pub struct AppStateInner {
     pub audit: AuditLogger,
     pub http_client: reqwest::Client,
     pub deploy_tasks: DashMap<i64, CancellationToken>,
+    pub s3_config: Option<S3Config>,
+    pub backup_trigger: Option<mpsc::Sender<()>>,
+    pub backup_running: AtomicBool,
+    pub backup_cancel: Option<CancellationToken>,
 }
 
 pub type AppState = Arc<AppStateInner>;
