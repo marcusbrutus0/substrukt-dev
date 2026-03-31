@@ -1,3 +1,5 @@
+use std::sync::atomic::Ordering;
+
 use axum::{
     Router,
     extract::{Multipart, Path, Query, State},
@@ -51,6 +53,8 @@ pub fn routes(state: AppState) -> Router<AppState> {
         .route("/import", post(import_bundle))
         .route("/deployments", get(api_list_deployments))
         .route("/deployments/{slug}/fire", post(api_fire_deployment))
+        .route("/backups/status", get(api_backup_status))
+        .route("/backups/trigger", post(api_trigger_backup))
         .layer(middleware::from_fn_with_state(state, api_rate_limit))
 }
 
@@ -973,4 +977,86 @@ async fn api_fire_deployment(
                 .into_response()
         }
     }
+}
+
+async fn api_backup_status(
+    State(state): State<AppState>,
+    token: BearerToken,
+) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "admin") {
+        return e.into_response();
+    }
+
+    let config = match state.audit.get_backup_config().await {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    let latest_backup = state.audit.latest_backup().await.ok().flatten();
+    let backup_running = state.backup_running.load(Ordering::SeqCst);
+
+    Json(serde_json::json!({
+        "s3_configured": state.s3_config.is_some(),
+        "config": {
+            "frequency_hours": config.frequency_hours,
+            "retention_count": config.retention_count,
+            "enabled": config.enabled,
+        },
+        "backup_running": backup_running,
+        "latest_backup": latest_backup,
+    }))
+    .into_response()
+}
+
+async fn api_trigger_backup(
+    State(state): State<AppState>,
+    token: BearerToken,
+) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "admin") {
+        return e.into_response();
+    }
+
+    if state.s3_config.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "S3 backup not configured"})),
+        )
+            .into_response();
+    }
+
+    if state.backup_running.load(Ordering::SeqCst) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": "Backup already in progress"})),
+        )
+            .into_response();
+    }
+
+    if let Some(tx) = &state.backup_trigger {
+        if tx.try_send(()).is_err() {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": "Backup already in progress"})),
+            )
+                .into_response();
+        }
+    }
+
+    state
+        .audit
+        .log(
+            "api",
+            "backup_triggered",
+            "backup",
+            "",
+            Some(&serde_json::json!({"trigger": "manual"}).to_string()),
+        );
+
+    Json(serde_json::json!({"status": "triggered"})).into_response()
 }
