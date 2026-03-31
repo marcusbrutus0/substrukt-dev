@@ -179,7 +179,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     config.ensure_app_dirs("default")?;
 
     // Template environment (auto-reloads on file changes)
-    let reloader = templates::create_reloader(config.schemas_dir());
+    let reloader = templates::create_reloader();
 
     // Migrate .meta.json sidecars to SQLite (one-time, idempotent)
     // Migrate .meta.json sidecars to SQLite (one-time, idempotent, iterates app dirs)
@@ -187,7 +187,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
 
     // Content cache
     let content_cache = DashMap::new();
-    cache::populate(&content_cache, &config.schemas_dir(), &config.content_dir());
+    cache::populate(&content_cache, &config.data_dir);
 
     // Prometheus metrics
     let metrics_handle = metrics::setup_recorder();
@@ -242,8 +242,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     // File watcher for cache invalidation
     let _watcher = cache::spawn_watcher(
         Arc::new(state.cache.clone()),
-        config.schemas_dir(),
-        config.content_dir(),
+        config.data_dir.clone(),
     );
 
     let app = routes::build_router(state)

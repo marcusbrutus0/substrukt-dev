@@ -307,6 +307,7 @@ async fn create_entry(
                 &state.config.content_dir(),
                 &schema_file,
                 &id,
+                "default",
             );
             let _ = uploads::db_update_references(&state.pool, 1, &schema_slug, &id, &hashes).await;
             state.audit.log(
@@ -383,6 +384,7 @@ async fn update_entry(
                 &state.config.content_dir(),
                 &schema_file,
                 &entry_id,
+                "default",
             );
             let _ =
                 uploads::db_update_references(&state.pool, 1, &schema_slug, &entry_id, &hashes).await;
@@ -546,6 +548,7 @@ async fn upsert_single(
                 &state.config.content_dir(),
                 &schema_file,
                 "_single",
+                "default",
             );
             let _ =
                 uploads::db_update_references(&state.pool, 1, &schema_slug, "_single", &hashes).await;
@@ -655,6 +658,7 @@ async fn api_publish_entry(
         &state.config.content_dir(),
         &schema_file,
         &entry_id,
+        "default",
     );
 
     state.audit.log(
@@ -714,6 +718,7 @@ async fn api_unpublish_entry(
         &state.config.content_dir(),
         &schema_file,
         &entry_id,
+        "default",
     );
 
     state.audit.log(
@@ -868,11 +873,7 @@ async fn import_bundle(
         {
             Ok(warnings) => {
                 // Rebuild cache after import
-                crate::cache::rebuild(
-                    &state.cache,
-                    &state.config.schemas_dir(),
-                    &state.config.content_dir(),
-                );
+                crate::cache::rebuild(&state.cache, &state.config.data_dir);
                 state.audit.log("api", "import", "bundle", "", None);
                 return Json(serde_json::json!({
                     "status": "ok",

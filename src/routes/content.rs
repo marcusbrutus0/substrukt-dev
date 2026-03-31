@@ -437,6 +437,7 @@ async fn create_entry(
                 &state.config.content_dir(),
                 &schema_file,
                 &id,
+                "default", // TODO: replace with app.app.slug in Task 7
             );
             let _ = uploads::db_update_references(&state.pool, 1, &schema_slug, &id, &hashes).await;
             let user_id = auth::current_user_id(&session).await.unwrap_or(0);
@@ -547,6 +548,7 @@ async fn update_entry(
                 &state.config.content_dir(),
                 &schema_file,
                 &entry_id,
+                "default", // TODO: replace with app.app.slug in Task 7
             );
             let _ =
                 uploads::db_update_references(&state.pool, 1, &schema_slug, &entry_id, &hashes).await;
@@ -641,6 +643,7 @@ async fn publish_entry(
         &state.config.content_dir(),
         &schema_file,
         &entry_id,
+        "default", // TODO: replace with app.app.slug in Task 7
     );
 
     let user_id = auth::current_user_id(&session).await.unwrap_or(0);
@@ -718,6 +721,7 @@ async fn unpublish_entry(
         &state.config.content_dir(),
         &schema_file,
         &entry_id,
+        "default", // TODO: replace with app.app.slug in Task 7
     );
 
     let user_id = auth::current_user_id(&session).await.unwrap_or(0);
@@ -965,6 +969,7 @@ async fn revert_entry(
                 &state.config.content_dir(),
                 &schema_file,
                 &entry_id,
+                "default", // TODO: replace with app.app.slug in Task 7
             );
             let user_id = auth::current_user_id(&session).await.unwrap_or(0);
             state.audit.log(

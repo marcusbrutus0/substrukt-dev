@@ -272,11 +272,7 @@ async fn import_data(
     // Import
     match crate::sync::import_bundle_from_bytes(&state.config.data_dir, &state.pool, &data).await {
         Ok(warnings) => {
-            crate::cache::rebuild(
-                &state.cache,
-                &state.config.schemas_dir(),
-                &state.config.content_dir(),
-            );
+            crate::cache::rebuild(&state.cache, &state.config.data_dir);
             state
                 .audit
                 .log(&user_id.to_string(), "import", "bundle", "", None);

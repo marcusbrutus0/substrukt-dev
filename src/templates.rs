@@ -1,9 +1,7 @@
-use std::path::PathBuf;
-
 use minijinja::Environment;
 use minijinja_autoreload::AutoReloader;
 
-pub fn create_reloader(schemas_dir: PathBuf) -> AutoReloader {
+pub fn create_reloader() -> AutoReloader {
     AutoReloader::new(move |notifier| {
         let mut env = Environment::new();
 
@@ -21,21 +19,8 @@ pub fn create_reloader(schemas_dir: PathBuf) -> AutoReloader {
             minijinja_embed::load_templates!(&mut env);
         }
 
-        // Default base_template — overridden to "_partial.html" for htmx requests
+        // Default base_template -- overridden to "_partial.html" for htmx requests
         env.add_global("base_template", minijinja::Value::from("base.html"));
-        let sd = schemas_dir.clone();
-        env.add_function("get_nav_schemas", move || -> Vec<minijinja::Value> {
-            let schemas = crate::schema::list_schemas(&sd).unwrap_or_default();
-            schemas
-                .iter()
-                .map(|s| {
-                    minijinja::context! {
-                        title => s.meta.title,
-                        slug => s.meta.slug,
-                    }
-                })
-                .collect()
-        });
 
         Ok(env)
     })
