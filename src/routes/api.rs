@@ -308,7 +308,7 @@ async fn create_entry(
                 &schema_file,
                 &id,
             );
-            let _ = uploads::db_update_references(&state.pool, &schema_slug, &id, &hashes).await;
+            let _ = uploads::db_update_references(&state.pool, 1, &schema_slug, &id, &hashes).await;
             state.audit.log(
                 "api",
                 "content_create",
@@ -385,7 +385,7 @@ async fn update_entry(
                 &entry_id,
             );
             let _ =
-                uploads::db_update_references(&state.pool, &schema_slug, &entry_id, &hashes).await;
+                uploads::db_update_references(&state.pool, 1, &schema_slug, &entry_id, &hashes).await;
             state.audit.log(
                 "api",
                 "content_update",
@@ -423,7 +423,7 @@ async fn delete_entry(
         }
     };
 
-    let _ = uploads::db_delete_references(&state.pool, &schema_slug, &entry_id).await;
+    let _ = uploads::db_delete_references(&state.pool, 1, &schema_slug, &entry_id).await;
     match content::delete_entry(&state.config.content_dir(), &schema_file, &entry_id) {
         Ok(()) => {
             crate::history::delete_history(&state.config.data_dir, &schema_slug, &entry_id);
@@ -548,7 +548,7 @@ async fn upsert_single(
                 "_single",
             );
             let _ =
-                uploads::db_update_references(&state.pool, &schema_slug, "_single", &hashes).await;
+                uploads::db_update_references(&state.pool, 1, &schema_slug, "_single", &hashes).await;
             state.audit.log(
                 "api",
                 "content_update",
@@ -586,7 +586,7 @@ async fn delete_single(
         }
     };
 
-    let _ = uploads::db_delete_references(&state.pool, &schema_slug, "_single").await;
+    let _ = uploads::db_delete_references(&state.pool, 1, &schema_slug, "_single").await;
     match content::delete_entry(&state.config.content_dir(), &schema_file, "_single") {
         Ok(()) => {
             crate::history::delete_history(&state.config.data_dir, &schema_slug, "_single");
@@ -759,6 +759,7 @@ async fn upload_file(
         match uploads::store_upload(
             &state.config.uploads_dir(),
             &state.pool,
+            1, // TODO: replace with app.app.id in Task 8
             &filename,
             &content_type,
             &data,

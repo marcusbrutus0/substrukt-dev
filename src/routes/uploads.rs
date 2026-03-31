@@ -251,6 +251,7 @@ async fn upload_file(
         match uploads::store_upload(
             &state.config.uploads_dir(),
             &state.pool,
+            1, // TODO: replace with app.app.id in Task 7
             &filename,
             &content_type,
             &data,
@@ -307,7 +308,7 @@ async fn serve_file(state: &AppState, hash: &str) -> axum::response::Response {
         None => return StatusCode::NOT_FOUND.into_response(),
     };
 
-    let meta = uploads::db_get_upload_meta(&state.pool, hash)
+    let meta = uploads::db_get_upload_meta(&state.pool, 1, hash) // TODO: replace with app.app.id in Task 7
         .await
         .ok()
         .flatten();

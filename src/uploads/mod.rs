@@ -50,6 +50,7 @@ fn is_sha256_hash(s: &str) -> bool {
 pub async fn store_upload(
     uploads_dir: &Path,
     pool: &SqlitePool,
+    app_id: i64,
     filename: &str,
     mime: &str,
     data: &[u8],
@@ -75,7 +76,7 @@ pub async fn store_upload(
         mime: mime.to_string(),
         size: data.len() as u64,
     };
-    db_insert_upload(pool, &meta).await?;
+    db_insert_upload(pool, app_id, &meta).await?;
 
     Ok(meta)
 }
@@ -93,22 +94,30 @@ pub fn get_upload_path(uploads_dir: &Path, hash: &str) -> Option<std::path::Path
 // -- SQLite operations --
 
 /// Insert upload metadata into SQLite. Uses INSERT OR IGNORE for dedup.
-pub async fn db_insert_upload(pool: &SqlitePool, meta: &UploadMeta) -> eyre::Result<()> {
-    sqlx::query("INSERT OR IGNORE INTO uploads (hash, filename, mime, size) VALUES (?, ?, ?, ?)")
-        .bind(&meta.hash)
-        .bind(&meta.filename)
-        .bind(&meta.mime)
-        .bind(meta.size as i64)
-        .execute(pool)
-        .await?;
+pub async fn db_insert_upload(pool: &SqlitePool, app_id: i64, meta: &UploadMeta) -> eyre::Result<()> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO uploads (app_id, hash, filename, mime, size) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(app_id)
+    .bind(&meta.hash)
+    .bind(&meta.filename)
+    .bind(&meta.mime)
+    .bind(meta.size as i64)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
-/// Get upload metadata from SQLite by hash.
-pub async fn db_get_upload_meta(pool: &SqlitePool, hash: &str) -> eyre::Result<Option<UploadMeta>> {
+/// Get upload metadata from SQLite by hash, scoped to an app.
+pub async fn db_get_upload_meta(
+    pool: &SqlitePool,
+    app_id: i64,
+    hash: &str,
+) -> eyre::Result<Option<UploadMeta>> {
     let row = sqlx::query_as::<_, (String, String, String, i64)>(
-        "SELECT hash, filename, mime, size FROM uploads WHERE hash = ?",
+        "SELECT hash, filename, mime, size FROM uploads WHERE app_id = ? AND hash = ?",
     )
+    .bind(app_id)
     .bind(hash)
     .fetch_optional(pool)
     .await?;
@@ -124,22 +133,27 @@ pub async fn db_get_upload_meta(pool: &SqlitePool, hash: &str) -> eyre::Result<O
 /// Replace all upload references for a content entry.
 pub async fn db_update_references(
     pool: &SqlitePool,
+    app_id: i64,
     schema_slug: &str,
     entry_id: &str,
     hashes: &HashSet<String>,
 ) -> eyre::Result<()> {
     let mut tx = pool.begin().await?;
 
-    sqlx::query("DELETE FROM upload_references WHERE schema_slug = ? AND entry_id = ?")
-        .bind(schema_slug)
-        .bind(entry_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "DELETE FROM upload_references WHERE app_id = ? AND schema_slug = ? AND entry_id = ?",
+    )
+    .bind(app_id)
+    .bind(schema_slug)
+    .bind(entry_id)
+    .execute(&mut *tx)
+    .await?;
 
     for hash in hashes {
         sqlx::query(
-            "INSERT OR IGNORE INTO upload_references (upload_hash, schema_slug, entry_id) VALUES (?, ?, ?)"
+            "INSERT OR IGNORE INTO upload_references (app_id, upload_hash, schema_slug, entry_id) VALUES (?, ?, ?, ?)"
         )
+        .bind(app_id)
         .bind(hash)
         .bind(schema_slug)
         .bind(entry_id)
@@ -154,14 +168,18 @@ pub async fn db_update_references(
 /// Delete all upload references for a content entry.
 pub async fn db_delete_references(
     pool: &SqlitePool,
+    app_id: i64,
     schema_slug: &str,
     entry_id: &str,
 ) -> eyre::Result<()> {
-    sqlx::query("DELETE FROM upload_references WHERE schema_slug = ? AND entry_id = ?")
-        .bind(schema_slug)
-        .bind(entry_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "DELETE FROM upload_references WHERE app_id = ? AND schema_slug = ? AND entry_id = ?",
+    )
+    .bind(app_id)
+    .bind(schema_slug)
+    .bind(entry_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -205,15 +223,39 @@ fn collect_upload_hashes(value: &Value, hashes: &mut HashSet<String>) {
 /// One-time migration: populate SQLite from existing .meta.json sidecars.
 /// Idempotent: only runs if .meta.json files exist on disk.
 /// Deletes .meta.json files after successful migration.
-pub async fn migrate_meta_sidecars(
-    uploads_dir: &Path,
-    data_dir: &Path,
-    pool: &SqlitePool,
-) -> eyre::Result<()> {
-    // Find all .meta.json files
-    let mut meta_files = Vec::new();
-    if uploads_dir.exists() {
-        for prefix_entry in std::fs::read_dir(uploads_dir)? {
+/// Iterates all app directories in data_dir.
+pub async fn migrate_meta_sidecars(data_dir: &Path, pool: &SqlitePool) -> eyre::Result<()> {
+    // Iterate subdirectories of data_dir that contain an uploads/ subdir
+    if !data_dir.exists() {
+        return Ok(());
+    }
+
+    for dir_entry in std::fs::read_dir(data_dir)? {
+        let dir_entry = dir_entry?;
+        if !dir_entry.file_type()?.is_dir() {
+            continue;
+        }
+        let app_dir = dir_entry.path();
+        let uploads_dir = app_dir.join("uploads");
+        if !uploads_dir.exists() {
+            continue;
+        }
+
+        let app_slug = dir_entry
+            .file_name()
+            .to_string_lossy()
+            .to_string();
+
+        // Look up app by slug to get app_id
+        let app = crate::db::models::find_app_by_slug(pool, &app_slug).await?;
+        let app_id = match app {
+            Some(a) => a.id,
+            None => continue, // Skip dirs that don't correspond to an app
+        };
+
+        // Find all .meta.json files in this app's uploads dir
+        let mut meta_files = Vec::new();
+        for prefix_entry in std::fs::read_dir(&uploads_dir)? {
             let prefix_entry = prefix_entry?;
             if prefix_entry.file_type()?.is_dir() {
                 for file_entry in std::fs::read_dir(prefix_entry.path())? {
@@ -225,44 +267,52 @@ pub async fn migrate_meta_sidecars(
                 }
             }
         }
+
+        if meta_files.is_empty() {
+            continue;
+        }
+
+        tracing::info!(
+            "Found {} .meta.json sidecars to migrate for app '{}'",
+            meta_files.len(),
+            app_slug
+        );
+
+        // Insert upload metadata (INSERT OR IGNORE handles re-runs safely)
+        for meta_path in &meta_files {
+            let content = std::fs::read_to_string(meta_path)?;
+            let meta: UploadMeta = serde_json::from_str(&content)?;
+            db_insert_upload(pool, app_id, &meta).await?;
+        }
+
+        // Scan content files and populate references
+        populate_references_from_content(&app_dir, pool, app_id).await?;
+
+        // Delete .meta.json sidecars
+        for meta_path in &meta_files {
+            std::fs::remove_file(meta_path)?;
+        }
+
+        tracing::info!(
+            "Migrated {} upload metadata files to SQLite for app '{}'",
+            meta_files.len(),
+            app_slug
+        );
     }
 
-    if meta_files.is_empty() {
-        return Ok(());
-    }
-
-    tracing::info!("Found {} .meta.json sidecars to migrate", meta_files.len());
-
-    // Insert upload metadata (INSERT OR IGNORE handles re-runs safely)
-    for meta_path in &meta_files {
-        let content = std::fs::read_to_string(meta_path)?;
-        let meta: UploadMeta = serde_json::from_str(&content)?;
-        db_insert_upload(pool, &meta).await?;
-    }
-
-    // Scan content files and populate references
-    populate_references_from_content(data_dir, pool).await?;
-
-    // Delete .meta.json sidecars
-    for meta_path in &meta_files {
-        std::fs::remove_file(meta_path)?;
-    }
-
-    tracing::info!(
-        "Migrated {} upload metadata files to SQLite",
-        meta_files.len()
-    );
     Ok(())
 }
 
 /// Scan all content JSON files and populate upload_references table.
 /// Used by both startup migration and import.
+/// `app_dir` is the root directory for the app (e.g., `data/default/`).
 pub async fn populate_references_from_content(
-    data_dir: &Path,
+    app_dir: &Path,
     pool: &SqlitePool,
+    app_id: i64,
 ) -> eyre::Result<()> {
-    let schemas_dir = data_dir.join("schemas");
-    let content_dir = data_dir.join("content");
+    let schemas_dir = app_dir.join("schemas");
+    let content_dir = app_dir.join("content");
     if !schemas_dir.exists() || !content_dir.exists() {
         return Ok(());
     }
@@ -302,7 +352,7 @@ pub async fn populate_references_from_content(
                         .to_string();
                     let data: Value = serde_json::from_str(&std::fs::read_to_string(&entry_path)?)?;
                     let hashes = extract_upload_hashes(&data);
-                    db_update_references(pool, &schema_slug, &entry_id, &hashes).await?;
+                    db_update_references(pool, app_id, &schema_slug, &entry_id, &hashes).await?;
                 }
             }
         } else {
@@ -318,7 +368,8 @@ pub async fn populate_references_from_content(
                             .unwrap_or_default()
                             .to_string();
                         let hashes = extract_upload_hashes(entry);
-                        db_update_references(pool, &schema_slug, &entry_id, &hashes).await?;
+                        db_update_references(pool, app_id, &schema_slug, &entry_id, &hashes)
+                            .await?;
                     }
                 }
             }

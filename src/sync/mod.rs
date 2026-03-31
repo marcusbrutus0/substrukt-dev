@@ -13,6 +13,7 @@ pub async fn export_bundle(data_dir: &Path, pool: &SqlitePool, output: &Path) ->
     let mut tar = tar::Builder::new(enc);
 
     // Write uploads-manifest.json from SQLite
+    // TODO: filter by app_id in Task 10
     let upload_rows = sqlx::query_as::<_, (String, String, String, i64, String)>(
         "SELECT hash, filename, mime, size, created_at FROM uploads",
     )
@@ -64,7 +65,7 @@ pub async fn import_bundle(
     let mut archive = tar::Archive::new(dec);
     archive.unpack(data_dir)?;
 
-    import_upload_metadata(data_dir, pool).await?;
+    import_upload_metadata(data_dir, pool, 1).await?; // TODO: pass real app_id in Task 10
 
     let warnings = validate_imported_content(data_dir);
     Ok(warnings)
@@ -80,31 +81,32 @@ pub async fn import_bundle_from_bytes(
     let mut archive = tar::Archive::new(dec);
     archive.unpack(data_dir)?;
 
-    import_upload_metadata(data_dir, pool).await?;
+    import_upload_metadata(data_dir, pool, 1).await?; // TODO: pass real app_id in Task 10
 
     let warnings = validate_imported_content(data_dir);
     Ok(warnings)
 }
 
 /// Handle upload metadata after import — manifest or legacy sidecars.
-async fn import_upload_metadata(data_dir: &Path, pool: &SqlitePool) -> eyre::Result<()> {
-    let manifest_path = data_dir.join("uploads-manifest.json");
+async fn import_upload_metadata(
+    app_dir: &Path,
+    pool: &SqlitePool,
+    app_id: i64,
+) -> eyre::Result<()> {
+    let manifest_path = app_dir.join("uploads-manifest.json");
     if manifest_path.exists() {
         // New format: read manifest
         let manifest_str = std::fs::read_to_string(&manifest_path)?;
         let manifest: Vec<crate::uploads::UploadMeta> = serde_json::from_str(&manifest_str)?;
         for meta in &manifest {
-            crate::uploads::db_insert_upload(pool, meta).await?;
+            crate::uploads::db_insert_upload(pool, app_id, meta).await?;
         }
         std::fs::remove_file(&manifest_path)?;
-    } else {
-        // Legacy format: migrate .meta.json sidecars
-        let uploads_dir = data_dir.join("uploads");
-        crate::uploads::migrate_meta_sidecars(&uploads_dir, data_dir, pool).await?;
     }
+    // Note: legacy sidecar migration is now handled by migrate_meta_sidecars at startup
 
     // Rebuild upload references from imported content
-    crate::uploads::populate_references_from_content(data_dir, pool).await?;
+    crate::uploads::populate_references_from_content(app_dir, pool, app_id).await?;
 
     Ok(())
 }

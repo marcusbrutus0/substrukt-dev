@@ -182,8 +182,8 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     let reloader = templates::create_reloader(config.schemas_dir());
 
     // Migrate .meta.json sidecars to SQLite (one-time, idempotent)
-    substrukt::uploads::migrate_meta_sidecars(&config.uploads_dir(), &config.data_dir, &pool)
-        .await?;
+    // Migrate .meta.json sidecars to SQLite (one-time, idempotent, iterates app dirs)
+    substrukt::uploads::migrate_meta_sidecars(&config.data_dir, &pool).await?;
 
     // Content cache
     let content_cache = DashMap::new();

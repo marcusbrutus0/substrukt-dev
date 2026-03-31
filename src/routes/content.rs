@@ -438,7 +438,7 @@ async fn create_entry(
                 &schema_file,
                 &id,
             );
-            let _ = uploads::db_update_references(&state.pool, &schema_slug, &id, &hashes).await;
+            let _ = uploads::db_update_references(&state.pool, 1, &schema_slug, &id, &hashes).await;
             let user_id = auth::current_user_id(&session).await.unwrap_or(0);
             state.audit.log(
                 &user_id.to_string(),
@@ -549,7 +549,7 @@ async fn update_entry(
                 &entry_id,
             );
             let _ =
-                uploads::db_update_references(&state.pool, &schema_slug, &entry_id, &hashes).await;
+                uploads::db_update_references(&state.pool, 1, &schema_slug, &entry_id, &hashes).await;
             let user_id = auth::current_user_id(&session).await.unwrap_or(0);
             state.audit.log(
                 &user_id.to_string(),
@@ -586,7 +586,7 @@ async fn delete_entry(
         _ => return axum::http::StatusCode::NOT_FOUND,
     };
 
-    let _ = uploads::db_delete_references(&state.pool, &schema_slug, &entry_id).await;
+    let _ = uploads::db_delete_references(&state.pool, 1, &schema_slug, &entry_id).await;
     let _ = content::delete_entry(&state.config.content_dir(), &schema_file, &entry_id);
     crate::history::delete_history(&state.config.data_dir, &schema_slug, &entry_id);
     let key = format!("{schema_slug}/{entry_id}");
@@ -814,6 +814,7 @@ async fn process_uploads(
         match uploads::store_upload(
             &state.config.uploads_dir(),
             &state.pool,
+            1, // TODO: replace with app.app.id in Task 7
             &upload.filename,
             &upload.content_type,
             &upload.data,
