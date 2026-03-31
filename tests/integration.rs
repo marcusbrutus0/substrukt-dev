@@ -156,6 +156,50 @@ impl TestServer {
         extract_new_token(&body).expect("should find new token in response")
     }
 
+    /// Create a new app via the admin UI. Returns the app slug.
+    async fn create_app_ui(&self, name: &str, slug: &str) {
+        let csrf = self.get_csrf("/apps/new").await;
+        self.client
+            .post(self.url("/apps"))
+            .form(&[("name", name), ("slug", slug), ("_csrf", &csrf)])
+            .send()
+            .await
+            .unwrap();
+    }
+
+    /// Create a schema in a specific app.
+    async fn create_schema_in_app(&self, app_slug: &str, json: &str) {
+        let path = format!("/apps/{app_slug}/schemas/new");
+        let csrf = self.get_csrf(&path).await;
+        self.client
+            .post(self.url(&path))
+            .form(&[("schema_json", json), ("_csrf", &csrf)])
+            .send()
+            .await
+            .unwrap();
+    }
+
+    /// Create an API token for a specific app via the app settings UI.
+    async fn create_api_token_for_app(&self, app_slug: &str, name: &str) -> String {
+        let csrf = self.get_csrf(&format!("/apps/{app_slug}/settings")).await;
+        let resp = self
+            .client
+            .post(self.url(&format!("/apps/{app_slug}/settings/tokens")))
+            .form(&[("name", name), ("_csrf", &csrf)])
+            .send()
+            .await
+            .unwrap();
+        let location = resp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(&format!("/apps/{app_slug}/settings"))
+            .to_string();
+        let resp = self.client.get(self.url(&location)).send().await.unwrap();
+        let body = resp.text().await.unwrap();
+        extract_new_token(&body).expect("should find new token in response")
+    }
+
     /// Create a deployment via the admin UI.
     async fn create_deployment(&self, name: &str, slug: &str, webhook_url: &str) {
         let csrf = self.get_csrf("/apps/default/deployments/new").await;
@@ -5341,4 +5385,972 @@ async fn test_update_backup_config_without_enabled_disables() {
         body["config"]["enabled"], false,
         "Unchecked checkbox should set enabled to false"
     );
+}
+
+// ── Multi-app tests ─���───────────────────────────────────────
+
+/// Extract entry ID from a content list page for any app.
+fn extract_entry_id_for_app(html: &str, app_slug: &str, schema_slug: &str) -> Option<String> {
+    let pattern = format!("/apps/{app_slug}/content/{schema_slug}/");
+    for line in html.lines() {
+        if let Some(pos) = line.find(&pattern) {
+            let rest = &line[pos + pattern.len()..];
+            if let Some(end) = rest.find("/edit") {
+                return Some(rest[..end].to_string());
+            }
+        }
+    }
+    None
+}
+
+#[tokio::test]
+async fn test_root_redirects_to_apps() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s.client.get(s.url("/")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
+}
+
+#[tokio::test]
+async fn test_old_routes_404() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Old top-level content/schema/settings routes should 404
+    let old_routes = [
+        "/schemas",
+        "/schemas/new",
+        "/content/blog-posts",
+        "/settings/tokens",
+        "/settings/data",
+    ];
+    for route in &old_routes {
+        let resp = s.client.get(s.url(route)).send().await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "Route {route} should return 404"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_app_lifecycle() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create app via UI
+    s.create_app_ui("Blog", "blog").await;
+
+    // App appears in list
+    let resp = s.client.get(s.url("/apps")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Blog"), "New app should appear in apps list");
+    assert!(body.contains("blog"), "App slug should appear");
+
+    // App directory exists on disk
+    assert!(
+        s._data_dir.path().join("blog/schemas").exists(),
+        "App schemas dir should be created"
+    );
+    assert!(
+        s._data_dir.path().join("blog/content").exists(),
+        "App content dir should be created"
+    );
+    assert!(
+        s._data_dir.path().join("blog/uploads").exists(),
+        "App uploads dir should be created"
+    );
+    assert!(
+        s._data_dir.path().join("blog/_history").exists(),
+        "App history dir should be created"
+    );
+
+    // Create schema in the new app
+    s.create_schema_in_app("blog", BLOG_SCHEMA).await;
+
+    // Verify schema exists in the app
+    let resp = s
+        .client
+        .get(s.url("/apps/blog/schemas"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Blog Posts"));
+
+    // Create content in the app
+    let csrf = s.get_csrf("/apps/blog/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Blog Post In New App")
+        .text("body", "Content body");
+    let resp = s
+        .client
+        .post(s.url("/apps/blog/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Verify content accessible
+    let resp = s
+        .client
+        .get(s.url("/apps/blog/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Blog Post In New App"));
+
+    // Delete the app
+    let csrf = s.get_csrf("/apps/blog/settings").await;
+    let resp = s
+        .client
+        .post(s.url("/apps/blog/delete"))
+        .form(&[("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
+
+    // App should be gone (404)
+    let resp = s
+        .client
+        .get(s.url("/apps/blog/schemas"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "Deleted app should return 404"
+    );
+
+    // Directory removed from disk
+    assert!(
+        !s._data_dir.path().join("blog").exists(),
+        "App directory should be deleted"
+    );
+}
+
+#[tokio::test]
+async fn test_cannot_delete_default_app() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/apps/default/settings").await;
+    let resp = s
+        .client
+        .post(s.url("/apps/default/delete"))
+        .form(&[("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    // Should redirect back to settings with an error, not actually delete
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert!(
+        location.contains("/apps/default/settings"),
+        "Should redirect back to settings"
+    );
+
+    // Default app should still exist
+    let resp = s
+        .client
+        .get(s.url("/apps/default/schemas"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "Default app should still be accessible"
+    );
+}
+
+#[tokio::test]
+async fn test_app_create_duplicate_slug_fails() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    s.create_app_ui("Blog", "blog").await;
+
+    // Try creating another app with the same slug
+    let csrf = s.get_csrf("/apps/new").await;
+    let resp = s
+        .client
+        .post(s.url("/apps"))
+        .form(&[("name", "Blog 2"), ("slug", "blog"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    // Should redirect to /apps/new (error flash)
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(location, "/apps/new");
+
+    // Verify only one "blog" app exists (duplicate was rejected)
+    let resp = s.client.get(s.url("/apps")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    // Count occurrences of the blog slug in app cards
+    let blog_count =
+        body.matches(r#"href="/apps/blog/"#).count() + body.matches(r#"href="/apps/blog""#).count();
+    assert!(
+        blog_count <= 1,
+        "Should have at most one blog app link, found {blog_count}"
+    );
+}
+
+#[tokio::test]
+async fn test_app_create_reserved_slug_fails() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/apps/new").await;
+    let resp = s
+        .client
+        .post(s.url("/apps"))
+        .form(&[("name", "API App"), ("slug", "api"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(location, "/apps/new");
+
+    // Verify the app was not created
+    let resp = s
+        .client
+        .get(s.url("/apps/api/schemas"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "Reserved slug app should not be created"
+    );
+}
+
+#[tokio::test]
+async fn test_app_create_invalid_slug_fails() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/apps/new").await;
+    let resp = s
+        .client
+        .post(s.url("/apps"))
+        .form(&[("name", "Bad App"), ("slug", "My App!"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(location, "/apps/new");
+}
+
+#[tokio::test]
+async fn test_app_access_control() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create a second app
+    s.create_app_ui("Blog", "blog").await;
+    s.create_schema_in_app("blog", BLOG_SCHEMA).await;
+
+    // Create an editor without access to the new app
+    // Note: signup_user_with_role grants access to ALL existing apps at signup time.
+    // So the editor will have access to both default and blog.
+    let editor = signup_user_with_role(&s, "ed@test.com", "editor1", "editor").await;
+
+    // Editor should have access (granted at signup)
+    let resp = editor
+        .get(s.url("/apps/blog/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "Editor with access should see app content"
+    );
+
+    // Now admin revokes editor's access to blog app
+    let csrf = s.get_csrf("/apps/blog/settings").await;
+    // Submit access form with no user IDs checked (empty access list)
+    let resp = s
+        .client
+        .post(s.url("/apps/blog/settings/access"))
+        .form(&[("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Editor should now be denied access to blog app
+    let resp = editor
+        .get(s.url("/apps/blog/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "Editor without access should get 403"
+    );
+
+    // Editor should still have access to default app
+    let resp = editor
+        .get(s.url("/apps/default/schemas"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "Editor should still access default app"
+    );
+}
+
+#[tokio::test]
+async fn test_admin_sees_all_apps_editor_sees_accessible() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create a new app
+    s.create_app_ui("Blog", "blog").await;
+
+    // Create editor (gets access to all at signup time: default + blog)
+    let editor = signup_user_with_role(&s, "ed@test.com", "editor1", "editor").await;
+
+    // Create a third app AFTER the editor signed up (editor won't have access)
+    s.create_app_ui("Docs", "docs").await;
+
+    // Admin sees all 3 apps
+    let resp = s.client.get(s.url("/apps")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("default"), "Admin should see default app");
+    assert!(body.contains("blog"), "Admin should see blog app");
+    assert!(body.contains("docs"), "Admin should see docs app");
+
+    // Editor sees only apps they have access to (default + blog, not docs)
+    let resp = editor.get(s.url("/apps")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("default"), "Editor should see default");
+    assert!(body.contains("blog"), "Editor should see blog");
+    // The docs app was created after signup, so editor doesn't have access
+    // Check the app cards - docs should not appear as a clickable card
+    // But we need a more specific check since "docs" might appear in page chrome
+    let resp = editor
+        .get(s.url("/apps/docs/schemas"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "Editor should not access docs app"
+    );
+}
+
+#[tokio::test]
+async fn test_api_token_isolation() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create a second app
+    s.create_app_ui("Blog", "blog").await;
+    s.create_schema_in_app("blog", BLOG_SCHEMA).await;
+    s.create_schema(BLOG_SCHEMA).await; // default app too
+
+    // Create tokens for each app
+    let token_default = s.create_api_token("default-tok").await;
+    let token_blog = s.create_api_token_for_app("blog", "blog-tok").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Token for default app can access default app
+    let resp = api
+        .get(s.url("/api/v1/apps/default/schemas"))
+        .bearer_auth(&token_default)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "Default token accesses default app"
+    );
+
+    // Token for default app CANNOT access blog app
+    let resp = api
+        .get(s.url("/api/v1/apps/blog/schemas"))
+        .bearer_auth(&token_default)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "Default token should not access blog app"
+    );
+
+    // Token for blog app can access blog app
+    let resp = api
+        .get(s.url("/api/v1/apps/blog/schemas"))
+        .bearer_auth(&token_blog)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "Blog token accesses blog app"
+    );
+
+    // Token for blog app CANNOT access default app
+    let resp = api
+        .get(s.url("/api/v1/apps/default/schemas"))
+        .bearer_auth(&token_blog)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "Blog token should not access default app"
+    );
+
+    // Verify error message
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "Token not authorized for this app");
+}
+
+#[tokio::test]
+async fn test_api_nonexistent_app_404() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("test-tok").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url("/api/v1/apps/nonexistent/schemas"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "Nonexistent app should return 404"
+    );
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "App not found");
+}
+
+#[tokio::test]
+async fn test_same_schema_slug_two_apps() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create a second app
+    s.create_app_ui("Blog", "blog").await;
+
+    // Create same schema slug in both apps
+    s.create_schema(BLOG_SCHEMA).await; // default
+    s.create_schema_in_app("blog", BLOG_SCHEMA).await;
+
+    // Create content in default app
+    let csrf = s.get_csrf("/apps/default/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Default App Post")
+        .text("body", "In default");
+    s.client
+        .post(s.url("/apps/default/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Create content in blog app
+    let csrf = s.get_csrf("/apps/blog/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Blog App Post")
+        .text("body", "In blog");
+    s.client
+        .post(s.url("/apps/blog/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Verify via API that each app returns only its own data
+    let token_default = s.create_api_token("default-tok").await;
+    let token_blog = s.create_api_token_for_app("blog", "blog-tok").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Default app entries
+    let resp = api
+        .get(s.url("/api/v1/apps/default/content/blog-posts?status=all"))
+        .bearer_auth(&token_default)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    let entries = entries.as_array().unwrap();
+    assert_eq!(entries.len(), 1, "Default app should have 1 entry");
+    assert_eq!(entries[0]["title"], "Default App Post");
+
+    // Blog app entries
+    let resp = api
+        .get(s.url("/api/v1/apps/blog/content/blog-posts?status=all"))
+        .bearer_auth(&token_blog)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    let entries = entries.as_array().unwrap();
+    assert_eq!(entries.len(), 1, "Blog app should have 1 entry");
+    assert_eq!(entries[0]["title"], "Blog App Post");
+}
+
+#[tokio::test]
+async fn test_export_import_per_app() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create schema and content in default app
+    s.create_schema(BLOG_SCHEMA).await;
+    let csrf = s.get_csrf("/apps/default/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Export Me")
+        .text("body", "Content to export");
+    s.client
+        .post(s.url("/apps/default/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Export from default app via API
+    let token_default = s.create_api_token("export-tok").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/apps/default/export"))
+        .bearer_auth(&token_default)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bundle = resp.bytes().await.unwrap();
+    assert!(!bundle.is_empty(), "Export should produce data");
+
+    // Create a second app and import
+    s.create_app_ui("Blog", "blog").await;
+    let token_blog = s.create_api_token_for_app("blog", "import-tok").await;
+
+    let file_part = reqwest::multipart::Part::bytes(bundle.to_vec())
+        .file_name("bundle.tar.gz")
+        .mime_str("application/gzip")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("bundle", file_part);
+    let resp = api
+        .post(s.url("/api/v1/apps/blog/import"))
+        .bearer_auth(&token_blog)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Verify content was imported into blog app
+    let resp = api
+        .get(s.url("/api/v1/apps/blog/content/blog-posts?status=all"))
+        .bearer_auth(&token_blog)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    let entries = entries.as_array().unwrap();
+    assert!(
+        !entries.is_empty(),
+        "Imported entries should exist in blog app"
+    );
+    assert_eq!(
+        entries[0]["title"], "Export Me",
+        "Imported entry should have correct title"
+    );
+
+    // Original in default app should still exist
+    let resp = api
+        .get(s.url("/api/v1/apps/default/content/blog-posts?status=all"))
+        .bearer_auth(&token_default)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        !entries.as_array().unwrap().is_empty(),
+        "Original entries should still exist in default app"
+    );
+}
+
+#[tokio::test]
+async fn test_app_settings_requires_admin() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let editor = signup_user_with_role(&s, "ed@test.com", "editor1", "editor").await;
+
+    // Editor cannot access app settings
+    let resp = editor
+        .get(s.url("/apps/default/settings"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "Editor should not access app settings"
+    );
+
+    // Editor cannot create apps
+    let resp = editor.get(s.url("/apps/new")).send().await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "Editor should not access create app form"
+    );
+}
+
+#[tokio::test]
+async fn test_app_name_update() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    s.create_app_ui("Blog", "blog").await;
+
+    // Update app name
+    let csrf = s.get_csrf("/apps/blog/settings").await;
+    let resp = s
+        .client
+        .post(s.url("/apps/blog/settings"))
+        .form(&[("name", "My Awesome Blog"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Verify name changed
+    let resp = s.client.get(s.url("/apps")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("My Awesome Blog"),
+        "Updated app name should appear in list"
+    );
+}
+
+#[tokio::test]
+async fn test_migration_moves_files() {
+    // Create old-layout directory structure manually
+    let data_dir = tempfile::tempdir().unwrap();
+    let schemas_dir = data_dir.path().join("schemas");
+    let content_dir = data_dir.path().join("content");
+    let uploads_dir = data_dir.path().join("uploads");
+    let history_dir = data_dir.path().join("_history");
+
+    std::fs::create_dir_all(&schemas_dir).unwrap();
+    std::fs::create_dir_all(&content_dir).unwrap();
+    std::fs::create_dir_all(&uploads_dir).unwrap();
+    std::fs::create_dir_all(&history_dir).unwrap();
+
+    // Write test files
+    std::fs::write(schemas_dir.join("test.json"), r#"{"test": true}"#).unwrap();
+    std::fs::write(content_dir.join("entry.json"), r#"{"title": "hi"}"#).unwrap();
+    std::fs::write(uploads_dir.join("file.bin"), b"upload data").unwrap();
+    std::fs::write(history_dir.join("v1.json"), r#"{"old": true}"#).unwrap();
+
+    // Call the migration function
+    substrukt::migrate_single_app_layout(data_dir.path()).unwrap();
+
+    // Old directories should be gone
+    assert!(!schemas_dir.exists(), "Old schemas dir should be removed");
+    assert!(!content_dir.exists(), "Old content dir should be removed");
+
+    // Files should be in data/default/
+    let default_dir = data_dir.path().join("default");
+    assert!(default_dir.join("schemas/test.json").exists());
+    assert!(default_dir.join("content/entry.json").exists());
+    assert!(default_dir.join("uploads/file.bin").exists());
+    assert!(default_dir.join("_history/v1.json").exists());
+
+    // Verify file contents
+    let content = std::fs::read_to_string(default_dir.join("schemas/test.json")).unwrap();
+    assert_eq!(content, r#"{"test": true}"#);
+}
+
+#[tokio::test]
+async fn test_migration_noop_when_already_migrated() {
+    // Create multi-app layout (no schemas/ at root)
+    let data_dir = tempfile::tempdir().unwrap();
+    let default_dir = data_dir.path().join("default/schemas");
+    std::fs::create_dir_all(&default_dir).unwrap();
+    std::fs::write(default_dir.join("test.json"), r#"{"ok": true}"#).unwrap();
+
+    // Migration should be a no-op
+    substrukt::migrate_single_app_layout(data_dir.path()).unwrap();
+
+    // Data should be unchanged
+    assert!(default_dir.join("test.json").exists());
+    let content = std::fs::read_to_string(default_dir.join("test.json")).unwrap();
+    assert_eq!(content, r#"{"ok": true}"#);
+}
+
+#[tokio::test]
+async fn test_app_delete_clears_cache() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create app with schema and content
+    s.create_app_ui("Blog", "blog").await;
+    s.create_schema_in_app("blog", BLOG_SCHEMA).await;
+
+    let csrf = s.get_csrf("/apps/blog/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Cached Post")
+        .text("body", "Should be cleared");
+    s.client
+        .post(s.url("/apps/blog/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Verify content is accessible via API
+    let token = s.create_api_token_for_app("blog", "cache-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url("/api/v1/apps/blog/content/blog-posts?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1);
+
+    // Delete the app
+    let csrf = s.get_csrf("/apps/blog/settings").await;
+    s.client
+        .post(s.url("/apps/blog/delete"))
+        .form(&[("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+
+    // API with the blog token should now fail (app not found)
+    let resp = api
+        .get(s.url("/api/v1/apps/blog/content/blog-posts?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    // Token was cascade-deleted, so we get 401 (invalid token) or 404 (app not found)
+    assert!(
+        resp.status() == StatusCode::UNAUTHORIZED || resp.status() == StatusCode::NOT_FOUND,
+        "Deleted app should not be accessible, got {}",
+        resp.status()
+    );
+}
+
+#[tokio::test]
+async fn test_apps_page_shows_schema_count() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create a schema in default app
+    s.create_schema(BLOG_SCHEMA).await;
+
+    // Apps list should show schema count
+    let resp = s.client.get(s.url("/apps")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    // The app card should indicate it has schemas
+    assert!(
+        body.contains("1 schema") || body.contains("1 Schema"),
+        "App card should show schema count"
+    );
+}
+
+#[tokio::test]
+async fn test_app_empty_name_rejected() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/apps/new").await;
+    let resp = s
+        .client
+        .post(s.url("/apps"))
+        .form(&[("name", ""), ("slug", "empty-name"), ("_csrf", &csrf)])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(location, "/apps/new");
+}
+
+#[tokio::test]
+async fn test_viewer_cannot_create_app() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let viewer = signup_user_with_role(&s, "v@test.com", "viewer1", "viewer").await;
+
+    // Viewer cannot access create app form
+    let resp = viewer.get(s.url("/apps/new")).send().await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "Viewer should not access create app form"
+    );
+}
+
+#[tokio::test]
+async fn test_nonexistent_app_returns_404() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s
+        .client
+        .get(s.url("/apps/nonexistent/schemas"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "Nonexistent app should return 404"
+    );
+}
+
+#[tokio::test]
+async fn test_app_scoped_deployments() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create a second app
+    s.create_app_ui("Blog", "blog").await;
+
+    // Create deployment in default app
+    let csrf = s.get_csrf("/apps/default/deployments/new").await;
+    s.client
+        .post(s.url("/apps/default/deployments/new"))
+        .form(&[
+            ("name", "Default Deploy"),
+            ("slug", "prod"),
+            ("webhook_url", "https://example.com/default"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Create deployment with SAME slug in blog app
+    let csrf = s.get_csrf("/apps/blog/deployments/new").await;
+    s.client
+        .post(s.url("/apps/blog/deployments/new"))
+        .form(&[
+            ("name", "Blog Deploy"),
+            ("slug", "prod"),
+            ("webhook_url", "https://example.com/blog"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    // Each app should list only its own deployment
+    let resp = s
+        .client
+        .get(s.url("/apps/default/deployments"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Default Deploy"));
+
+    let resp = s
+        .client
+        .get(s.url("/apps/blog/deployments"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Blog Deploy"));
+
+    // API also scoped
+    let token_default = s.create_api_token("dep-tok").await;
+    let token_blog = s.create_api_token_for_app("blog", "dep-tok-blog").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url("/api/v1/apps/default/deployments"))
+        .bearer_auth(&token_default)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let deps: serde_json::Value = resp.json().await.unwrap();
+    let deps = deps.as_array().unwrap();
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0]["name"], "Default Deploy");
+
+    let resp = api
+        .get(s.url("/api/v1/apps/blog/deployments"))
+        .bearer_auth(&token_blog)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let deps: serde_json::Value = resp.json().await.unwrap();
+    let deps = deps.as_array().unwrap();
+    assert_eq!(deps.len(), 1);
+    assert_eq!(deps[0]["name"], "Blog Deploy");
 }

@@ -445,3 +445,389 @@ pub async fn find_user_role(pool: &SqlitePool, user_id: i64) -> eyre::Result<Opt
         .await?;
     Ok(role)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqliteConnectOptions;
+    use std::str::FromStr;
+
+    async fn test_pool() -> SqlitePool {
+        let options = SqliteConnectOptions::from_str("sqlite::memory:")
+            .unwrap()
+            .pragma("foreign_keys", "ON");
+        let pool = SqlitePool::connect_with(options).await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    // ── App CRUD tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_app_crud() {
+        let pool = test_pool().await;
+
+        // Default app from migration already exists
+        let default = find_app_by_slug(&pool, "default").await.unwrap().unwrap();
+        assert_eq!(default.slug, "default");
+        assert_eq!(default.name, "Default");
+        assert_eq!(default.id, 1);
+
+        // Create a new app
+        let blog = create_app(&pool, "blog", "Blog").await.unwrap();
+        assert_eq!(blog.slug, "blog");
+        assert_eq!(blog.name, "Blog");
+        assert!(blog.id > 1);
+
+        // find_by_slug
+        let found = find_app_by_slug(&pool, "blog").await.unwrap().unwrap();
+        assert_eq!(found.id, blog.id);
+
+        // find_by_id
+        let found = find_app_by_id(&pool, blog.id).await.unwrap().unwrap();
+        assert_eq!(found.slug, "blog");
+
+        // find_by_slug returns None for nonexistent
+        assert!(find_app_by_slug(&pool, "nope").await.unwrap().is_none());
+
+        // find_by_id returns None for nonexistent
+        assert!(find_app_by_id(&pool, 9999).await.unwrap().is_none());
+
+        // list_apps includes both
+        let apps = list_apps(&pool).await.unwrap();
+        assert_eq!(apps.len(), 2);
+        let slugs: Vec<&str> = apps.iter().map(|a| a.slug.as_str()).collect();
+        assert!(slugs.contains(&"default"));
+        assert!(slugs.contains(&"blog"));
+
+        // update_app_name
+        update_app_name(&pool, blog.id, "My Blog").await.unwrap();
+        let updated = find_app_by_id(&pool, blog.id).await.unwrap().unwrap();
+        assert_eq!(updated.name, "My Blog");
+
+        // delete_app
+        delete_app(&pool, blog.id).await.unwrap();
+        assert!(find_app_by_slug(&pool, "blog").await.unwrap().is_none());
+        let apps = list_apps(&pool).await.unwrap();
+        assert_eq!(apps.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_app_duplicate_slug_fails() {
+        let pool = test_pool().await;
+        create_app(&pool, "blog", "Blog").await.unwrap();
+        let result = create_app(&pool, "blog", "Another Blog").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("UNIQUE"));
+    }
+
+    // ── Slug validation tests ───────────────────────────────────
+
+    #[test]
+    fn test_app_slug_validation_valid() {
+        assert!(validate_app_slug("blog").is_ok());
+        assert!(validate_app_slug("my-app").is_ok());
+        assert!(validate_app_slug("app123").is_ok());
+        assert!(validate_app_slug("a").is_ok());
+        assert!(validate_app_slug("a-b-c").is_ok());
+        assert!(validate_app_slug("x".repeat(64).as_str()).is_ok());
+    }
+
+    #[test]
+    fn test_app_slug_validation_invalid() {
+        // Empty
+        assert!(validate_app_slug("").is_err());
+
+        // Too long (65 chars)
+        assert!(validate_app_slug(&"x".repeat(65)).is_err());
+
+        // Leading/trailing hyphens
+        assert!(validate_app_slug("-blog").is_err());
+        assert!(validate_app_slug("blog-").is_err());
+        assert!(validate_app_slug("-").is_err());
+
+        // Uppercase
+        assert!(validate_app_slug("Blog").is_err());
+        assert!(validate_app_slug("BLOG").is_err());
+
+        // Spaces
+        assert!(validate_app_slug("my blog").is_err());
+
+        // Underscores
+        assert!(validate_app_slug("my_blog").is_err());
+
+        // Special chars
+        assert!(validate_app_slug("blog!").is_err());
+        assert!(validate_app_slug("blog/path").is_err());
+    }
+
+    #[test]
+    fn test_app_slug_validation_reserved() {
+        let reserved = vec![
+            "api", "settings", "login", "logout", "signup", "setup", "healthz", "metrics", "new",
+        ];
+        for slug in reserved {
+            let result = validate_app_slug(slug);
+            assert!(result.is_err(), "'{slug}' should be reserved");
+            assert!(
+                result.unwrap_err().contains("reserved"),
+                "Error for '{slug}' should mention 'reserved'"
+            );
+        }
+    }
+
+    // ── App access tests ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_app_access() {
+        let pool = test_pool().await;
+        let app = create_app(&pool, "blog", "Blog").await.unwrap();
+        let user = create_user(&pool, "editor1", "pass", "editor")
+            .await
+            .unwrap();
+
+        // Initially no access
+        assert!(!user_has_app_access(&pool, app.id, user.id).await.unwrap());
+        let user_apps = list_apps_for_user(&pool, user.id).await.unwrap();
+        assert!(user_apps.is_empty());
+
+        // Grant access
+        grant_app_access(&pool, app.id, user.id).await.unwrap();
+        assert!(user_has_app_access(&pool, app.id, user.id).await.unwrap());
+        let user_apps = list_apps_for_user(&pool, user.id).await.unwrap();
+        assert_eq!(user_apps.len(), 1);
+        assert_eq!(user_apps[0].slug, "blog");
+
+        // Grant again (idempotent via INSERT OR IGNORE)
+        grant_app_access(&pool, app.id, user.id).await.unwrap();
+        assert!(user_has_app_access(&pool, app.id, user.id).await.unwrap());
+
+        // Revoke access
+        revoke_app_access(&pool, app.id, user.id).await.unwrap();
+        assert!(!user_has_app_access(&pool, app.id, user.id).await.unwrap());
+        let user_apps = list_apps_for_user(&pool, user.id).await.unwrap();
+        assert!(user_apps.is_empty());
+
+        // Revoke again (no error)
+        revoke_app_access(&pool, app.id, user.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_app_access_multiple_apps() {
+        let pool = test_pool().await;
+        let app1 = create_app(&pool, "blog", "Blog").await.unwrap();
+        let app2 = create_app(&pool, "docs", "Docs").await.unwrap();
+        let user = create_user(&pool, "editor1", "pass", "editor")
+            .await
+            .unwrap();
+
+        grant_app_access(&pool, app1.id, user.id).await.unwrap();
+        grant_app_access(&pool, app2.id, user.id).await.unwrap();
+
+        let user_apps = list_apps_for_user(&pool, user.id).await.unwrap();
+        assert_eq!(user_apps.len(), 2);
+        let slugs: Vec<&str> = user_apps.iter().map(|a| a.slug.as_str()).collect();
+        assert!(slugs.contains(&"blog"));
+        assert!(slugs.contains(&"docs"));
+
+        // Revoking one doesn't affect the other
+        revoke_app_access(&pool, app1.id, user.id).await.unwrap();
+        let user_apps = list_apps_for_user(&pool, user.id).await.unwrap();
+        assert_eq!(user_apps.len(), 1);
+        assert_eq!(user_apps[0].slug, "docs");
+    }
+
+    #[tokio::test]
+    async fn test_list_app_users() {
+        let pool = test_pool().await;
+        let app = create_app(&pool, "blog", "Blog").await.unwrap();
+        let editor = create_user(&pool, "editor1", "pass", "editor")
+            .await
+            .unwrap();
+        let _viewer = create_user(&pool, "viewer1", "pass", "viewer")
+            .await
+            .unwrap();
+        // Admin users are not listed by list_app_users
+        let _admin = create_user(&pool, "admin2", "pass", "admin").await.unwrap();
+
+        grant_app_access(&pool, app.id, editor.id).await.unwrap();
+
+        let users = list_app_users(&pool, app.id).await.unwrap();
+        assert_eq!(users.len(), 2); // editor and viewer (non-admins)
+        let editor_entry = users.iter().find(|(u, _)| u.username == "editor1").unwrap();
+        assert!(editor_entry.1, "editor1 should have access");
+        let viewer_entry = users.iter().find(|(u, _)| u.username == "viewer1").unwrap();
+        assert!(!viewer_entry.1, "viewer1 should not have access");
+    }
+
+    // ── API Token app scoping tests ─────────────────────────────
+
+    #[tokio::test]
+    async fn test_api_token_app_scoping() {
+        let pool = test_pool().await;
+        let app1 = create_app(&pool, "blog", "Blog").await.unwrap();
+        let app2 = create_app(&pool, "docs", "Docs").await.unwrap();
+        let user = create_user(&pool, "admin1", "pass", "admin").await.unwrap();
+
+        // Create tokens for different apps
+        let tok1 = create_api_token(&pool, user.id, app1.id, "Blog Token", "hash1")
+            .await
+            .unwrap();
+        assert_eq!(tok1.app_id, Some(app1.id));
+
+        let tok2 = create_api_token(&pool, user.id, app2.id, "Docs Token", "hash2")
+            .await
+            .unwrap();
+        assert_eq!(tok2.app_id, Some(app2.id));
+
+        // find_token_by_hash returns correct app_id
+        let found = find_token_by_hash(&pool, "hash1").await.unwrap().unwrap();
+        assert_eq!(found.app_id, Some(app1.id));
+        assert_eq!(found.name, "Blog Token");
+
+        let found = find_token_by_hash(&pool, "hash2").await.unwrap().unwrap();
+        assert_eq!(found.app_id, Some(app2.id));
+
+        // list_api_tokens_for_app returns only that app's tokens
+        let app1_tokens = list_api_tokens_for_app(&pool, app1.id).await.unwrap();
+        assert_eq!(app1_tokens.len(), 1);
+        assert_eq!(app1_tokens[0].name, "Blog Token");
+
+        let app2_tokens = list_api_tokens_for_app(&pool, app2.id).await.unwrap();
+        assert_eq!(app2_tokens.len(), 1);
+        assert_eq!(app2_tokens[0].name, "Docs Token");
+
+        // list_api_tokens (by user) returns all
+        let all_tokens = list_api_tokens(&pool, user.id).await.unwrap();
+        assert_eq!(all_tokens.len(), 2);
+
+        // delete_api_token scoped by app
+        delete_api_token(&pool, tok1.id, app1.id).await.unwrap();
+        assert!(find_token_by_hash(&pool, "hash1").await.unwrap().is_none());
+        // tok2 should be unaffected
+        assert!(find_token_by_hash(&pool, "hash2").await.unwrap().is_some());
+
+        // delete_api_token with wrong app_id doesn't delete
+        delete_api_token(&pool, tok2.id, app1.id).await.unwrap(); // no error, but no effect
+        assert!(
+            find_token_by_hash(&pool, "hash2").await.unwrap().is_some(),
+            "Token should not be deleted when app_id doesn't match"
+        );
+    }
+
+    // ── Cascade delete tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_delete_app_cascade() {
+        let pool = test_pool().await;
+        let app = create_app(&pool, "blog", "Blog").await.unwrap();
+        let user = create_user(&pool, "editor1", "pass", "editor")
+            .await
+            .unwrap();
+
+        // Create associated records
+        grant_app_access(&pool, app.id, user.id).await.unwrap();
+        create_api_token(&pool, user.id, app.id, "Test Token", "tokenhash")
+            .await
+            .unwrap();
+
+        // Insert upload and upload_reference directly
+        sqlx::query(
+            "INSERT INTO uploads (app_id, hash, filename, mime, size) VALUES (?, 'abc123', 'test.png', 'image/png', 100)",
+        )
+        .bind(app.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO upload_references (app_id, upload_hash, schema_slug, entry_id) VALUES (?, 'abc123', 'posts', 'entry1')",
+        )
+        .bind(app.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Verify everything exists
+        assert!(user_has_app_access(&pool, app.id, user.id).await.unwrap());
+        assert!(
+            find_token_by_hash(&pool, "tokenhash")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let upload_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM uploads WHERE app_id = ?")
+                .bind(app.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(upload_count, 1);
+        let ref_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM upload_references WHERE app_id = ?")
+                .bind(app.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(ref_count, 1);
+
+        // Delete the app
+        delete_app(&pool, app.id).await.unwrap();
+
+        // All associated records should be cascade-deleted
+        assert!(!user_has_app_access(&pool, app.id, user.id).await.unwrap());
+        assert!(
+            find_token_by_hash(&pool, "tokenhash")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let upload_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM uploads WHERE app_id = ?")
+                .bind(app.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(upload_count, 0);
+        let ref_count =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM upload_references WHERE app_id = ?")
+                .bind(app.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(ref_count, 0);
+
+        // User still exists (not cascade-deleted)
+        assert!(
+            find_user_by_username(&pool, "editor1")
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_cascades_app_access() {
+        let pool = test_pool().await;
+        let app = create_app(&pool, "blog", "Blog").await.unwrap();
+        let user = create_user(&pool, "editor1", "pass", "editor")
+            .await
+            .unwrap();
+
+        grant_app_access(&pool, app.id, user.id).await.unwrap();
+        assert!(user_has_app_access(&pool, app.id, user.id).await.unwrap());
+
+        // Delete user
+        sqlx::query("DELETE FROM users WHERE id = ?")
+            .bind(user.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // app_access should be cascade-deleted
+        assert!(!user_has_app_access(&pool, app.id, user.id).await.unwrap());
+
+        // App still exists
+        assert!(find_app_by_slug(&pool, "blog").await.unwrap().is_some());
+    }
+}
