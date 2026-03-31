@@ -100,7 +100,8 @@ async fn create_token(
     let raw_token = token::generate_token();
     let token_hash = token::hash_token(&raw_token);
 
-    let api_token = models::create_api_token(&state.pool, user_id, &form.name, &token_hash)
+    // Temporary: use app_id=1 (default) until tokens move to per-app settings
+    let api_token = models::create_api_token(&state.pool, user_id, 1, &form.name, &token_hash)
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
@@ -151,7 +152,8 @@ async fn delete_token(
 ) -> axum::response::Result<Redirect> {
     let user_id = auth::require_role(&session, "editor").await?;
 
-    let _ = models::delete_api_token(&state.pool, token_id, user_id).await;
+    // Temporary: use app_id=1 (default) until tokens move to per-app settings
+    let _ = models::delete_api_token(&state.pool, token_id, 1).await;
     state.audit.log(
         &user_id.to_string(),
         "token_delete",

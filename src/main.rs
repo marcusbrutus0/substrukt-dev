@@ -128,7 +128,8 @@ async fn main() -> eyre::Result<()> {
             }
             let raw_token = auth::token::generate_token();
             let token_hash = auth::token::hash_token(&raw_token);
-            db::models::create_api_token(&pool, 1, &name, &token_hash).await?;
+            // app_id = 1 is the default app created by migration
+            db::models::create_api_token(&pool, 1, 1, &name, &token_hash).await?;
             println!("Token created: {raw_token}");
             println!("(Save this token — it won't be shown again)");
             Ok(())
