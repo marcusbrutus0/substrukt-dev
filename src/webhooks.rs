@@ -1,19 +1,23 @@
+use std::time::Duration;
+
 use eyre::Result;
 use serde::Serialize;
+use tokio_util::sync::CancellationToken;
 
-use crate::audit::AuditLogger;
-use crate::config::Config;
+use crate::audit::{AuditLogger, Deployment};
+use crate::state::AppState;
 
 #[derive(Serialize)]
 struct WebhookPayload {
     event_type: &'static str,
-    environment: String,
+    deployment: String,
+    include_drafts: bool,
     triggered_at: String,
     triggered_by: &'static str,
 }
 
 pub enum TriggerSource {
-    Cron,
+    Auto,
     Manual,
     Retry,
 }
@@ -67,42 +71,25 @@ async fn attempt_webhook(
     }
 }
 
-/// Fire a webhook for the given environment. Returns Ok(true) if the first attempt succeeded
-/// and timestamp updated, Ok(false) if webhook URL not configured, Err if the first attempt failed
-/// (background retries will continue automatically).
+/// Fire a webhook for the given deployment. Returns Ok(true) if the first attempt succeeded
+/// and timestamp updated, Err if the first attempt failed (background retries will continue
+/// automatically).
 pub async fn fire_webhook(
     client: &reqwest::Client,
     audit: &AuditLogger,
-    config: &Config,
-    environment: &str,
+    deployment: &Deployment,
     source: TriggerSource,
 ) -> Result<bool> {
-    let (url, auth_token) = match environment {
-        "staging" => (
-            config.staging_webhook_url.as_deref(),
-            config.staging_webhook_auth_token.as_deref(),
-        ),
-        "production" => (
-            config.production_webhook_url.as_deref(),
-            config.production_webhook_auth_token.as_deref(),
-        ),
-        _ => (None, None),
-    };
-
-    let url = match url {
-        Some(u) => u,
-        None => return Ok(false),
-    };
-
     let triggered_by = match source {
-        TriggerSource::Cron => "cron",
+        TriggerSource::Auto => "auto",
         TriggerSource::Manual => "manual",
         TriggerSource::Retry => "retry",
     };
 
     let payload = WebhookPayload {
         event_type: "substrukt-publish",
-        environment: environment.to_string(),
+        deployment: deployment.slug.clone(),
+        include_drafts: deployment.include_drafts,
         triggered_at: chrono::Utc::now().to_rfc3339(),
         triggered_by,
     };
@@ -110,12 +97,18 @@ pub async fn fire_webhook(
     let group_id = uuid::Uuid::new_v4().to_string();
 
     // First attempt (synchronous)
-    let result = attempt_webhook(client, url, auth_token, &payload).await;
+    let result = attempt_webhook(
+        client,
+        &deployment.webhook_url,
+        deployment.webhook_auth_token.as_deref(),
+        &payload,
+    )
+    .await;
     let status = if result.success { "success" } else { "failed" };
 
     if let Err(e) = audit
         .record_webhook_attempt(
-            environment,
+            deployment.id,
             triggered_by,
             status,
             result.http_status,
@@ -130,30 +123,33 @@ pub async fn fire_webhook(
     }
 
     if result.success {
-        let _ = audit.mark_fired(environment).await;
+        let _ = audit.mark_deployment_fired(deployment.id).await;
         return Ok(true);
     }
 
     // Spawn background retries
     let client = client.clone();
     let audit = audit.clone();
-    let url = url.to_string();
-    let auth_token = auth_token.map(|s| s.to_string());
-    let environment = environment.to_string();
+    let deployment = deployment.clone();
     let group_id_clone = group_id.clone();
 
     tokio::spawn(async move {
         let delays = [
-            std::time::Duration::from_secs(5),
-            std::time::Duration::from_secs(30),
+            Duration::from_secs(5),
+            Duration::from_secs(30),
         ];
 
         for (i, delay) in delays.iter().enumerate() {
             tokio::time::sleep(*delay).await;
             let attempt_num = (i + 2) as i32;
 
-            let retry_result =
-                attempt_webhook(&client, &url, auth_token.as_deref(), &payload).await;
+            let retry_result = attempt_webhook(
+                &client,
+                &deployment.webhook_url,
+                deployment.webhook_auth_token.as_deref(),
+                &payload,
+            )
+            .await;
             let retry_status = if retry_result.success {
                 "success"
             } else {
@@ -162,7 +158,7 @@ pub async fn fire_webhook(
 
             if let Err(e) = audit
                 .record_webhook_attempt(
-                    &environment,
+                    deployment.id,
                     "retry",
                     retry_status,
                     retry_result.http_status,
@@ -177,14 +173,14 @@ pub async fn fire_webhook(
             }
 
             if retry_result.success {
-                let _ = audit.mark_fired(&environment).await;
+                let _ = audit.mark_deployment_fired(deployment.id).await;
                 return;
             }
         }
 
         tracing::warn!(
             "Webhook for {} exhausted all retries (group {})",
-            environment,
+            deployment.slug,
             group_id_clone
         );
     });
@@ -195,34 +191,74 @@ pub async fn fire_webhook(
     )
 }
 
-/// Spawn the background cron task that auto-fires the staging webhook when dirty.
-pub fn spawn_cron(client: reqwest::Client, audit: AuditLogger, config: Config) {
-    let interval = std::time::Duration::from_secs(config.webhook_check_interval);
+/// Spawn a background auto-deploy task for a deployment with auto_deploy enabled.
+pub fn spawn_auto_deploy_task(state: &AppState, deployment: Deployment) {
+    let cancel_token = CancellationToken::new();
+    let child_token = cancel_token.child_token();
+    state.deploy_tasks.insert(deployment.id, cancel_token);
+
+    let client = state.http_client.clone();
+    let audit = state.audit.clone();
+    let poll_interval = Duration::from_secs(30);
+    let debounce = Duration::from_secs(deployment.debounce_seconds as u64);
 
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(interval).await;
+            // Check dirty
+            let dirty = match audit.is_dirty_for_deployment(deployment.id).await {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!("Dirty check failed for deployment {}: {e}", deployment.slug);
+                    false
+                }
+            };
 
-            if config.staging_webhook_url.is_none() {
-                continue;
-            }
+            if dirty {
+                // Debounce: wait, then re-check
+                tokio::select! {
+                    _ = tokio::time::sleep(debounce) => {},
+                    _ = child_token.cancelled() => return,
+                }
 
-            match audit.is_dirty("staging").await {
-                Ok(true) => {
-                    tracing::info!("Staging is dirty, firing webhook");
-                    if let Err(e) =
-                        fire_webhook(&client, &audit, &config, "staging", TriggerSource::Cron).await
-                    {
-                        tracing::warn!("Staging webhook failed: {e}");
+                // Re-check after debounce
+                let still_dirty = audit
+                    .is_dirty_for_deployment(deployment.id)
+                    .await
+                    .unwrap_or(false);
+                if still_dirty {
+                    tracing::info!("Auto-deploying {}", deployment.slug);
+                    match fire_webhook(&client, &audit, &deployment, TriggerSource::Auto).await {
+                        Ok(_) => {
+                            audit.log(
+                                "system",
+                                "deployment_auto_fired",
+                                "deployment",
+                                &deployment.slug,
+                                None,
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Auto-deploy webhook failed for {}: {e}",
+                                deployment.slug
+                            );
+                        }
                     }
                 }
-                Ok(false) => {
-                    tracing::debug!("Staging is clean, skipping webhook");
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to check staging dirty state: {e}");
-                }
+            }
+
+            // Sleep until next poll
+            tokio::select! {
+                _ = tokio::time::sleep(poll_interval) => {},
+                _ = child_token.cancelled() => return,
             }
         }
     });
+}
+
+/// Cancel the auto-deploy task for a deployment (if running).
+pub fn cancel_auto_deploy_task(state: &AppState, deployment_id: i64) {
+    if let Some((_, token)) = state.deploy_tasks.remove(&deployment_id) {
+        token.cancel();
+    }
 }
