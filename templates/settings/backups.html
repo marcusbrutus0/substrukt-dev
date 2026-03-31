@@ -1,0 +1,190 @@
+{% extends base_template %}
+{% block title %}Backups — Substrukt{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold tracking-tight mb-6">Backups</h1>
+
+{% if flash_message %}
+<div class="mb-4 p-4 rounded {% if flash_kind == 'success' %}bg-success-soft text-success{% elif flash_kind == 'error' %}bg-danger-soft text-danger{% else %}bg-card-alt text-muted{% endif %}">
+  {{ flash_message }}
+</div>
+{% endif %}
+
+{# ── Status banner ─────────────────────────────────────── #}
+{% if not s3_configured %}
+<div class="bg-card-alt border border-border-light text-muted p-4 rounded mb-6">
+  Backups not configured (S3 credentials missing)
+</div>
+{% elif backup_running %}
+<div class="bg-accent-soft border border-accent text-accent p-4 rounded mb-6 flex items-center gap-2">
+  <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+  </svg>
+  Backup in progress...
+</div>
+{% elif latest_backup and latest_backup.status == "success" %}
+<div class="bg-success-soft border border-success text-success p-4 rounded mb-6">
+  Last backup: {{ latest_backup.started_at[:19] }}
+  {% if latest_backup.size_bytes %}({{ (latest_backup.size_bytes / 1048576)|round(1) }} MB){% endif %}
+</div>
+{% elif latest_backup and latest_backup.status == "failed" %}
+<div class="bg-danger-soft border border-danger text-danger p-4 rounded mb-6">
+  Last backup failed: {{ latest_backup.error_message }} ({{ latest_backup.started_at[:19] }})
+</div>
+{% elif latest_backup and latest_backup.status == "running" %}
+<div class="bg-accent-soft border border-accent text-accent p-4 rounded mb-6 flex items-center gap-2">
+  <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+  </svg>
+  Backup in progress...
+</div>
+{% else %}
+<div class="bg-card-alt border border-border-light text-muted p-4 rounded mb-6">
+  No backups yet
+</div>
+{% endif %}
+
+{# ── Next scheduled backup + trigger ─────────────────── #}
+<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
+  <div class="flex items-center justify-between">
+    <div>
+      <h2 class="text-lg font-medium mb-1">Next Scheduled Backup</h2>
+      <p class="text-muted text-sm">
+        {% if not s3_configured %}
+        Disabled (S3 not configured)
+        {% elif not config.enabled %}
+        Disabled
+        {% elif next_backup_info %}
+        {{ next_backup_info }}
+        {% else %}
+        Imminent
+        {% endif %}
+      </p>
+    </div>
+    <form method="post" action="/settings/backups/trigger">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit"
+        class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+        {% if not s3_configured or backup_running %}disabled{% endif %}>
+        Back up now
+      </button>
+    </form>
+  </div>
+</div>
+
+{# ── Configuration form ──────────────────────────────── #}
+<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
+  <h2 class="text-lg font-medium mb-4">Configuration</h2>
+  <form method="post" action="/settings/backups">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+      <div>
+        <label class="block text-sm font-medium mb-1">Enabled</label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="enabled" value="on" {% if config.enabled %}checked{% endif %}
+            class="w-4 h-4 rounded border-border-light">
+          <span class="text-sm text-muted">Enable scheduled backups</span>
+        </label>
+      </div>
+      <div>
+        <label for="frequency_hours" class="block text-sm font-medium mb-1">Frequency</label>
+        <select name="frequency_hours" id="frequency_hours"
+          class="w-full rounded-md border border-border-light bg-bg text-fg px-3 py-2 text-sm">
+          <option value="1" {% if config.frequency_hours == 1 %}selected{% endif %}>Every hour</option>
+          <option value="6" {% if config.frequency_hours == 6 %}selected{% endif %}>Every 6 hours</option>
+          <option value="12" {% if config.frequency_hours == 12 %}selected{% endif %}>Every 12 hours</option>
+          <option value="24" {% if config.frequency_hours == 24 %}selected{% endif %}>Every 24 hours</option>
+          <option value="48" {% if config.frequency_hours == 48 %}selected{% endif %}>Every 2 days</option>
+          <option value="168" {% if config.frequency_hours == 168 %}selected{% endif %}>Every 7 days</option>
+        </select>
+      </div>
+      <div>
+        <label for="retention_count" class="block text-sm font-medium mb-1">Retention Count</label>
+        <input type="number" name="retention_count" id="retention_count" value="{{ config.retention_count }}"
+          min="1" max="100"
+          class="w-full rounded-md border border-border-light bg-bg text-fg px-3 py-2 text-sm">
+      </div>
+    </div>
+    <button type="submit"
+      class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
+      Save Configuration
+    </button>
+  </form>
+</div>
+
+{# ── Credential status ───────────────────────────────── #}
+<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
+  <h2 class="text-lg font-medium mb-4">S3 Credentials</h2>
+  <div class="overflow-x-auto">
+    <table class="w-full">
+      <thead class="bg-card-alt">
+        <tr>
+          <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Environment Variable</th>
+          <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Status</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-border-light">
+        {% for cred in credential_status %}
+        <tr>
+          <td class="px-4 py-2.5 text-sm font-mono">{{ cred.name }}</td>
+          <td class="px-4 py-2.5 text-sm">
+            {% if cred.present %}
+            <span class="text-success">Set</span>
+            {% else %}
+            <span class="text-danger">Missing</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Recent backups ──────────────────────────────────── #}
+{% if history %}
+<div class="bg-card border border-border-light rounded-lg overflow-hidden">
+  <h2 class="text-lg font-medium px-6 pt-6 pb-4">Recent Backups</h2>
+  <table class="w-full">
+    <thead class="bg-card-alt">
+      <tr>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Time</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Status</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Trigger</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Size</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">S3 Key</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-border-light">
+      {% for entry in history %}
+      <tr class="hover:bg-card-alt">
+        <td class="px-4 py-2.5 text-sm text-muted font-mono">{{ entry.started_at[:19] }}</td>
+        <td class="px-4 py-2.5 text-sm">
+          {% if entry.status == "success" %}
+          <span class="text-success font-medium">Success</span>
+          {% elif entry.status == "failed" %}
+          <span class="text-danger font-medium">Failed</span>
+          {% else %}
+          <span class="text-accent font-medium">Running</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-2.5 text-sm text-muted">{{ entry.trigger_source }}</td>
+        <td class="px-4 py-2.5 text-sm text-muted font-mono">
+          {% if entry.size_bytes %}{{ (entry.size_bytes / 1048576)|round(1) }} MB{% else %}&mdash;{% endif %}
+        </td>
+        <td class="px-4 py-2.5 text-sm text-muted font-mono truncate max-w-xs" title="{{ entry.s3_key }}">
+          {{ entry.s3_key if entry.s3_key else "&mdash;" }}
+        </td>
+      </tr>
+      {% if entry.status == "failed" and entry.error_message %}
+      <tr class="bg-card">
+        <td colspan="5" class="px-4 py-2 text-xs text-danger font-mono">{{ entry.error_message }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}
