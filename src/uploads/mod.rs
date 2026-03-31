@@ -94,7 +94,11 @@ pub fn get_upload_path(uploads_dir: &Path, hash: &str) -> Option<std::path::Path
 // -- SQLite operations --
 
 /// Insert upload metadata into SQLite. Uses INSERT OR IGNORE for dedup.
-pub async fn db_insert_upload(pool: &SqlitePool, app_id: i64, meta: &UploadMeta) -> eyre::Result<()> {
+pub async fn db_insert_upload(
+    pool: &SqlitePool,
+    app_id: i64,
+    meta: &UploadMeta,
+) -> eyre::Result<()> {
     sqlx::query(
         "INSERT OR IGNORE INTO uploads (app_id, hash, filename, mime, size) VALUES (?, ?, ?, ?, ?)",
     )
@@ -241,10 +245,7 @@ pub async fn migrate_meta_sidecars(data_dir: &Path, pool: &SqlitePool) -> eyre::
             continue;
         }
 
-        let app_slug = dir_entry
-            .file_name()
-            .to_string_lossy()
-            .to_string();
+        let app_slug = dir_entry.file_name().to_string_lossy().to_string();
 
         // Look up app by slug to get app_id
         let app = crate::db::models::find_app_by_slug(pool, &app_slug).await?;

@@ -82,26 +82,18 @@ impl FromRequestParts<AppState> for AppContext {
             })?;
 
         // Check access: get session from extensions (set by require_auth middleware)
-        let session = parts
-            .extensions
-            .get::<Session>()
-            .cloned()
-            .ok_or_else(|| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Html("Session not available".to_string()),
-                )
-                    .into_response()
-            })?;
+        let session = parts.extensions.get::<Session>().cloned().ok_or_else(|| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Html("Session not available".to_string()),
+            )
+                .into_response()
+        })?;
 
         let user_id = crate::auth::current_user_id(&session)
             .await
             .ok_or_else(|| {
-                (
-                    StatusCode::FORBIDDEN,
-                    Html("Not authenticated".to_string()),
-                )
-                    .into_response()
+                (StatusCode::FORBIDDEN, Html("Not authenticated".to_string())).into_response()
             })?;
 
         let user_role = crate::auth::current_user_role(&session)

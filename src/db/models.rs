@@ -172,11 +172,7 @@ pub fn validate_app_slug(slug: &str) -> Result<(), String> {
 
 // --- App Access ---
 
-pub async fn grant_app_access(
-    pool: &SqlitePool,
-    app_id: i64,
-    user_id: i64,
-) -> eyre::Result<()> {
+pub async fn grant_app_access(pool: &SqlitePool, app_id: i64, user_id: i64) -> eyre::Result<()> {
     sqlx::query("INSERT OR IGNORE INTO app_access (app_id, user_id) VALUES (?, ?)")
         .bind(app_id)
         .bind(user_id)
@@ -185,11 +181,7 @@ pub async fn grant_app_access(
     Ok(())
 }
 
-pub async fn revoke_app_access(
-    pool: &SqlitePool,
-    app_id: i64,
-    user_id: i64,
-) -> eyre::Result<()> {
+pub async fn revoke_app_access(pool: &SqlitePool, app_id: i64, user_id: i64) -> eyre::Result<()> {
     sqlx::query("DELETE FROM app_access WHERE app_id = ? AND user_id = ?")
         .bind(app_id)
         .bind(user_id)
@@ -223,10 +215,7 @@ pub async fn list_apps_for_user(pool: &SqlitePool, user_id: i64) -> eyre::Result
     Ok(apps)
 }
 
-pub async fn list_app_users(
-    pool: &SqlitePool,
-    app_id: i64,
-) -> eyre::Result<Vec<(User, bool)>> {
+pub async fn list_app_users(pool: &SqlitePool, app_id: i64) -> eyre::Result<Vec<(User, bool)>> {
     // Get all non-admin users with a flag indicating if they have access to this app
     let users: Vec<User> = sqlx::query_as::<_, User>(
         "SELECT id, username, password_hash, created_at, role FROM users WHERE role != 'admin' ORDER BY username",
@@ -306,11 +295,7 @@ pub async fn list_api_tokens_for_app(
     Ok(tokens)
 }
 
-pub async fn delete_api_token(
-    pool: &SqlitePool,
-    token_id: i64,
-    app_id: i64,
-) -> eyre::Result<()> {
+pub async fn delete_api_token(pool: &SqlitePool, token_id: i64, app_id: i64) -> eyre::Result<()> {
     sqlx::query("DELETE FROM api_tokens WHERE id = ? AND app_id = ?")
         .bind(token_id)
         .bind(app_id)

@@ -14,12 +14,12 @@ use substrukt::auth;
 use substrukt::cache;
 use substrukt::config::Config;
 use substrukt::db;
+use substrukt::db::models;
 use substrukt::metrics;
 use substrukt::rate_limit::RateLimiter;
 use substrukt::routes;
 use substrukt::state::AppStateInner;
 use substrukt::sync;
-use substrukt::db::models;
 use substrukt::templates;
 
 #[derive(Parser)]
@@ -238,10 +238,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     }
 
     // File watcher for cache invalidation
-    let _watcher = cache::spawn_watcher(
-        Arc::new(state.cache.clone()),
-        config.data_dir.clone(),
-    );
+    let _watcher = cache::spawn_watcher(Arc::new(state.cache.clone()), config.data_dir.clone());
 
     let app = routes::build_router(state)
         .layer(axum::extract::DefaultBodyLimit::max(config.max_body_size))

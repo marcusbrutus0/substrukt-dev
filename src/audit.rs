@@ -350,10 +350,7 @@ impl AuditLogger {
             .collect())
     }
 
-    pub async fn list_deployments_for_app(
-        &self,
-        app_id: i64,
-    ) -> eyre::Result<Vec<Deployment>> {
+    pub async fn list_deployments_for_app(&self, app_id: i64) -> eyre::Result<Vec<Deployment>> {
         let rows: Vec<(i64, Option<i64>, String, String, String, Option<String>, i32, i32, i64, String, String)> =
             sqlx::query_as(
                 "SELECT id, app_id, name, slug, webhook_url, webhook_auth_token, include_drafts, auto_deploy, debounce_seconds, created_at, updated_at FROM deployments WHERE app_id = ? ORDER BY name"
@@ -1060,7 +1057,16 @@ mod tests {
             .await
             .unwrap();
         logger
-            .create_deployment(1, "Alpha", "alpha", "https://a.com", None, false, false, 300)
+            .create_deployment(
+                1,
+                "Alpha",
+                "alpha",
+                "https://a.com",
+                None,
+                false,
+                false,
+                300,
+            )
             .await
             .unwrap();
         let all = logger.list_deployments().await.unwrap();
@@ -1285,7 +1291,16 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         let dep1 = logger
-            .create_deployment(1, "Alpha", "alpha", "https://a.com", None, false, false, 300)
+            .create_deployment(
+                1,
+                "Alpha",
+                "alpha",
+                "https://a.com",
+                None,
+                false,
+                false,
+                300,
+            )
             .await
             .unwrap();
         let dep2 = logger
@@ -1401,7 +1416,16 @@ mod tests {
         let pool = test_pool().await;
         let logger = AuditLogger::new(pool);
         logger
-            .create_deployment(1, "Manual", "manual", "https://m.com", None, false, false, 300)
+            .create_deployment(
+                1,
+                "Manual",
+                "manual",
+                "https://m.com",
+                None,
+                false,
+                false,
+                300,
+            )
             .await
             .unwrap();
         logger
@@ -1593,7 +1617,10 @@ mod tests {
             .await
             .unwrap();
 
-        let (entries, _) = logger.list_audit_log(Some("login"), None, None, 1).await.unwrap();
+        let (entries, _) = logger
+            .list_audit_log(Some("login"), None, None, 1)
+            .await
+            .unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].action, "login");
     }
@@ -1612,7 +1639,10 @@ mod tests {
             .await
             .unwrap();
 
-        let (entries, _) = logger.list_audit_log(None, Some("user1"), None, 1).await.unwrap();
+        let (entries, _) = logger
+            .list_audit_log(None, Some("user1"), None, 1)
+            .await
+            .unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].actor, "user1");
     }
@@ -1897,19 +1927,28 @@ mod tests {
         assert_eq!(entries.len(), 3);
 
         // Filter by app_id = 1
-        let (entries, _) = logger.list_audit_log(None, None, Some("1"), 1).await.unwrap();
+        let (entries, _) = logger
+            .list_audit_log(None, None, Some("1"), 1)
+            .await
+            .unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].app_id, Some(1));
         assert_eq!(entries[0].resource_id, "posts/1");
 
         // Filter by app_id = 2
-        let (entries, _) = logger.list_audit_log(None, None, Some("2"), 1).await.unwrap();
+        let (entries, _) = logger
+            .list_audit_log(None, None, Some("2"), 1)
+            .await
+            .unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].app_id, Some(2));
         assert_eq!(entries[0].resource_id, "pages/1");
 
         // Filter by global (no app_id)
-        let (entries, _) = logger.list_audit_log(None, None, Some("global"), 1).await.unwrap();
+        let (entries, _) = logger
+            .list_audit_log(None, None, Some("global"), 1)
+            .await
+            .unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].app_id, None);
         assert_eq!(entries[0].action, "login");
@@ -1922,15 +1961,42 @@ mod tests {
 
         // Create deployments for two different apps
         let dep1 = logger
-            .create_deployment(1, "Prod App1", "prod", "https://a.com", None, false, false, 300)
+            .create_deployment(
+                1,
+                "Prod App1",
+                "prod",
+                "https://a.com",
+                None,
+                false,
+                false,
+                300,
+            )
             .await
             .unwrap();
         let dep2 = logger
-            .create_deployment(2, "Prod App2", "prod", "https://b.com", None, false, false, 300)
+            .create_deployment(
+                2,
+                "Prod App2",
+                "prod",
+                "https://b.com",
+                None,
+                false,
+                false,
+                300,
+            )
             .await
             .unwrap();
         let dep3 = logger
-            .create_deployment(1, "Staging App1", "staging", "https://c.com", None, false, false, 300)
+            .create_deployment(
+                1,
+                "Staging App1",
+                "staging",
+                "https://c.com",
+                None,
+                false,
+                false,
+                300,
+            )
             .await
             .unwrap();
 
@@ -1946,14 +2012,25 @@ mod tests {
         assert_eq!(app2_deps[0].slug, "prod");
 
         // get_deployment_by_slug_and_app returns correct one
-        let found = logger.get_deployment_by_slug_and_app(1, "prod").await.unwrap().unwrap();
+        let found = logger
+            .get_deployment_by_slug_and_app(1, "prod")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.id, dep1.id);
 
-        let found = logger.get_deployment_by_slug_and_app(2, "prod").await.unwrap().unwrap();
+        let found = logger
+            .get_deployment_by_slug_and_app(2, "prod")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.id, dep2.id);
 
         // Non-existent combination
-        let found = logger.get_deployment_by_slug_and_app(2, "staging").await.unwrap();
+        let found = logger
+            .get_deployment_by_slug_and_app(2, "staging")
+            .await
+            .unwrap();
         assert!(found.is_none());
 
         // Same slug in different apps is allowed

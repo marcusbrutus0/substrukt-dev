@@ -31,10 +31,7 @@ pub fn populate(cache: &ContentCache, data_dir: &Path) {
         if !schemas_dir.exists() {
             continue;
         }
-        let app_slug = dir_entry
-            .file_name()
-            .to_string_lossy()
-            .to_string();
+        let app_slug = dir_entry.file_name().to_string_lossy().to_string();
         populate_app(cache, &app_dir, &app_slug);
     }
 
