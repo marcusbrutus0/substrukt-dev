@@ -63,6 +63,26 @@ pub struct AuditLogEntry {
     pub details: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BackupConfig {
+    pub frequency_hours: i64,
+    pub retention_count: i64,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BackupRecord {
+    pub id: i64,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+    pub status: String,
+    pub trigger_source: String,
+    pub error_message: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub s3_key: Option<String>,
+    pub manifest: Option<String>,
+}
+
 impl AuditLogger {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
@@ -600,6 +620,132 @@ impl AuditLogger {
                 tracing::warn!("Failed to write audit log: {e}");
             }
         });
+    }
+
+    // ── Backup config & history ─────────────────────────────────
+
+    pub async fn get_backup_config(&self) -> eyre::Result<BackupConfig> {
+        let row: (i64, i64, i32) = sqlx::query_as(
+            "SELECT frequency_hours, retention_count, enabled FROM backup_config WHERE id = 1",
+        )
+        .fetch_one(self.pool.as_ref())
+        .await?;
+        Ok(BackupConfig {
+            frequency_hours: row.0,
+            retention_count: row.1,
+            enabled: row.2 != 0,
+        })
+    }
+
+    pub async fn update_backup_config(
+        &self,
+        frequency_hours: i64,
+        retention_count: i64,
+        enabled: bool,
+    ) -> eyre::Result<()> {
+        let enabled_i = if enabled { 1i32 } else { 0 };
+        sqlx::query(
+            "UPDATE backup_config SET frequency_hours = ?, retention_count = ?, enabled = ? WHERE id = 1",
+        )
+        .bind(frequency_hours)
+        .bind(retention_count)
+        .bind(enabled_i)
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn start_backup_record(&self, trigger_source: &str) -> eyre::Result<i64> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let result = sqlx::query(
+            "INSERT INTO backup_history (started_at, status, trigger_source) VALUES (?, 'running', ?)",
+        )
+        .bind(&now)
+        .bind(trigger_source)
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(result.last_insert_rowid())
+    }
+
+    pub async fn complete_backup_record(
+        &self,
+        id: i64,
+        size_bytes: i64,
+        s3_key: &str,
+        manifest: &str,
+    ) -> eyre::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE backup_history SET status = 'success', completed_at = ?, size_bytes = ?, s3_key = ?, manifest = ? WHERE id = ?",
+        )
+        .bind(&now)
+        .bind(size_bytes)
+        .bind(s3_key)
+        .bind(manifest)
+        .bind(id)
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn fail_backup_record(&self, id: i64, error_message: &str) -> eyre::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE backup_history SET status = 'failed', completed_at = ?, error_message = ? WHERE id = ?",
+        )
+        .bind(&now)
+        .bind(error_message)
+        .bind(id)
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn latest_backup(&self) -> eyre::Result<Option<BackupRecord>> {
+        let row: Option<(i64, String, Option<String>, String, String, Option<String>, Option<i64>, Option<String>, Option<String>)> =
+            sqlx::query_as(
+                "SELECT id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest FROM backup_history ORDER BY started_at DESC LIMIT 1",
+            )
+            .fetch_optional(self.pool.as_ref())
+            .await?;
+        Ok(row.map(|(id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest)| {
+            BackupRecord { id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest }
+        }))
+    }
+
+    pub async fn last_successful_backup(&self) -> eyre::Result<Option<BackupRecord>> {
+        let row: Option<(i64, String, Option<String>, String, String, Option<String>, Option<i64>, Option<String>, Option<String>)> =
+            sqlx::query_as(
+                "SELECT id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest FROM backup_history WHERE status = 'success' ORDER BY started_at DESC LIMIT 1",
+            )
+            .fetch_optional(self.pool.as_ref())
+            .await?;
+        Ok(row.map(|(id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest)| {
+            BackupRecord { id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest }
+        }))
+    }
+
+    pub async fn list_backup_history(&self, limit: i64) -> eyre::Result<Vec<BackupRecord>> {
+        let rows: Vec<(i64, String, Option<String>, String, String, Option<String>, Option<i64>, Option<String>, Option<String>)> =
+            sqlx::query_as(
+                "SELECT id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest FROM backup_history ORDER BY started_at DESC LIMIT ?",
+            )
+            .bind(limit)
+            .fetch_all(self.pool.as_ref())
+            .await?;
+        Ok(rows.into_iter().map(|(id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest)| {
+            BackupRecord { id, started_at, completed_at, status, trigger_source, error_message, size_bytes, s3_key, manifest }
+        }).collect())
+    }
+
+    pub async fn prune_backup_history(&self, keep: i64) -> eyre::Result<()> {
+        sqlx::query(
+            "DELETE FROM backup_history WHERE id NOT IN (SELECT id FROM backup_history ORDER BY started_at DESC LIMIT ?)",
+        )
+        .bind(keep)
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(())
     }
 }
 
@@ -1283,5 +1429,159 @@ mod tests {
 
         let actors = logger.list_audit_actors().await.unwrap();
         assert_eq!(actors, vec!["alice", "zara"]);
+    }
+
+    // ── Backup config & history tests ───────────────────────────
+
+    #[tokio::test]
+    async fn test_backup_config_defaults() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let config = logger.get_backup_config().await.unwrap();
+        assert_eq!(config.frequency_hours, 24);
+        assert_eq!(config.retention_count, 7);
+        assert!(!config.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_update_and_get_backup_config() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        logger
+            .update_backup_config(12, 14, true)
+            .await
+            .unwrap();
+        let config = logger.get_backup_config().await.unwrap();
+        assert_eq!(config.frequency_hours, 12);
+        assert_eq!(config.retention_count, 14);
+        assert!(config.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_start_backup_record() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let id = logger.start_backup_record("manual").await.unwrap();
+        assert!(id > 0);
+        let latest = logger.latest_backup().await.unwrap().unwrap();
+        assert_eq!(latest.id, id);
+        assert_eq!(latest.status, "running");
+        assert_eq!(latest.trigger_source, "manual");
+    }
+
+    #[tokio::test]
+    async fn test_complete_backup_record() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let id = logger.start_backup_record("scheduled").await.unwrap();
+        logger
+            .complete_backup_record(id, 1024, "backups/test.tar.gz", r#"{"version":1}"#)
+            .await
+            .unwrap();
+        let latest = logger.latest_backup().await.unwrap().unwrap();
+        assert_eq!(latest.status, "success");
+        assert_eq!(latest.size_bytes, Some(1024));
+        assert_eq!(latest.s3_key.as_deref(), Some("backups/test.tar.gz"));
+        assert_eq!(latest.manifest.as_deref(), Some(r#"{"version":1}"#));
+        assert!(latest.completed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_fail_backup_record() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+        let id = logger.start_backup_record("manual").await.unwrap();
+        logger
+            .fail_backup_record(id, "connection refused")
+            .await
+            .unwrap();
+        let latest = logger.latest_backup().await.unwrap().unwrap();
+        assert_eq!(latest.status, "failed");
+        assert_eq!(
+            latest.error_message.as_deref(),
+            Some("connection refused")
+        );
+        assert!(latest.completed_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_last_successful_backup_skips_failed() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        // Create a successful backup
+        let id1 = logger.start_backup_record("scheduled").await.unwrap();
+        logger
+            .complete_backup_record(id1, 512, "backups/1.tar.gz", "{}")
+            .await
+            .unwrap();
+
+        // Create a failed backup (more recent)
+        let id2 = logger.start_backup_record("scheduled").await.unwrap();
+        logger
+            .fail_backup_record(id2, "network error")
+            .await
+            .unwrap();
+
+        let last_success = logger.last_successful_backup().await.unwrap().unwrap();
+        assert_eq!(last_success.id, id1);
+        assert_eq!(last_success.status, "success");
+    }
+
+    #[tokio::test]
+    async fn test_list_backup_history_order() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        let id1 = logger.start_backup_record("scheduled").await.unwrap();
+        logger
+            .complete_backup_record(id1, 100, "backups/1.tar.gz", "{}")
+            .await
+            .unwrap();
+
+        let id2 = logger.start_backup_record("manual").await.unwrap();
+        logger
+            .complete_backup_record(id2, 200, "backups/2.tar.gz", "{}")
+            .await
+            .unwrap();
+
+        let id3 = logger.start_backup_record("scheduled").await.unwrap();
+        logger
+            .complete_backup_record(id3, 300, "backups/3.tar.gz", "{}")
+            .await
+            .unwrap();
+
+        let history = logger.list_backup_history(10).await.unwrap();
+        assert_eq!(history.len(), 3);
+        // Most recent first
+        assert_eq!(history[0].id, id3);
+        assert_eq!(history[1].id, id2);
+        assert_eq!(history[2].id, id1);
+    }
+
+    #[tokio::test]
+    async fn test_prune_backup_history() {
+        let pool = test_pool().await;
+        let logger = AuditLogger::new(pool);
+
+        for i in 0..5 {
+            let id = logger.start_backup_record("scheduled").await.unwrap();
+            logger
+                .complete_backup_record(
+                    id,
+                    100 * (i + 1),
+                    &format!("backups/{i}.tar.gz"),
+                    "{}",
+                )
+                .await
+                .unwrap();
+        }
+
+        logger.prune_backup_history(2).await.unwrap();
+        let history = logger.list_backup_history(10).await.unwrap();
+        assert_eq!(history.len(), 2);
+        // Should keep the 2 most recent
+        assert_eq!(history[0].size_bytes, Some(500));
+        assert_eq!(history[1].size_bytes, Some(400));
     }
 }
