@@ -7,7 +7,7 @@
     {% if not is_new %}{% include "content/_status_control.html" %}{% endif %}
   </h1>
   {% if not is_single %}
-  <a href="/content/{{ schema_slug }}" class="text-muted hover:text-primary text-sm">Back to {{ schema_title }}</a>
+  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}" class="text-muted hover:text-primary text-sm">Back to {{ schema_title }}</a>
   {% endif %}
 </div>
 
@@ -24,7 +24,7 @@
 
 <div class="bg-card border border-border-light rounded-lg p-6">
   <form method="post" enctype="multipart/form-data"
-    action="{% if is_single %}/content/{{ schema_slug }}/_single{% elif is_new %}/content/{{ schema_slug }}/new{% else %}/content/{{ schema_slug }}/{{ entry_id }}{% endif %}">
+    action="{% if is_single %}/apps/{{ app.slug }}/content/{{ schema_slug }}/_single{% elif is_new %}/apps/{{ app.slug }}/content/{{ schema_slug }}/new{% else %}/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}{% endif %}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     {{ form_fields|safe }}
     {% if user_role == "viewer" %}
@@ -37,11 +37,11 @@
         {% if is_single %}Save{% elif is_new %}Create{% else %}Save Changes{% endif %}
       </button>
       {% if not is_single %}
-      <a href="/content/{{ schema_slug }}" class="px-4 py-2 rounded-md border border-border text-secondary hover:bg-card-alt text-sm font-medium">
+      <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}" class="px-4 py-2 rounded-md border border-border text-secondary hover:bg-card-alt text-sm font-medium">
         Cancel
       </a>
       {% if not is_new %}
-      <a href="/content/{{ schema_slug }}/{{ entry_id }}/history" class="px-4 py-2 rounded-md border border-border text-secondary hover:bg-card-alt text-sm font-medium">
+      <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/history" class="px-4 py-2 rounded-md border border-border text-secondary hover:bg-card-alt text-sm font-medium">
         History
       </a>
       {% endif %}

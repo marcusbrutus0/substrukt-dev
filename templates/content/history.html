@@ -3,7 +3,7 @@
 {% block content %}
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-2xl font-bold tracking-tight">History: {{ entry_id }}</h1>
-  <a href="/content/{{ schema_slug }}/{{ entry_id }}/edit" class="text-muted hover:text-primary text-sm">Back to Edit</a>
+  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/edit" class="text-muted hover:text-primary text-sm">Back to Edit</a>
 </div>
 
 {% if versions %}
@@ -22,7 +22,7 @@
         <td class="px-4 py-2.5 font-mono text-sm text-muted">{{ v.timestamp }}</td>
         <td class="px-4 py-2.5 text-sm text-secondary">{{ v.size }} bytes</td>
         <td class="px-4 py-2.5 text-right">
-          <form method="post" action="/content/{{ schema_slug }}/{{ entry_id }}/revert/{{ v.timestamp }}" style="display:inline">
+          <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/revert/{{ v.timestamp }}" style="display:inline">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <button type="submit" onclick="return confirm('Revert to this version?')" class="text-accent hover:underline text-sm">Revert</button>
           </form>

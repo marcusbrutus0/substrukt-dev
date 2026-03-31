@@ -9,7 +9,7 @@
 </div>
 {% endif %}
 
-<form method="post" action="{% if editing %}/deployments/{{ deployment.slug }}{% else %}/deployments/new{% endif %}"
+<form method="post" action="{% if editing %}/apps/{{ app.slug }}/deployments/{{ deployment.slug }}{% else %}/apps/{{ app.slug }}/deployments/new{% endif %}"
   class="max-w-xl space-y-5">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
 
@@ -91,7 +91,7 @@
       class="px-4 py-2 bg-accent text-white rounded-md hover:bg-accent-hover text-sm font-medium">
       {% if editing %}Save Deployment{% else %}Create Deployment{% endif %}
     </button>
-    <a href="/deployments" class="px-4 py-2 border border-border rounded-md hover:bg-card-alt text-sm">Cancel</a>
+    <a href="/apps/{{ app.slug }}/deployments" class="px-4 py-2 border border-border rounded-md hover:bg-card-alt text-sm">Cancel</a>
   </div>
 </form>
 

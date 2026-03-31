@@ -2,8 +2,8 @@
   {% if entry_status == "draft" %}
     <span class="px-2 py-0.5 rounded text-xs font-medium bg-accent-soft text-accent">Draft</span>
     {% if user_role != "viewer" %}
-    <form method="post" action="/content/{{ schema_slug }}/{{ entry_id }}/publish"
-          hx-post="/content/{{ schema_slug }}/{{ entry_id }}/publish"
+    <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/publish"
+          hx-post="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/publish"
           hx-target="#entry-status" hx-swap="outerHTML"
           class="inline">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -16,8 +16,8 @@
   {% else %}
     <span class="px-2 py-0.5 rounded text-xs font-medium bg-success-soft text-success">Published</span>
     {% if user_role != "viewer" %}
-    <form method="post" action="/content/{{ schema_slug }}/{{ entry_id }}/unpublish"
-          hx-post="/content/{{ schema_slug }}/{{ entry_id }}/unpublish"
+    <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/unpublish"
+          hx-post="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/unpublish"
           hx-target="#entry-status" hx-swap="outerHTML"
           class="inline">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
