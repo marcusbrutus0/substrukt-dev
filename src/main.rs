@@ -19,6 +19,7 @@ use substrukt::rate_limit::RateLimiter;
 use substrukt::routes;
 use substrukt::state::AppStateInner;
 use substrukt::sync;
+use substrukt::db::models;
 use substrukt::templates;
 
 #[derive(Parser)]
@@ -64,16 +65,25 @@ enum Command {
     Import {
         /// Path to the bundle tar.gz file
         path: PathBuf,
+        /// App slug to import into
+        #[arg(long)]
+        app: String,
     },
     /// Export a bundle tar.gz
     Export {
         /// Output path for the bundle tar.gz file
         path: PathBuf,
+        /// App slug to export from
+        #[arg(long)]
+        app: String,
     },
     /// Create an API token
     CreateToken {
         /// Name for the token
         name: String,
+        /// App slug to create the token for
+        #[arg(long)]
+        app: String,
     },
 }
 
@@ -101,9 +111,14 @@ async fn main() -> eyre::Result<()> {
 
     match cli.command.unwrap_or(Command::Serve) {
         Command::Serve => run_server(config, api_rate_limit).await,
-        Command::Import { path } => {
+        Command::Import { path, app } => {
             let pool = db::init_pool(&config.db_path).await?;
-            let warnings = sync::import_bundle(&config.data_dir, &pool, &path).await?;
+            let _app_record = models::find_app_by_slug(&pool, &app)
+                .await?
+                .ok_or_else(|| eyre::eyre!("App '{app}' not found"))?;
+            let app_dir = config.app_dir(&app);
+            // Sync module updated in Task 10 to accept app_dir + app_id
+            let warnings = sync::import_bundle(&app_dir, &pool, &path).await?;
             if warnings.is_empty() {
                 tracing::info!("Import complete, no validation warnings");
             } else {
@@ -114,22 +129,29 @@ async fn main() -> eyre::Result<()> {
             }
             Ok(())
         }
-        Command::Export { path } => {
+        Command::Export { path, app } => {
             let pool = db::init_pool(&config.db_path).await?;
-            sync::export_bundle(&config.data_dir, &pool, &path).await?;
+            let _app_record = models::find_app_by_slug(&pool, &app)
+                .await?
+                .ok_or_else(|| eyre::eyre!("App '{app}' not found"))?;
+            let app_dir = config.app_dir(&app);
+            // Sync module updated in Task 10 to accept app_dir + app_id
+            sync::export_bundle(&app_dir, &pool, &path).await?;
             tracing::info!("Exported to {}", path.display());
             Ok(())
         }
-        Command::CreateToken { name } => {
+        Command::CreateToken { name, app } => {
             let pool = db::init_pool(&config.db_path).await?;
-            let count = db::models::user_count(&pool).await?;
+            let count = models::user_count(&pool).await?;
             if count == 0 {
                 eyre::bail!("No users exist. Run the server and set up an admin user first.");
             }
+            let app_record = models::find_app_by_slug(&pool, &app)
+                .await?
+                .ok_or_else(|| eyre::eyre!("App '{app}' not found"))?;
             let raw_token = auth::token::generate_token();
             let token_hash = auth::token::hash_token(&raw_token);
-            // app_id = 1 is the default app created by migration
-            db::models::create_api_token(&pool, 1, 1, &name, &token_hash).await?;
+            models::create_api_token(&pool, 1, app_record.id, &name, &token_hash).await?;
             println!("Token created: {raw_token}");
             println!("(Save this token — it won't be shown again)");
             Ok(())
@@ -149,6 +171,12 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     let audit_db_path = config.data_dir.join("audit.db");
     let audit_pool = audit::init_pool(&audit_db_path).await?;
     let audit_logger = audit::AuditLogger::new(audit_pool);
+
+    // Migrate old single-app layout to multi-app
+    migrate_single_app_layout(&config.data_dir)?;
+
+    // Ensure default app dirs exist
+    config.ensure_app_dirs("default")?;
 
     // Template environment (auto-reloads on file changes)
     let reloader = templates::create_reloader(config.schemas_dir());
@@ -243,4 +271,62 @@ async fn shutdown_signal() {
         .await
         .expect("Failed to install Ctrl+C handler");
     tracing::info!("Shutdown signal received");
+}
+
+/// Migrate old single-app layout to multi-app layout.
+/// Moves schemas/, content/, uploads/, _history/ into data/default/.
+fn migrate_single_app_layout(data_dir: &std::path::Path) -> eyre::Result<()> {
+    let old_schemas = data_dir.join("schemas");
+    let default_dir = data_dir.join("default");
+
+    // If data/schemas/ exists at root, this is the old layout
+    if old_schemas.exists() && old_schemas.is_dir() {
+        tracing::info!("Migrating single-app layout to multi-app...");
+        std::fs::create_dir_all(&default_dir)?;
+
+        let dirs_to_move = ["schemas", "content", "uploads", "_history"];
+        let mut moved = Vec::new();
+
+        for dir_name in &dirs_to_move {
+            let src = data_dir.join(dir_name);
+            let dst = default_dir.join(dir_name);
+            if src.exists() {
+                if let Err(e) = std::fs::rename(&src, &dst) {
+                    // rename fails across filesystems; fall back to copy + delete
+                    tracing::warn!("rename failed ({e}), falling back to copy for {dir_name}");
+                    if let Err(copy_err) = copy_dir_recursive(&src, &dst) {
+                        // Rollback already-moved directories
+                        for moved_dir in &moved {
+                            let rollback_src = default_dir.join(moved_dir);
+                            let rollback_dst = data_dir.join(moved_dir);
+                            let _ = std::fs::rename(&rollback_src, &rollback_dst);
+                        }
+                        eyre::bail!(
+                            "Migration failed while moving {dir_name}: {copy_err}. \
+                             Rolled back all changes. Server cannot start."
+                        );
+                    }
+                    std::fs::remove_dir_all(&src)?;
+                }
+                moved.push(*dir_name);
+            }
+        }
+        tracing::info!("Migration complete: data moved to data/default/");
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> eyre::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
