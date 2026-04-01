@@ -64,6 +64,14 @@ struct Cli {
     /// Max API requests per IP per minute (rate limit)
     #[arg(long, global = true, default_value = "100")]
     api_rate_limit: usize,
+
+    /// Maximum number of content versions to keep per entry
+    #[arg(long, global = true, default_value = "10")]
+    version_history_count: usize,
+
+    /// Maximum request body size in megabytes
+    #[arg(long, global = true, default_value = "50")]
+    max_body_size: usize,
 }
 
 #[derive(Subcommand)]
@@ -109,6 +117,8 @@ async fn main() -> eyre::Result<()> {
         cli.production_webhook_url,
         cli.production_webhook_auth_token,
         cli.webhook_check_interval,
+        cli.version_history_count,
+        cli.max_body_size,
     );
     config.ensure_dirs()?;
 
@@ -210,7 +220,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     );
 
     let app = routes::build_router(state)
-        .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024)) // 50 MB
+        .layer(axum::extract::DefaultBodyLimit::max(config.max_body_size))
         .layer(session_layer)
         .layer(tower_http::trace::TraceLayer::new_for_http());
 

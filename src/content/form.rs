@@ -1,7 +1,214 @@
+use std::collections::HashMap;
+
 use serde_json::Value;
 
+/// Map from field name to list of (id, label) pairs for reference dropdowns.
+pub type ReferenceOptions = HashMap<String, Vec<(String, String)>>;
+
+fn escape_html_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn build_hint_line(hints: &[String]) -> String {
+    if hints.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"  <p class="text-xs text-muted mt-1">{}</p>
+"#,
+            hints.join(" · ")
+        )
+    }
+}
+
+/// Extract `description` from a schema property, HTML-escaped.
+fn get_description(schema: &Value) -> Option<String> {
+    schema
+        .get("description")
+        .and_then(|d| d.as_str())
+        .filter(|d| !d.is_empty())
+        .map(|d| escape_html_attr(d))
+}
+
+/// Build string constraint HTML attrs and hint parts.
+/// `is_textarea` controls whether `pattern` becomes an HTML attr or hint-only.
+fn string_constraints(schema: &Value, is_textarea: bool) -> (String, Vec<String>) {
+    let mut attrs = String::new();
+    let mut hints = Vec::new();
+
+    let min_len = schema
+        .get("minLength")
+        .and_then(|v| v.as_u64())
+        .filter(|&v| v > 0);
+    let max_len = schema.get("maxLength").and_then(|v| v.as_u64());
+
+    if let Some(min) = min_len {
+        attrs.push_str(&format!(r#" minlength="{min}""#));
+    }
+    if let Some(max) = max_len {
+        attrs.push_str(&format!(r#" maxlength="{max}""#));
+    }
+
+    match (min_len, max_len) {
+        (Some(min), Some(max)) => hints.push(format!("{min}–{max} characters")),
+        (Some(min), None) => hints.push(format!("Min {min} characters")),
+        (None, Some(max)) => hints.push(format!("Max {max} characters")),
+        _ => {}
+    }
+
+    let pattern = schema
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .filter(|p| !p.is_empty());
+    if let Some(pat) = pattern {
+        if !is_textarea {
+            attrs.push_str(&format!(r#" pattern="{}""#, escape_html_attr(pat)));
+        }
+        hints.push(format!("Pattern: <code>{}</code>", escape_html_attr(pat)));
+    }
+
+    if let Some(desc) = get_description(schema) {
+        hints.push(desc);
+    }
+
+    (attrs, hints)
+}
+
+/// Build number/integer constraint HTML attrs and hint parts.
+fn number_constraints(schema: &Value, is_integer: bool) -> (String, Vec<String>) {
+    let mut attrs = String::new();
+    let mut hints = Vec::new();
+
+    let minimum = schema.get("minimum").and_then(|v| v.as_f64());
+    let maximum = schema.get("maximum").and_then(|v| v.as_f64());
+    let exc_min = schema.get("exclusiveMinimum").and_then(|v| v.as_f64());
+    let exc_max = schema.get("exclusiveMaximum").and_then(|v| v.as_f64());
+
+    // Resolve effective min: tighter of minimum and exclusiveMinimum
+    let (effective_min, min_exclusive) = match (minimum, exc_min) {
+        (Some(m), Some(e)) => {
+            let adj = if is_integer { e + 1.0 } else { e };
+            if adj > m {
+                (Some(adj), !is_integer)
+            } else {
+                (Some(m), false)
+            }
+        }
+        (Some(m), None) => (Some(m), false),
+        (None, Some(e)) => {
+            if is_integer {
+                (Some(e + 1.0), false)
+            } else {
+                (Some(e), true)
+            }
+        }
+        (None, None) => (None, false),
+    };
+
+    // Resolve effective max: tighter of maximum and exclusiveMaximum
+    let (effective_max, max_exclusive) = match (maximum, exc_max) {
+        (Some(m), Some(e)) => {
+            let adj = if is_integer { e - 1.0 } else { e };
+            if adj < m {
+                (Some(adj), !is_integer)
+            } else {
+                (Some(m), false)
+            }
+        }
+        (Some(m), None) => (Some(m), false),
+        (None, Some(e)) => {
+            if is_integer {
+                (Some(e - 1.0), false)
+            } else {
+                (Some(e), true)
+            }
+        }
+        (None, None) => (None, false),
+    };
+
+    fn fmt_num(n: f64) -> String {
+        if n.fract() == 0.0 {
+            format!("{}", n as i64)
+        } else {
+            format!("{n}")
+        }
+    }
+
+    if let Some(min) = effective_min {
+        if !min_exclusive {
+            attrs.push_str(&format!(r#" min="{}""#, fmt_num(min)));
+        }
+    }
+    if let Some(max) = effective_max {
+        if !max_exclusive {
+            attrs.push_str(&format!(r#" max="{}""#, fmt_num(max)));
+        }
+    }
+
+    // Hint text
+    let min_hint = effective_min.map(|v| {
+        if min_exclusive {
+            format!("&gt; {}", fmt_num(v))
+        } else {
+            fmt_num(v)
+        }
+    });
+    let max_hint = effective_max.map(|v| {
+        if max_exclusive {
+            format!("&lt; {}", fmt_num(v))
+        } else {
+            fmt_num(v)
+        }
+    });
+
+    match (min_hint, max_hint) {
+        (Some(min), Some(max)) => {
+            if !min_exclusive && !max_exclusive {
+                hints.push(format!("{min}–{max}"));
+            } else {
+                hints.push(format!("{min} to {max}"));
+            }
+        }
+        (Some(min), None) => {
+            if min_exclusive {
+                hints.push(min);
+            } else {
+                hints.push(format!("Min {min}"));
+            }
+        }
+        (None, Some(max)) => {
+            if max_exclusive {
+                hints.push(max);
+            } else {
+                hints.push(format!("Max {max}"));
+            }
+        }
+        _ => {}
+    }
+
+    // multipleOf -> step
+    if let Some(step) = schema.get("multipleOf").and_then(|v| v.as_f64()) {
+        attrs.push_str(&format!(r#" step="{}""#, fmt_num(step)));
+        hints.push(format!("Step: {}", fmt_num(step)));
+    }
+
+    if let Some(desc) = get_description(schema) {
+        hints.push(desc);
+    }
+
+    (attrs, hints)
+}
+
 /// Generate HTML form fields from a JSON Schema.
-pub fn render_form_fields(schema: &Value, data: Option<&Value>, prefix: &str) -> String {
+pub fn render_form_fields(
+    schema: &Value,
+    data: Option<&Value>,
+    prefix: &str,
+    ref_options: &ReferenceOptions,
+) -> String {
     let mut html = String::new();
 
     let properties = match schema.get("properties").and_then(|p| p.as_object()) {
@@ -46,6 +253,7 @@ pub fn render_form_fields(schema: &Value, data: Option<&Value>, prefix: &str) ->
             prop_schema,
             field_value,
             is_required,
+            ref_options,
         ));
     }
 
@@ -60,43 +268,105 @@ fn render_field(
     schema: &Value,
     value: Option<&Value>,
     required: bool,
+    ref_options: &ReferenceOptions,
 ) -> String {
     let req_attr = if required { " required" } else { "" };
     let req_star = if required { " *" } else { "" };
 
     match (field_type, format) {
-        ("string", Some("textarea")) => {
+        ("string", Some("markdown")) => {
             let val = value.and_then(|v| v.as_str()).unwrap_or("");
+            let (constraint_attrs, hints) = string_constraints(schema, true);
+            let hint_html = build_hint_line(&hints);
             format!(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>{val}</textarea>
-</div>
+  <textarea id="{name}" name="{name}" rows="12" data-markdown class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
+{hint_html}</div>
+"#
+            )
+        }
+        ("string", Some("textarea")) => {
+            let val = value.and_then(|v| v.as_str()).unwrap_or("");
+            let (constraint_attrs, hints) = string_constraints(schema, true);
+            let hint_html = build_hint_line(&hints);
+            format!(
+                r#"<div class="mb-4">
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
+{hint_html}</div>
 "#
             )
         }
         ("string", Some("upload")) => {
-            let current = value
-                .and_then(|v| v.as_object())
-                .map(|obj| {
-                    let filename = obj
-                        .get("filename")
-                        .and_then(|f| f.as_str())
-                        .unwrap_or("file");
-                    let hash = obj.get("hash").and_then(|h| h.as_str()).unwrap_or("");
+            let mut current_html = String::new();
+            if let Some(obj) = value.and_then(|v| v.as_object()) {
+                let filename = obj
+                    .get("filename")
+                    .and_then(|f| f.as_str())
+                    .unwrap_or("file");
+                let hash = obj.get("hash").and_then(|h| h.as_str()).unwrap_or("");
+                let mime = obj.get("mime").and_then(|m| m.as_str()).unwrap_or("");
+                let json_val =
+                    serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default();
+
+                // Show image thumbnail for image MIME types
+                let thumbnail = if mime.starts_with("image/") {
                     format!(
-                        r#"<div class="mb-2 text-sm text-secondary">Current: <a href="/uploads/file/{hash}/{filename}" class="text-accent underline" target="_blank">{filename}</a></div>
-    <input type="hidden" name="{name}.__current" value='{}'>"#,
-                        serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default()
+                        r#"<img src="/uploads/file/{hash}/{filename}" alt="{filename}" class="h-16 w-16 object-cover rounded border border-border-light">"#
                     )
-                })
-                .unwrap_or_default();
+                } else {
+                    String::new()
+                };
+
+                current_html = format!(
+                    r#"<div class="mb-2 text-sm text-secondary flex items-center gap-3">
+    {thumbnail}
+    <div>
+      <div>Current: <a href="/uploads/file/{hash}/{filename}" class="text-accent underline" target="_blank">{filename}</a></div>
+      <div class="text-muted text-xs">{mime}</div>
+    </div>
+  </div>
+  <input type="hidden" name="{name}.__current" value='{json_val}'>"#
+                );
+            }
+
+            let hint_html =
+                build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
+            format!(
+                r#"<div class="mb-4">
+  <label class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  {current_html}
+  <div class="upload-zone border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-accent transition-colors relative" data-upload-zone>
+    <div class="upload-zone-prompt text-muted text-sm">Drag a file here or click to browse</div>
+    <div class="upload-zone-info hidden text-sm text-secondary mt-2"></div>
+    <div class="upload-zone-preview hidden mt-2 flex justify-center"></div>
+    <input type="file" id="{name}" name="{name}" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" data-upload-input{req_attr}>
+  </div>
+{hint_html}</div>
+"#
+            )
+        }
+        ("string", Some("reference")) => {
+            let val = value.and_then(|v| v.as_str()).unwrap_or("");
+            let empty_opts = Vec::new();
+            let options = ref_options.get(name).unwrap_or(&empty_opts);
+            let mut opts_html = r#"<option value="">-- Select --</option>"#.to_string();
+            for (id, label_text) in options {
+                let selected = if id == val { " selected" } else { "" };
+                opts_html.push_str(&format!(
+                    r#"<option value="{id}"{selected}>{label_text}</option>"#
+                ));
+            }
+            let hint_html =
+                build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
             format!(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  {current}
-  <input type="file" id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md"{req_attr}>
-</div>
+  <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
+    {opts_html}
+  </select>
+{hint_html}</div>
 "#
             )
         }
@@ -112,22 +382,26 @@ fn render_field(
                         r#"<option value="{ev_str}"{selected}>{ev_str}</option>"#
                     ));
                 }
+                let hint_html =
+                    build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
                 format!(
                     r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
     {options}
   </select>
-</div>
+{hint_html}</div>
 "#
                 )
             } else {
                 let val = value.and_then(|v| v.as_str()).unwrap_or("");
+                let (constraint_attrs, hints) = string_constraints(schema, false);
+                let hint_html = build_hint_line(&hints);
                 format!(
                     r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
-</div>
+  <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>
+{hint_html}</div>
 "#
                 )
             }
@@ -135,22 +409,34 @@ fn render_field(
         ("number" | "integer", _) => {
             let val = value.map(|v| v.to_string()).unwrap_or_default();
             let val = val.trim_matches('"');
-            let step = if field_type == "integer" {
-                r#" step="1""#
+            let is_integer = field_type == "integer";
+
+            let (constraint_attrs, hints) = number_constraints(schema, is_integer);
+            let hint_html = build_hint_line(&hints);
+
+            // Default step if multipleOf not specified
+            let has_step = constraint_attrs.contains("step=");
+            let step = if has_step {
+                String::new()
+            } else if is_integer {
+                r#" step="1""#.to_string()
             } else {
-                r#" step="any""#
+                r#" step="any""#.to_string()
             };
+
             format!(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <input type="number" id="{name}" name="{name}" value="{val}"{step} class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
-</div>
+  <input type="number" id="{name}" name="{name}" value="{val}"{step}{constraint_attrs} class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
+{hint_html}</div>
 "#
             )
         }
         ("boolean", _) => {
             let checked = value.and_then(|v| v.as_bool()).unwrap_or(false);
             let checked_attr = if checked { " checked" } else { "" };
+            let hint_html =
+                build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
             format!(
                 r#"<div class="mb-4">
   <label class="flex items-center gap-2">
@@ -158,12 +444,12 @@ fn render_field(
     <input type="checkbox" name="{name}" value="true" class="rounded border-border text-accent focus:ring-accent"{checked_attr}>
     <span class="text-sm font-medium text-secondary">{label}</span>
   </label>
-</div>
+{hint_html}</div>
 "#
             )
         }
         ("object", _) => {
-            let inner = render_form_fields(schema, value, name);
+            let inner = render_form_fields(schema, value, name, ref_options);
             format!(
                 r#"<fieldset class="mb-4 p-4 border border-border-light rounded-md">
   <legend class="text-sm font-medium text-secondary px-2">{label}</legend>
@@ -190,14 +476,31 @@ fn render_field(
   </div>
   {}
 </div>"#,
-                        render_form_fields(&items_schema, Some(item), &item_name)
+                        render_form_fields(&items_schema, Some(item), &item_name, ref_options)
                     ));
                 }
             }
 
             // Template for new items (hidden, used by JS)
             let template_name = format!("{name}[__INDEX__]");
-            let template_html = render_form_fields(&items_schema, None, &template_name);
+            let template_html =
+                render_form_fields(&items_schema, None, &template_name, ref_options);
+
+            // Array constraints (hint only)
+            let mut hints = Vec::new();
+            let min_items = schema.get("minItems").and_then(|v| v.as_u64());
+            let max_items = schema.get("maxItems").and_then(|v| v.as_u64());
+            match (min_items, max_items) {
+                (Some(min), Some(max)) => hints.push(format!("{min}–{max} items")),
+                (Some(1), None) => hints.push("Min 1 item".to_string()),
+                (Some(min), None) => hints.push(format!("Min {min} items")),
+                (None, Some(max)) => hints.push(format!("Max {max} items")),
+                _ => {}
+            }
+            if let Some(desc) = get_description(schema) {
+                hints.push(desc);
+            }
+            let hint_html = build_hint_line(&hints);
 
             format!(
                 r#"<div class="mb-4">
@@ -207,7 +510,7 @@ fn render_field(
   </div>
   <template id="template-{name}">{template_html}</template>
   <button type="button" onclick="addArrayItem('{name}')" class="mt-2 px-3 py-1 text-sm bg-card-alt border border-border rounded hover:bg-card-alt">+ Add Item</button>
-</div>
+{hint_html}</div>
 "#
             )
         }
@@ -356,4 +659,346 @@ fn parse_array_form_data(schema: &Value, form: &[(String, String)], prefix: &str
         .collect();
 
     Value::Array(items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn string_field_minlength_maxlength_renders_attrs_and_hint() {
+        let schema = json!({
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "title": "Name",
+                    "minLength": 3,
+                    "maxLength": 100
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains(r#"minlength="3""#),
+            "should have minlength attr"
+        );
+        assert!(
+            html.contains(r#"maxlength="100""#),
+            "should have maxlength attr"
+        );
+        assert!(
+            html.contains("3–100 characters"),
+            "should show combined hint"
+        );
+    }
+
+    #[test]
+    fn string_field_pattern_renders_attr_and_hint() {
+        let schema = json!({
+            "properties": {
+                "slug": {
+                    "type": "string",
+                    "title": "Slug",
+                    "pattern": "^[a-z0-9-]+$"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains(r#"pattern="^[a-z0-9-]+$""#),
+            "should have pattern attr"
+        );
+        assert!(html.contains("Pattern:"), "should show pattern hint");
+    }
+
+    #[test]
+    fn textarea_field_no_pattern_attr_but_shows_hint() {
+        let schema = json!({
+            "properties": {
+                "bio": {
+                    "type": "string",
+                    "format": "textarea",
+                    "title": "Bio",
+                    "pattern": "^[A-Z]",
+                    "maxLength": 500
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            !html.contains(r#"pattern="#),
+            "textarea should not have pattern attr"
+        );
+        assert!(
+            html.contains("Pattern:"),
+            "should still show pattern as hint"
+        );
+        assert!(
+            html.contains(r#"maxlength="500""#),
+            "should have maxlength attr"
+        );
+    }
+
+    #[test]
+    fn field_description_renders_as_hint() {
+        let schema = json!({
+            "properties": {
+                "email": {
+                    "type": "string",
+                    "title": "Email",
+                    "description": "Your primary email address"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains("Your primary email address"),
+            "should show description"
+        );
+        assert!(
+            html.contains("text-xs text-muted"),
+            "should use hint styling"
+        );
+    }
+
+    #[test]
+    fn no_constraints_no_hint_line() {
+        let schema = json!({
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "title": "Title"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            !html.contains("text-xs text-muted"),
+            "should not have hint line"
+        );
+    }
+
+    #[test]
+    fn upload_field_renders_drop_zone() {
+        let schema = json!({
+            "properties": {
+                "photo": {
+                    "type": "string",
+                    "format": "upload",
+                    "title": "Photo"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(html.contains("data-upload-zone"), "should have drop zone");
+        assert!(
+            html.contains("data-upload-input"),
+            "should have upload input"
+        );
+        assert!(
+            html.contains("Drag a file here or click to browse"),
+            "should have prompt text"
+        );
+        assert!(html.contains("upload-zone-info"), "should have info area");
+        assert!(
+            html.contains("upload-zone-preview"),
+            "should have preview area"
+        );
+        assert!(
+            html.contains(r#"opacity-0"#),
+            "file input should be invisible overlay"
+        );
+    }
+
+    #[test]
+    fn upload_field_existing_image_shows_thumbnail() {
+        let schema = json!({
+            "properties": {
+                "photo": {
+                    "type": "string",
+                    "format": "upload",
+                    "title": "Photo"
+                }
+            }
+        });
+        let data = json!({
+            "photo": {
+                "hash": "abc123",
+                "filename": "test.png",
+                "mime": "image/png"
+            }
+        });
+        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new());
+        assert!(
+            html.contains("<img"),
+            "should show image thumbnail for image MIME"
+        );
+        assert!(
+            html.contains("/uploads/file/abc123/test.png"),
+            "should link to upload"
+        );
+        assert!(
+            html.contains("__current"),
+            "should preserve hidden current field"
+        );
+    }
+
+    #[test]
+    fn upload_field_existing_non_image_no_thumbnail() {
+        let schema = json!({
+            "properties": {
+                "doc": {
+                    "type": "string",
+                    "format": "upload",
+                    "title": "Document"
+                }
+            }
+        });
+        let data = json!({
+            "doc": {
+                "hash": "def456",
+                "filename": "readme.pdf",
+                "mime": "application/pdf"
+            }
+        });
+        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new());
+        assert!(
+            !html.contains("<img"),
+            "should NOT show thumbnail for non-image"
+        );
+        assert!(
+            html.contains("/uploads/file/def456/readme.pdf"),
+            "should link to upload"
+        );
+        assert!(
+            html.contains("__current"),
+            "should preserve hidden current field"
+        );
+    }
+
+    #[test]
+    fn number_field_min_max_renders_attrs_and_hint() {
+        let schema = json!({
+            "properties": {
+                "price": {
+                    "type": "number",
+                    "title": "Price",
+                    "minimum": 0.01,
+                    "maximum": 9999.99
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(html.contains(r#"min="0.01""#), "should have min attr");
+        assert!(html.contains(r#"max="9999.99""#), "should have max attr");
+        assert!(html.contains("0.01–9999.99"), "should show range hint");
+    }
+
+    #[test]
+    fn integer_field_exclusive_bounds_adjusted() {
+        let schema = json!({
+            "properties": {
+                "age": {
+                    "type": "integer",
+                    "title": "Age",
+                    "exclusiveMinimum": 0,
+                    "exclusiveMaximum": 150
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains(r#"min="1""#),
+            "exclusive min 0 -> min 1 for integer"
+        );
+        assert!(
+            html.contains(r#"max="149""#),
+            "exclusive max 150 -> max 149 for integer"
+        );
+    }
+
+    #[test]
+    fn number_field_exclusive_bounds_hint_only() {
+        let schema = json!({
+            "properties": {
+                "rate": {
+                    "type": "number",
+                    "title": "Rate",
+                    "exclusiveMinimum": 0
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            !html.contains(r#"min="#),
+            "no min attr for exclusive float bound"
+        );
+        assert!(html.contains("&gt; 0"), "should show > 0 hint");
+    }
+
+    #[test]
+    fn array_field_min_max_items_renders_hint() {
+        let schema = json!({
+            "properties": {
+                "tags": {
+                    "type": "array",
+                    "title": "Tags",
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string", "title": "Name" }
+                        }
+                    }
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains("1–5 items"),
+            "should show item count range hint"
+        );
+        assert!(
+            html.contains("text-xs text-muted"),
+            "should use hint styling"
+        );
+    }
+
+    #[test]
+    fn array_field_min_items_singular() {
+        let schema = json!({
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "title": "Items",
+                    "minItems": 1,
+                    "items": { "type": "object", "properties": { "v": { "type": "string" } } }
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(html.contains("Min 1 item"), "should use singular 'item'");
+        assert!(!html.contains("Min 1 items"), "should not use plural for 1");
+    }
+
+    #[test]
+    fn number_field_multiple_of_renders_step() {
+        let schema = json!({
+            "properties": {
+                "quantity": {
+                    "type": "integer",
+                    "title": "Quantity",
+                    "multipleOf": 5
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains(r#"step="5""#),
+            "should override step with multipleOf"
+        );
+        assert!(html.contains("Step: 5"), "should show step hint");
+    }
 }

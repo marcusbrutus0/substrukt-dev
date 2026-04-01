@@ -30,8 +30,7 @@ impl TestServer {
         staging_webhook_url: Option<String>,
         production_webhook_url: Option<String>,
     ) -> Self {
-        Self::start_with_webhook_auth(staging_webhook_url, None, production_webhook_url, None)
-            .await
+        Self::start_with_webhook_auth(staging_webhook_url, None, production_webhook_url, None).await
     }
 
     async fn start_with_webhook_auth(
@@ -52,6 +51,7 @@ impl TestServer {
             production_webhook_url,
             production_webhook_auth_token,
             Some(3600), // long interval so cron doesn't fire during tests
+            10,         // version_history_count
         );
         config.ensure_dirs().unwrap();
 
@@ -705,7 +705,7 @@ async fn api_schema_and_content_crud() {
 
     // List entries via API
     let resp = api
-        .get(s.url("/api/v1/content/blog-posts"))
+        .get(s.url("/api/v1/content/blog-posts?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -807,7 +807,7 @@ async fn api_export_import() {
 
     // Verify imported content
     let resp = api2
-        .get(s2.url("/api/v1/content/blog-posts"))
+        .get(s2.url("/api/v1/content/blog-posts?status=all"))
         .bearer_auth(&token2)
         .send()
         .await
@@ -1151,7 +1151,7 @@ async fn api_single_crud() {
 
     // GET /single returns the data
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/content/site-settings/single?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1172,7 +1172,7 @@ async fn api_single_crud() {
 
     // Verify update
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/content/site-settings/single?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1271,7 +1271,7 @@ async fn single_full_workflow() {
 
     // 4. API: GET /single returns data
     let resp = api
-        .get(s.url("/api/v1/content/site-settings/single"))
+        .get(s.url("/api/v1/content/site-settings/single?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -1418,18 +1418,16 @@ async fn test_webhook_sends_auth_token() {
     let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<Option<String>>(1);
     let mock_app = axum::Router::new().route(
         "/webhook",
-        axum::routing::post(
-            move |headers: axum::http::HeaderMap, _body: String| {
-                let tx = webhook_tx.clone();
-                async move {
-                    let auth = headers
-                        .get("authorization")
-                        .map(|v| v.to_str().unwrap().to_string());
-                    let _ = tx.send(auth).await;
-                    "ok"
-                }
-            },
-        ),
+        axum::routing::post(move |headers: axum::http::HeaderMap, _body: String| {
+            let tx = webhook_tx.clone();
+            async move {
+                let auth = headers
+                    .get("authorization")
+                    .map(|v| v.to_str().unwrap().to_string());
+                let _ = tx.send(auth).await;
+                "ok"
+            }
+        }),
     );
     let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mock_addr = mock_listener.local_addr().unwrap();
@@ -1480,7 +1478,10 @@ async fn test_webhook_sends_auth_token() {
         .await
         .unwrap()
         .unwrap();
-    assert!(auth_header.is_none(), "production webhook should have no auth header");
+    assert!(
+        auth_header.is_none(),
+        "production webhook should have no auth header"
+    );
 }
 
 #[tokio::test]
@@ -1555,7 +1556,11 @@ async fn invite_creates_signup_url() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "user@example.com"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "user@example.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1575,7 +1580,11 @@ async fn non_admin_cannot_access_users_page() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "user2@example.com"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "user2@example.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1590,11 +1599,7 @@ async fn non_admin_cannot_access_users_page() {
         .unwrap();
 
     // Sign up as second user
-    let resp = client2
-        .get(s.url(&invite_url))
-        .send()
-        .await
-        .unwrap();
+    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.text().await.unwrap();
     let csrf = extract_csrf_token(&body).unwrap();
@@ -1628,7 +1633,11 @@ async fn signup_with_valid_token_shows_form() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "newuser@example.com"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "newuser@example.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1680,7 +1689,11 @@ async fn signup_creates_user_and_logs_in() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "newuser@test.com"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "newuser@test.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1727,7 +1740,11 @@ async fn duplicate_email_invitation_rejected() {
     let csrf = s.get_csrf("/settings/users").await;
     s.client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "dup@example.com"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "dup@example.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1737,7 +1754,11 @@ async fn duplicate_email_invitation_rejected() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "dup@example.com"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "dup@example.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1755,7 +1776,11 @@ async fn signup_rejects_taken_username() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "another@test.com"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "another@test.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1801,7 +1826,11 @@ async fn cannot_invite_existing_user_email() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "taken@test.com"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "taken@test.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
@@ -1837,12 +1866,275 @@ async fn cannot_invite_existing_user_email() {
     let resp = s
         .client
         .post(s.url("/settings/users/invite"))
-        .form(&[("email", "taken@test.com"), ("_csrf", &csrf)])
+        .form(&[
+            ("email", "taken@test.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
         .send()
         .await
         .unwrap();
     let body = resp.text().await.unwrap();
     assert!(body.contains("already exists"));
+}
+
+// ── Content search tests ─────────────────────────────────────
+
+#[tokio::test]
+async fn content_search_filters_entries() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    // Create two entries with distinct titles
+    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Rust Programming")
+        .text("body", "A post about Rust");
+    s.client
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Python Scripting")
+        .text("body", "A post about Python");
+    s.client
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Unfiltered list shows both
+    let resp = s
+        .client
+        .get(s.url("/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Rust Programming"));
+    assert!(body.contains("Python Scripting"));
+
+    // Search for "rust" (case-insensitive) — UI
+    let resp = s
+        .client
+        .get(s.url("/content/blog-posts?q=rust"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Rust Programming"));
+    assert!(!body.contains("Python Scripting"));
+    assert!(body.contains("Showing 1 of 2 entries"));
+
+    // Search for "python" — UI
+    let resp = s
+        .client
+        .get(s.url("/content/blog-posts?q=python"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Python Scripting"));
+    assert!(!body.contains("Rust Programming"));
+
+    // Search via API
+    let token = s.create_api_token("search-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // API: unfiltered
+    let resp = api
+        .get(s.url("/api/v1/content/blog-posts?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 2);
+
+    // API: filtered
+    let resp = api
+        .get(s.url("/api/v1/content/blog-posts?q=rust&status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1);
+    assert_eq!(entries[0]["title"], "Rust Programming");
+
+    // API: no match
+    let resp = api
+        .get(s.url("/api/v1/content/blog-posts?q=javascript&status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 0);
+}
+
+// ── Markdown field tests ─────────────────────────────────────
+
+const ARTICLE_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Articles", "slug": "articles", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "title": "Title"},
+        "content": {"type": "string", "title": "Content", "format": "markdown"}
+    },
+    "required": ["title"]
+}"#;
+
+#[tokio::test]
+async fn content_markdown_field_stored_as_string() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(ARTICLE_SCHEMA).await;
+
+    // Create entry with markdown content
+    let csrf = s.get_csrf("/content/articles/new").await;
+    let md = "# Hello\n\nThis is **bold** text.";
+    let form = reqwest::multipart::Form::new()
+        .text("title", "Test Article")
+        .text("content", md.to_string())
+        .text("_csrf", csrf);
+    s.client
+        .post(s.url("/content/articles/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Verify via API that markdown is stored as raw string
+    let token = s.create_api_token("test").await;
+    let resp = s
+        .client
+        .get(s.url("/api/v1/content/articles?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let data: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(data.len(), 1);
+    assert_eq!(data[0]["content"], md);
+
+    // Find the entry ID from the list page
+    let resp = s
+        .client
+        .get(s.url("/content/articles"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let entry_id = extract_entry_id(&body, "articles").expect("should find entry link");
+
+    // Verify edit page contains data-markdown attribute
+    let resp = s
+        .client
+        .get(s.url(&format!("/content/articles/{entry_id}/edit")))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("data-markdown"));
+}
+
+// ── Content reference tests ──────────────────────────────────
+
+const AUTHORS_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Authors", "slug": "authors", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "title": "Name"}
+    },
+    "required": ["name"]
+}"#;
+
+const POSTS_WITH_AUTHOR_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Posts", "slug": "posts", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "title": "Title"},
+        "author": {"type": "string", "title": "Author", "format": "reference", "x-substrukt-reference": {"schema": "authors"}}
+    },
+    "required": ["title"]
+}"#;
+
+#[tokio::test]
+async fn content_references_resolve_in_api() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(AUTHORS_SCHEMA).await;
+    s.create_schema(POSTS_WITH_AUTHOR_SCHEMA).await;
+
+    // Create an author
+    let csrf = s.get_csrf("/content/authors/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("name", "Jane Doe")
+        .text("_csrf", csrf);
+    s.client
+        .post(s.url("/content/authors/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Create a post referencing the author
+    let csrf = s.get_csrf("/content/posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("title", "My Post")
+        .text("author", "jane-doe")
+        .text("_csrf", csrf);
+    s.client
+        .post(s.url("/content/posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // API should return resolved author object
+    let token = s.create_api_token("test").await;
+    let resp = s
+        .client
+        .get(s.url("/api/v1/content/posts?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let data: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(data.len(), 1);
+    // author should be an object, not a string
+    assert!(
+        data[0]["author"].is_object(),
+        "author should be resolved to object"
+    );
+    assert_eq!(data[0]["author"]["name"], "Jane Doe");
+
+    // Edit page should show reference select
+    let resp = s
+        .client
+        .get(s.url("/content/posts/my-post/edit"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("<select"));
+    assert!(body.contains("Jane Doe"));
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -1897,7 +2189,10 @@ fn extract_invite_url(html: &str) -> Option<String> {
         if let Some(end) = rest.find('<') {
             let url = rest[..end].trim();
             // minijinja HTML-escapes `/` as `&#x2f;`
-            let url = url.replace("&#x2f;", "/").replace("&#x3d;", "=").replace("&amp;", "&");
+            let url = url
+                .replace("&#x2f;", "/")
+                .replace("&#x3d;", "=")
+                .replace("&amp;", "&");
             if url.starts_with("/signup?token=") {
                 return Some(url.to_string());
             }
@@ -1937,4 +2232,816 @@ fn extract_csrf_token(html: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[tokio::test]
+async fn content_versioning_history_and_revert() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    // Create entry
+    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("title", "Original Title")
+        .text("body", "Original body")
+        .text("_csrf", csrf);
+    s.client
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Find entry ID from list page
+    let resp = s
+        .client
+        .get(s.url("/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let entry_id = extract_entry_id(&body, "blog-posts").expect("should find entry link");
+
+    // Update entry (creates a history snapshot)
+    let csrf = s
+        .get_csrf(&format!("/content/blog-posts/{entry_id}/edit"))
+        .await;
+    let form = reqwest::multipart::Form::new()
+        .text("title", "Updated Title")
+        .text("body", "Updated body")
+        .text("_csrf", csrf);
+    s.client
+        .post(s.url(&format!("/content/blog-posts/{entry_id}")))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    // Check history page has a version
+    let resp = s
+        .client
+        .get(s.url(&format!("/content/blog-posts/{entry_id}/history")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Revert"));
+
+    // Verify current content is updated via API
+    let token = s.create_api_token("test").await;
+    let resp = s
+        .client
+        .get(s.url(&format!("/api/v1/content/blog-posts/{entry_id}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["title"], "Updated Title");
+}
+
+// ── RBAC tests ──────────────────────────────────────────────
+
+/// Helper: admin creates an invitation with a role, a fresh client signs up,
+/// and returns the new client (logged in with the given role).
+async fn signup_user_with_role(s: &TestServer, email: &str, username: &str, role: &str) -> Client {
+    // Admin invites with specified role
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[("email", email), ("role", role), ("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let invite_url = extract_invite_url(&body).expect("should contain invite URL");
+
+    // Fresh client signs up
+    let client = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client.get(s.url(&invite_url)).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let token = extract_hidden_token(&body).unwrap();
+
+    let resp = client
+        .post(s.url("/signup"))
+        .form(&[
+            ("token", token.as_str()),
+            ("username", username),
+            ("password", "password123"),
+            ("confirm_password", "password123"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    client
+}
+
+#[tokio::test]
+async fn rbac_editor_restrictions() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    let editor = signup_user_with_role(&s, "editor@test.com", "editor1", "editor").await;
+
+    // Editor CAN create content
+    let resp = editor
+        .get(s.url("/content/blog-posts/new"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let csrf = extract_csrf_token(&resp.text().await.unwrap()).unwrap();
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Editor Post")
+        .text("body", "Content by editor");
+    let resp = editor
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Editor CANNOT create schemas (403)
+    let resp = editor.get(s.url("/schemas/new")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Editor CANNOT access /settings/users (403)
+    let resp = editor.get(s.url("/settings/users")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Editor CANNOT access /settings/data (403)
+    let resp = editor.get(s.url("/settings/data")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Editor CAN access /settings/tokens (viewer+)
+    let resp = editor.get(s.url("/settings/tokens")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn rbac_viewer_restrictions() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    // Admin creates an entry for the viewer to see
+    let csrf = s.get_csrf("/content/blog-posts/new").await;
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Admin Post")
+        .text("body", "Content");
+    s.client
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+
+    let viewer = signup_user_with_role(&s, "viewer@test.com", "viewer1", "viewer").await;
+
+    // Viewer CAN list content
+    let resp = viewer
+        .get(s.url("/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Admin Post"));
+
+    // Viewer CANNOT access new entry page (403)
+    let resp = viewer
+        .get(s.url("/content/blog-posts/new"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Viewer CANNOT create content (403 via multipart POST)
+    let csrf_resp = viewer
+        .get(s.url("/content/blog-posts"))
+        .send()
+        .await
+        .unwrap();
+    let csrf = extract_csrf_token(&csrf_resp.text().await.unwrap()).unwrap();
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("title", "Viewer Post")
+        .text("body", "Nope");
+    let resp = viewer
+        .post(s.url("/content/blog-posts/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Viewer CANNOT create schemas (403)
+    let resp = viewer.get(s.url("/schemas/new")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Viewer CANNOT access /settings/users (403)
+    let resp = viewer.get(s.url("/settings/users")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn rbac_api_token_inherits_role() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(BLOG_SCHEMA).await;
+
+    let editor = signup_user_with_role(&s, "apieditor@test.com", "apieditor", "editor").await;
+
+    // Editor creates an API token
+    let resp = editor.get(s.url("/settings/tokens")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let resp = editor
+        .post(s.url("/settings/tokens"))
+        .form(&[("name", "editor-token"), ("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let token = extract_new_token(&body).expect("should get editor token");
+
+    // API client (no cookies)
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Editor token CAN create content via API
+    let resp = api
+        .post(s.url("/api/v1/content/blog-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "API Post", "body": "From editor token"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Editor token CANNOT export (admin-only)
+    let resp = api
+        .post(s.url("/api/v1/export"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Editor token CANNOT import (admin-only)
+    let form = reqwest::multipart::Form::new().part(
+        "bundle",
+        reqwest::multipart::Part::bytes(vec![0u8; 10]).file_name("test.tar.gz"),
+    );
+    let resp = api
+        .post(s.url("/api/v1/import"))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn webhook_fire_records_history() {
+    // Start a mock webhook receiver
+    let (webhook_tx, mut webhook_rx) = tokio::sync::mpsc::channel::<String>(10);
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move |body: String| {
+            let tx = webhook_tx.clone();
+            async move {
+                tx.send(body).await.ok();
+                "ok"
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(mock_listener, mock_app).into_future());
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
+    s.setup_admin().await;
+
+    // Trigger staging publish
+    let csrf = s.get_csrf("/").await;
+    s.client
+        .post(s.url("/publish/staging"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    // Wait for webhook to arrive
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), webhook_rx.recv())
+        .await
+        .unwrap();
+
+    // Check webhooks page shows history
+    let resp = s
+        .client
+        .get(s.url("/settings/webhooks"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("staging"));
+    assert!(body.contains("Success") || body.contains("success"));
+}
+
+#[tokio::test]
+async fn webhook_failure_triggers_retries() {
+    // Mock server that fails the first request, succeeds on 2nd (first retry at 5s)
+    let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let count_clone = call_count.clone();
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move || {
+            let count = count_clone.clone();
+            async move {
+                let n = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n < 1 {
+                    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "fail")
+                } else {
+                    (axum::http::StatusCode::OK, "ok")
+                }
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(mock_listener, mock_app).into_future());
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), None).await;
+    s.setup_admin().await;
+
+    // Trigger publish (first attempt will fail)
+    let csrf = s.get_csrf("/").await;
+    let resp = s
+        .client
+        .post(s.url("/publish/staging"))
+        .form(&[("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    // Should redirect (flash says failed)
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Wait for first retry to complete (5s delay + margin)
+    tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+
+    // Should have 2 total calls (initial + first retry at 5s which succeeds)
+    assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+    // Webhooks page should show the group with multiple attempts
+    let resp = s
+        .client
+        .get(s.url("/settings/webhooks"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("2 attempts") || body.contains("attempts"));
+}
+
+#[tokio::test]
+async fn webhook_retry_button_fires_new_webhook() {
+    // Mock server that always succeeds
+    let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let count_clone = call_count.clone();
+    let mock_app = axum::Router::new().route(
+        "/webhook",
+        axum::routing::post(move || {
+            let count = count_clone.clone();
+            async move {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                "ok"
+            }
+        }),
+    );
+    let mock_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mock_addr = mock_listener.local_addr().unwrap();
+    tokio::spawn(axum::serve(mock_listener, mock_app).into_future());
+    let webhook_url = format!("http://{mock_addr}/webhook");
+
+    let s = TestServer::start_with_webhooks(Some(webhook_url.clone()), Some(webhook_url)).await;
+    s.setup_admin().await;
+
+    // Use the retry button to fire a webhook
+    let csrf = s.get_csrf("/settings/webhooks").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/webhooks/retry"))
+        .form(&[("_csrf", csrf.as_str()), ("environment", "staging")])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Webhook should have been called
+    assert!(call_count.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+
+    // History page should show the entry
+    let resp = s
+        .client
+        .get(s.url("/settings/webhooks"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("staging"));
+    assert!(body.contains("Success") || body.contains("success"));
+}
+
+#[tokio::test]
+async fn non_admin_cannot_access_webhooks_page() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let editor = signup_user_with_role(&s, "wheditor@test.com", "wheditor", "editor").await;
+    let resp = editor
+        .get(s.url("/settings/webhooks"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+// ── Draft / Published tests ────────────────────────────────────
+
+const DRAFT_TEST_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Draft Posts", "slug": "draft-posts", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"}
+    },
+    "required": ["title"]
+}"#;
+
+#[tokio::test]
+async fn content_draft_published_lifecycle() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(DRAFT_TEST_SCHEMA).await;
+    let token = s.create_api_token("draft-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Create entry via API — should be draft
+    let resp = api
+        .post(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "My Post"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created: serde_json::Value = resp.json().await.unwrap();
+    let entry_id = created["id"].as_str().unwrap().to_string();
+
+    // API list (default) should return empty — no published entries
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 0, "default should return published only");
+
+    // API list with ?status=all should return the draft
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1, "status=all should return draft");
+    assert!(entries[0].get("_status").is_none(), "_status should be stripped from response");
+
+    // API list with ?status=draft
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1, "status=draft should return draft entry");
+
+    // Get single entry by ID — should work regardless of status
+    let resp = api
+        .get(s.url(&format!("/api/v1/content/draft-posts/{entry_id}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let entry: serde_json::Value = resp.json().await.unwrap();
+    assert!(entry.get("_status").is_none(), "_status should be stripped");
+
+    // Update entry — status should stay draft
+    let resp = api
+        .put(s.url(&format!("/api/v1/content/draft-posts/{entry_id}")))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Updated Post"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Still no published entries
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 0, "updated draft should still not appear in published");
+}
+
+#[tokio::test]
+async fn production_publish_flips_drafts() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(DRAFT_TEST_SCHEMA).await;
+    let token = s.create_api_token("publish-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Create two entries
+    api.post(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Article 1"}))
+        .send()
+        .await
+        .unwrap();
+    api.post(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Article 2"}))
+        .send()
+        .await
+        .unwrap();
+
+    // Verify both are draft
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 2);
+
+    // Publish to production
+    let resp = api
+        .post(s.url("/api/v1/publish/production"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let _ = resp.status();
+
+    // Now default API should return both entries (published)
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 2, "both entries should now be published");
+
+    // No more drafts
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 0, "no drafts should remain");
+}
+
+#[tokio::test]
+async fn staging_publish_does_not_flip_drafts() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(DRAFT_TEST_SCHEMA).await;
+    let token = s.create_api_token("staging-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    api.post(s.url("/api/v1/content/draft-posts"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Page 1"}))
+        .send()
+        .await
+        .unwrap();
+
+    // Staging publish
+    let _ = api
+        .post(s.url("/api/v1/publish/staging"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+
+    // Entry should still be draft
+    let resp = api
+        .get(s.url("/api/v1/content/draft-posts?status=draft"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let entries: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(entries.as_array().unwrap().len(), 1, "staging publish should not flip drafts");
+}
+
+#[tokio::test]
+async fn single_schema_draft_published() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(SETTINGS_SCHEMA).await;
+    let token = s.create_api_token("single-draft-test").await;
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // PUT /single creates — should be draft
+    let resp = api
+        .put(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "Test Site", "tagline": "Hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // GET /single (default) returns 404 — draft entry, published-only filter
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "draft single should return 404 by default");
+
+    // GET /single?status=all returns the entry
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["site_name"], "Test Site");
+    assert!(data.get("_status").is_none(), "_status should be stripped");
+
+    // Publish production — flips draft to published
+    let _ = api
+        .post(s.url("/api/v1/publish/production"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+
+    // GET /single (default) now returns 200 — published
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "published single should return 200");
+
+    // PUT /single update — should preserve published status
+    let resp = api
+        .put(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"site_name": "Updated Site", "tagline": "World"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Still published after update
+    let resp = api
+        .get(s.url("/api/v1/content/site-settings/single"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "published single should stay published after update");
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["site_name"], "Updated Site");
+}
+
+// ── Audit Log Viewer tests ─────────────────────────────────────
+
+#[tokio::test]
+async fn audit_log_page_requires_admin() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Editor cannot access
+    let editor = signup_user_with_role(&s, "audit-editor@test.com", "auditeditor", "editor").await;
+    let resp = editor
+        .get(s.url("/settings/audit-log"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+    // Admin can access
+    let resp = s
+        .client
+        .get(s.url("/settings/audit-log"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Audit Log"));
+}
+
+#[tokio::test]
+async fn audit_log_shows_entries_and_filters() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create a schema (generates schema_create audit entry)
+    let schema_json = r#"{
+        "x-substrukt": {"title": "Audit Test", "slug": "audit-test", "storage": "directory"},
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    // Small delay to let fire-and-forget audit log write complete
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Unfiltered page shows the entry
+    let resp = s
+        .client
+        .get(s.url("/settings/audit-log"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("schema_create"));
+
+    // Filter by action
+    let resp = s
+        .client
+        .get(s.url("/settings/audit-log?action=schema_create"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("schema_create"));
+
+    // Filter by non-matching action returns no entries in table
+    let resp = s
+        .client
+        .get(s.url("/settings/audit-log?action=content_delete"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("No audit log entries."));
 }

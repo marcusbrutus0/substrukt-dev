@@ -183,6 +183,7 @@ async fn list_uploads(
         })
         .collect();
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let env = state
         .templates
         .acquire_env()
@@ -194,6 +195,7 @@ async fn list_uploads(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             uploads => upload_rows,
             schemas => schemas,
             filter_q => filter.q.unwrap_or_default(),
@@ -214,7 +216,18 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-async fn upload_file(State(state): State<AppState>, mut multipart: Multipart) -> impl IntoResponse {
+async fn upload_file(
+    State(state): State<AppState>,
+    session: Session,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    if auth::require_role(&session, "editor").await.is_err() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "Insufficient permissions"})),
+        )
+            .into_response();
+    }
     while let Ok(Some(field)) = multipart.next_field().await {
         let filename = field.file_name().unwrap_or("file").to_string();
         let content_type = field

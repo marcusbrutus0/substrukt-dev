@@ -8,6 +8,7 @@ pub struct User {
     pub username: String,
     pub password_hash: String,
     pub created_at: String,
+    pub role: String,
 }
 
 impl User {
@@ -29,15 +30,21 @@ impl User {
     }
 }
 
-pub async fn create_user(pool: &SqlitePool, username: &str, password: &str) -> eyre::Result<User> {
+pub async fn create_user(
+    pool: &SqlitePool,
+    username: &str,
+    password: &str,
+    role: &str,
+) -> eyre::Result<User> {
     let password_hash = User::hash_password(password)?;
     let now = chrono::Utc::now().to_rfc3339();
     let id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?) RETURNING id",
+        "INSERT INTO users (username, password_hash, created_at, role) VALUES (?, ?, ?, ?) RETURNING id",
     )
     .bind(username)
     .bind(&password_hash)
     .bind(&now)
+    .bind(role)
     .fetch_one(pool)
     .await?;
 
@@ -46,6 +53,7 @@ pub async fn create_user(pool: &SqlitePool, username: &str, password: &str) -> e
         username: username.to_string(),
         password_hash,
         created_at: now,
+        role: role.to_string(),
     })
 }
 
@@ -142,6 +150,7 @@ pub struct Invitation {
     pub invited_by: i64,
     pub created_at: String,
     pub expires_at: String,
+    pub role: String,
 }
 
 pub async fn create_invitation(
@@ -150,16 +159,18 @@ pub async fn create_invitation(
     token_hash: &str,
     invited_by: i64,
     expires_at: &str,
+    role: &str,
 ) -> eyre::Result<Invitation> {
     let now = chrono::Utc::now().to_rfc3339();
     let id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO invitations (email, token_hash, invited_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?) RETURNING id",
+        "INSERT INTO invitations (email, token_hash, invited_by, created_at, expires_at, role) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(email)
     .bind(token_hash)
     .bind(invited_by)
     .bind(&now)
     .bind(expires_at)
+    .bind(role)
     .fetch_one(pool)
     .await?;
 
@@ -170,6 +181,7 @@ pub async fn create_invitation(
         invited_by,
         created_at: now,
         expires_at: expires_at.to_string(),
+        role: role.to_string(),
     })
 }
 
@@ -219,16 +231,18 @@ pub async fn create_user_with_email(
     username: &str,
     password: &str,
     email: &str,
+    role: &str,
 ) -> eyre::Result<User> {
     let password_hash = User::hash_password(password)?;
     let now = chrono::Utc::now().to_rfc3339();
     let id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO users (username, password_hash, email, created_at) VALUES (?, ?, ?, ?) RETURNING id",
+        "INSERT INTO users (username, password_hash, email, created_at, role) VALUES (?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(username)
     .bind(&password_hash)
     .bind(email)
     .bind(&now)
+    .bind(role)
     .fetch_one(pool)
     .await?;
 
@@ -237,16 +251,22 @@ pub async fn create_user_with_email(
         username: username.to_string(),
         password_hash,
         created_at: now,
+        role: role.to_string(),
     })
 }
 
-pub async fn find_user_by_email(
-    pool: &SqlitePool,
-    email: &str,
-) -> eyre::Result<Option<User>> {
+pub async fn find_user_by_email(pool: &SqlitePool, email: &str) -> eyre::Result<Option<User>> {
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = ?")
         .bind(email)
         .fetch_optional(pool)
         .await?;
     Ok(user)
+}
+
+pub async fn find_user_role(pool: &SqlitePool, user_id: i64) -> eyre::Result<Option<String>> {
+    let role = sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(role)
 }

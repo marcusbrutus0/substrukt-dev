@@ -9,3 +9,4 @@
 .dolt/
 *.db
 /.claude/summaries/
+.worktrees/

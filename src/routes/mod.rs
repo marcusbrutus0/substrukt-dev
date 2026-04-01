@@ -41,6 +41,7 @@ pub fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn(verify_csrf))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .nest("/api/v1", api_routes)
+        .route("/healthz", axum::routing::get(healthz))
         .route("/metrics", axum::routing::get(metrics::metrics_handler))
         .fallback(not_found)
         .layer(middleware::from_fn(metrics::track_metrics))
@@ -81,6 +82,10 @@ pub fn render_error(state: &AppState, status: u16, message: &str, is_htmx: bool)
     format!("<h1>{status}</h1><p>{message}</p>")
 }
 
+async fn healthz() -> &'static str {
+    "ok"
+}
+
 async fn dashboard(
     HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
@@ -94,6 +99,9 @@ async fn dashboard(
         .map(|entries| entries.len())
         .sum();
 
+    let user_role = crate::auth::current_user_role(&session)
+        .await
+        .unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -105,6 +113,7 @@ async fn dashboard(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             schema_count => schemas.len(),
             entry_count => entry_count,
         })

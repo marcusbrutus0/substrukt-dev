@@ -31,6 +31,9 @@ pub fn routes() -> Router<AppState> {
             "/users/invitations/{id}/delete",
             axum::routing::post(delete_invitation),
         )
+        .route("/webhooks", get(webhooks_page))
+        .route("/webhooks/retry", axum::routing::post(retry_webhook))
+        .route("/audit-log", get(audit_log_page))
 }
 
 async fn tokens_page(
@@ -59,6 +62,7 @@ async fn tokens_page(
         })
         .collect();
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -70,6 +74,7 @@ async fn tokens_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             tokens => token_data,
         })
         .map_err(|e| format!("Render error: {e}"))?;
@@ -87,9 +92,7 @@ async fn create_token(
     session: Session,
     Form(form): Form<CreateTokenForm>,
 ) -> axum::response::Result<Html<String>> {
-    let user_id = auth::current_user_id(&session)
-        .await
-        .ok_or("Not authenticated")?;
+    let user_id = auth::require_role(&session, "editor").await?;
 
     let raw_token = token::generate_token();
     let token_hash = token::hash_token(&raw_token);
@@ -142,11 +145,8 @@ async fn delete_token(
     State(state): State<AppState>,
     session: Session,
     axum::extract::Path(token_id): axum::extract::Path<i64>,
-) -> impl IntoResponse {
-    let user_id = match auth::current_user_id(&session).await {
-        Some(id) => id,
-        None => return Redirect::to("/login"),
-    };
+) -> axum::response::Result<Redirect> {
+    let user_id = auth::require_role(&session, "editor").await?;
 
     let _ = models::delete_api_token(&state.pool, token_id, user_id).await;
     state.audit.log(
@@ -156,7 +156,7 @@ async fn delete_token(
         &token_id.to_string(),
         None,
     );
-    Redirect::to("/settings/tokens")
+    Ok(Redirect::to("/settings/tokens"))
 }
 
 async fn data_page(
@@ -164,6 +164,7 @@ async fn data_page(
     State(state): State<AppState>,
     session: Session,
 ) -> axum::response::Result<Html<String>> {
+    auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
 
     // Consume flash message if present
@@ -186,6 +187,7 @@ async fn data_page(
         }
     }
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -197,6 +199,7 @@ async fn data_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             import_status => import_status,
             import_message => import_message,
             import_warnings => import_warnings,
@@ -209,11 +212,8 @@ async fn import_data(
     State(state): State<AppState>,
     session: Session,
     mut multipart: Multipart,
-) -> impl IntoResponse {
-    let user_id = match auth::current_user_id(&session).await {
-        Some(id) => id,
-        None => return Redirect::to("/login").into_response(),
-    };
+) -> axum::response::Result<axum::response::Response> {
+    let user_id = auth::require_role(&session, "admin").await?;
 
     // Extract CSRF token and bundle from multipart fields
     let mut csrf_token = None;
@@ -248,7 +248,7 @@ async fn import_data(
             "data_result",
             &serde_json::json!({"status": "error", "message": "Invalid CSRF token", "warnings": []}).to_string(),
         ).await;
-        return Redirect::to("/settings/data").into_response();
+        return Ok(Redirect::to("/settings/data").into_response());
     }
 
     // Validate bundle present
@@ -260,7 +260,7 @@ async fn import_data(
                 "data_result",
                 &serde_json::json!({"status": "error", "message": "No file provided", "warnings": []}).to_string(),
             ).await;
-            return Redirect::to("/settings/data").into_response();
+            return Ok(Redirect::to("/settings/data").into_response());
         }
     };
 
@@ -272,16 +272,15 @@ async fn import_data(
                 &state.config.schemas_dir(),
                 &state.config.content_dir(),
             );
-            state.audit.log(
-                &user_id.to_string(),
-                "import",
-                "bundle",
-                "",
-                None,
-            );
+            state
+                .audit
+                .log(&user_id.to_string(), "import", "bundle", "", None);
 
             let (status, message) = if warnings.is_empty() {
-                ("success".to_string(), "Bundle imported successfully".to_string())
+                (
+                    "success".to_string(),
+                    "Bundle imported successfully".to_string(),
+                )
             } else {
                 (
                     "warning".to_string(),
@@ -296,100 +295,81 @@ async fn import_data(
                     "status": status,
                     "message": message,
                     "warnings": warnings,
-                }).to_string(),
-            ).await;
+                })
+                .to_string(),
+            )
+            .await;
         }
         Err(e) => {
             auth::set_flash(
                 &session,
                 "data_result",
-                &serde_json::json!({"status": "error", "message": e.to_string(), "warnings": []}).to_string(),
-            ).await;
+                &serde_json::json!({"status": "error", "message": e.to_string(), "warnings": []})
+                    .to_string(),
+            )
+            .await;
         }
     }
 
-    Redirect::to("/settings/data").into_response()
+    Ok(Redirect::to("/settings/data").into_response())
 }
 
 async fn export_data(
     State(state): State<AppState>,
     session: Session,
     Form(_form): Form<std::collections::HashMap<String, String>>,
-) -> impl IntoResponse {
-    let user_id = match auth::current_user_id(&session).await {
-        Some(id) => id,
-        None => return Redirect::to("/login").into_response(),
-    };
+) -> axum::response::Result<axum::response::Response> {
+    let user_id = auth::require_role(&session, "admin").await?;
 
-    let tmp = std::env::temp_dir().join(format!(
-        "substrukt-export-{}.tar.gz",
-        uuid::Uuid::new_v4()
-    ));
+    let tmp =
+        std::env::temp_dir().join(format!("substrukt-export-{}.tar.gz", uuid::Uuid::new_v4()));
 
-    match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
-        Ok(()) => match std::fs::read(&tmp) {
-            Ok(data) => {
-                let _ = std::fs::remove_file(&tmp);
-                state.audit.log(
-                    &user_id.to_string(),
-                    "export",
-                    "bundle",
-                    "",
-                    None,
-                );
+    Ok(
+        match crate::sync::export_bundle(&state.config.data_dir, &state.pool, &tmp).await {
+            Ok(()) => match std::fs::read(&tmp) {
+                Ok(data) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    state
+                        .audit
+                        .log(&user_id.to_string(), "export", "bundle", "", None);
 
-                let date = chrono::Utc::now().format("%Y-%m-%d");
-                let filename = format!("substrukt-export-{date}.tar.gz");
-                let disposition = format!("attachment; filename=\"{filename}\"");
+                    let date = chrono::Utc::now().format("%Y-%m-%d");
+                    let filename = format!("substrukt-export-{date}.tar.gz");
+                    let disposition = format!("attachment; filename=\"{filename}\"");
 
-                let mut response = Body::from(data).into_response();
-                response.headers_mut().insert(
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_static("application/gzip"),
-                );
-                if let Ok(val) = HeaderValue::from_str(&disposition) {
+                    let mut response = Body::from(data).into_response();
+                    response.headers_mut().insert(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/gzip"),
+                    );
+                    if let Ok(val) = HeaderValue::from_str(&disposition) {
+                        response
+                            .headers_mut()
+                            .insert(header::CONTENT_DISPOSITION, val);
+                    }
                     response
-                        .headers_mut()
-                        .insert(header::CONTENT_DISPOSITION, val);
                 }
-                response
-            }
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                auth::set_flash(
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    auth::set_flash(
                     &session,
                     "data_result",
                     &serde_json::json!({"status": "error", "message": format!("Export failed: {e}"), "warnings": []}).to_string(),
                 ).await;
-                Redirect::to("/settings/data").into_response()
-            }
-        },
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            auth::set_flash(
+                    Redirect::to("/settings/data").into_response()
+                }
+            },
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                auth::set_flash(
                 &session,
                 "data_result",
                 &serde_json::json!({"status": "error", "message": format!("Export failed: {e}"), "warnings": []}).to_string(),
             ).await;
-            Redirect::to("/settings/data").into_response()
-        }
-    }
-}
-
-// --- User invitation management (admin only, user_id == 1) ---
-
-async fn require_admin(session: &Session) -> axum::response::Result<i64> {
-    let user_id = auth::current_user_id(session)
-        .await
-        .ok_or(axum::response::ErrorResponse::from(
-            (axum::http::StatusCode::SEE_OTHER, [("location", "/login")]).into_response(),
-        ))?;
-    if user_id != 1 {
-        return Err(axum::response::ErrorResponse::from(
-            (axum::http::StatusCode::FORBIDDEN, "Admin access required").into_response(),
-        ));
-    }
-    Ok(user_id)
+                Redirect::to("/settings/data").into_response()
+            }
+        },
+    )
 }
 
 async fn users_page(
@@ -397,7 +377,7 @@ async fn users_page(
     State(state): State<AppState>,
     session: Session,
 ) -> axum::response::Result<axum::response::Response> {
-    let _user_id = require_admin(&session).await?;
+    let _user_id = auth::require_role(&session, "admin").await?;
 
     let invitations = models::list_pending_invitations(&state.pool)
         .await
@@ -411,12 +391,14 @@ async fn users_page(
             minijinja::context! {
                 id => i.id,
                 email => i.email,
+                role => i.role,
                 created_at => i.created_at,
                 expires_at => i.expires_at,
             }
         })
         .collect();
 
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -428,6 +410,7 @@ async fn users_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            user_role => user_role,
             invitations => inv_data,
         })
         .map_err(|e| format!("Render error: {e}"))?;
@@ -437,6 +420,7 @@ async fn users_page(
 #[derive(serde::Deserialize)]
 pub struct InviteForm {
     email: String,
+    role: String,
 }
 
 async fn invite_user(
@@ -445,7 +429,7 @@ async fn invite_user(
     session: Session,
     Form(form): Form<InviteForm>,
 ) -> axum::response::Result<axum::response::Response> {
-    let user_id = require_admin(&session).await?;
+    let user_id = auth::require_role(&session, "admin").await?;
 
     // Basic email validation
     if !form.email.contains('@') || form.email.len() < 3 {
@@ -454,21 +438,46 @@ async fn invite_user(
 
     // Check if email already has an account
     if let Ok(Some(_)) = models::find_user_by_email(&state.pool, &form.email).await {
-        return render_users_with_error(&state, &session, is_htmx, "A user with this email already exists").await;
+        return render_users_with_error(
+            &state,
+            &session,
+            is_htmx,
+            "A user with this email already exists",
+        )
+        .await;
     }
 
     // Check if already invited
     if let Ok(Some(_)) = models::find_invitation_by_email(&state.pool, &form.email).await {
-        return render_users_with_error(&state, &session, is_htmx, "An invitation for this email already exists").await;
+        return render_users_with_error(
+            &state,
+            &session,
+            is_htmx,
+            "An invitation for this email already exists",
+        )
+        .await;
     }
+
+    // Validate role
+    let role = match form.role.as_str() {
+        "admin" | "editor" | "viewer" => &form.role,
+        _ => return render_users_with_error(&state, &session, is_htmx, "Invalid role").await,
+    };
 
     let raw_token = token::generate_token();
     let token_hash = token::hash_token(&raw_token);
     let expires_at = (chrono::Utc::now() + chrono::Duration::days(7)).to_rfc3339();
 
-    let invitation = models::create_invitation(&state.pool, &form.email, &token_hash, user_id, &expires_at)
-        .await
-        .map_err(|e| format!("DB error: {e}"))?;
+    let invitation = models::create_invitation(
+        &state.pool,
+        &form.email,
+        &token_hash,
+        user_id,
+        &expires_at,
+        role,
+    )
+    .await
+    .map_err(|e| format!("DB error: {e}"))?;
 
     state.audit.log(
         &user_id.to_string(),
@@ -490,6 +499,7 @@ async fn invite_user(
             minijinja::context! {
                 id => i.id,
                 email => i.email,
+                role => i.role,
                 created_at => i.created_at,
                 expires_at => i.expires_at,
             }
@@ -531,6 +541,7 @@ async fn render_users_with_error(
             minijinja::context! {
                 id => i.id,
                 email => i.email,
+                role => i.role,
                 created_at => i.created_at,
                 expires_at => i.expires_at,
             }
@@ -561,7 +572,7 @@ async fn delete_invitation(
     session: Session,
     axum::extract::Path(id): axum::extract::Path<i64>,
 ) -> axum::response::Result<axum::response::Response> {
-    let user_id = require_admin(&session).await?;
+    let user_id = auth::require_role(&session, "admin").await?;
 
     let _ = models::delete_invitation(&state.pool, id).await;
     state.audit.log(
@@ -572,4 +583,216 @@ async fn delete_invitation(
         None,
     );
     Ok(Redirect::to("/settings/users").into_response())
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct WebhookFilter {
+    #[serde(default)]
+    environment: String,
+    #[serde(default)]
+    status: String,
+}
+
+async fn webhooks_page(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+    axum::extract::Query(filter): axum::extract::Query<WebhookFilter>,
+) -> axum::response::Result<Html<String>> {
+    auth::require_role(&session, "admin").await?;
+    let csrf_token = auth::ensure_csrf_token(&session).await;
+
+    let env_filter = if filter.environment.is_empty() {
+        None
+    } else {
+        Some(filter.environment.as_str())
+    };
+    let status_filter = if filter.status.is_empty() {
+        None
+    } else {
+        Some(filter.status.as_str())
+    };
+
+    let history = state
+        .audit
+        .list_webhook_history(env_filter, status_filter)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let history_data: Vec<minijinja::Value> = history
+        .iter()
+        .map(|h| {
+            minijinja::context! {
+                id => h.id,
+                environment => h.environment,
+                trigger_source => h.trigger_source,
+                status => h.status,
+                http_status => h.http_status,
+                error_message => h.error_message,
+                response_time_ms => h.response_time_ms,
+                attempt_count => h.attempt_count,
+                group_id => h.group_id,
+                created_at => h.created_at,
+            }
+        })
+        .collect();
+
+    let flash = auth::take_flash(&session).await;
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("settings/webhooks.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            csrf_token => csrf_token,
+            user_role => user_role,
+            history => history_data,
+            filter_environment => filter.environment,
+            filter_status => filter.status,
+            flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
+            flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RetryForm {
+    environment: String,
+}
+
+async fn retry_webhook(
+    State(state): State<AppState>,
+    session: Session,
+    Form(form): Form<RetryForm>,
+) -> axum::response::Result<axum::response::Response> {
+    auth::require_role(&session, "admin").await?;
+
+    if !matches!(form.environment.as_str(), "staging" | "production") {
+        auth::set_flash(&session, "error", "Invalid environment").await;
+        return Ok(Redirect::to("/settings/webhooks").into_response());
+    }
+
+    match crate::webhooks::fire_webhook(
+        &state.http_client,
+        &state.audit,
+        &state.config,
+        &form.environment,
+        crate::webhooks::TriggerSource::Manual,
+    )
+    .await
+    {
+        Ok(true) => {
+            auth::set_flash(&session, "success", "Webhook triggered").await;
+        }
+        Ok(false) => {
+            auth::set_flash(&session, "error", "Webhook URL not configured").await;
+        }
+        Err(_) => {
+            auth::set_flash(&session, "error", "Webhook failed — retries in progress").await;
+        }
+    }
+
+    Ok(Redirect::to("/settings/webhooks").into_response())
+}
+
+#[derive(serde::Deserialize, Default)]
+pub struct AuditLogFilter {
+    #[serde(default)]
+    action: String,
+    #[serde(default)]
+    actor: String,
+    #[serde(default)]
+    page: String,
+}
+
+async fn audit_log_page(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+    axum::extract::Query(filter): axum::extract::Query<AuditLogFilter>,
+) -> axum::response::Result<Html<String>> {
+    auth::require_role(&session, "admin").await?;
+
+    let page: u32 = filter.page.parse().unwrap_or(1).max(1);
+
+    let action_filter = if filter.action.is_empty() {
+        None
+    } else {
+        Some(filter.action.as_str())
+    };
+    let actor_filter = if filter.actor.is_empty() {
+        None
+    } else {
+        Some(filter.actor.as_str())
+    };
+
+    let (entries, has_next) = state
+        .audit
+        .list_audit_log(action_filter, actor_filter, page)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let actors = state
+        .audit
+        .list_audit_actors()
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let entry_data: Vec<minijinja::Value> = entries
+        .iter()
+        .map(|e| {
+            minijinja::context! {
+                id => e.id,
+                timestamp => e.timestamp,
+                actor => e.actor,
+                action => e.action,
+                resource_type => e.resource_type,
+                resource_id => e.resource_id,
+                details => e.details,
+            }
+        })
+        .collect();
+
+    let mut pagination_params = Vec::new();
+    if !filter.action.is_empty() {
+        pagination_params.push(format!("action={}", filter.action));
+    }
+    if !filter.actor.is_empty() {
+        pagination_params.push(format!("actor={}", filter.actor));
+    }
+    let pagination_qs = if pagination_params.is_empty() {
+        String::new()
+    } else {
+        format!("{}&", pagination_params.join("&"))
+    };
+
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("settings/audit_log.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            user_role => user_role,
+            entries => entry_data,
+            actors => actors,
+            filter_action => filter.action,
+            filter_actor => filter.actor,
+            pagination_qs => pagination_qs,
+            page => page,
+            has_next => has_next,
+            has_prev => page > 1,
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html))
 }

@@ -12,6 +12,8 @@ pub struct Config {
     pub production_webhook_url: Option<String>,
     pub production_webhook_auth_token: Option<String>,
     pub webhook_check_interval: u64,
+    pub version_history_count: usize,
+    pub max_body_size: usize,
 }
 
 impl Config {
@@ -25,6 +27,8 @@ impl Config {
         production_webhook_url: Option<String>,
         production_webhook_auth_token: Option<String>,
         webhook_check_interval: Option<u64>,
+        version_history_count: usize,
+        max_body_size_mb: usize,
     ) -> Self {
         let data_dir = data_dir.unwrap_or_else(|| PathBuf::from("data"));
         let db_path = db_path.unwrap_or_else(|| data_dir.join("substrukt.db"));
@@ -39,6 +43,8 @@ impl Config {
             production_webhook_url,
             production_webhook_auth_token,
             webhook_check_interval: webhook_check_interval.unwrap_or(300),
+            version_history_count,
+            max_body_size: max_body_size_mb * 1024 * 1024,
         }
     }
 

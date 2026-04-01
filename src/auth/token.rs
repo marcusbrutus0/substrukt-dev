@@ -17,7 +17,10 @@ pub fn hash_token(token: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
-pub struct BearerToken(pub ApiToken);
+pub struct BearerToken {
+    pub token: ApiToken,
+    pub role: String,
+}
 
 impl FromRequestParts<AppState> for BearerToken {
     type Rejection = axum::http::StatusCode;
@@ -42,6 +45,14 @@ impl FromRequestParts<AppState> for BearerToken {
             .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
 
-        Ok(BearerToken(api_token))
+        let role = models::find_user_role(&state.pool, api_token.user_id)
+            .await
+            .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
+
+        Ok(BearerToken {
+            token: api_token,
+            role,
+        })
     }
 }

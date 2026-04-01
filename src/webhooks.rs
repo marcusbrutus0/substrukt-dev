@@ -15,10 +15,61 @@ struct WebhookPayload {
 pub enum TriggerSource {
     Cron,
     Manual,
+    Retry,
 }
 
-/// Fire a webhook for the given environment. Returns Ok(true) if fired and timestamp updated,
-/// Ok(false) if webhook URL not configured, Err if the HTTP call failed.
+struct AttemptResult {
+    success: bool,
+    http_status: Option<u16>,
+    error_message: Option<String>,
+    response_time_ms: i64,
+}
+
+async fn attempt_webhook(
+    client: &reqwest::Client,
+    url: &str,
+    auth_token: Option<&str>,
+    payload: &WebhookPayload,
+) -> AttemptResult {
+    let start = std::time::Instant::now();
+    let mut req = client.post(url).json(payload);
+    if let Some(token) = auth_token {
+        req = req.bearer_auth(token);
+    }
+    match req.send().await {
+        Ok(resp) => {
+            let elapsed = start.elapsed().as_millis() as i64;
+            if resp.status().is_success() {
+                AttemptResult {
+                    success: true,
+                    http_status: Some(resp.status().as_u16()),
+                    error_message: None,
+                    response_time_ms: elapsed,
+                }
+            } else {
+                AttemptResult {
+                    success: false,
+                    http_status: Some(resp.status().as_u16()),
+                    error_message: Some(format!("HTTP {}", resp.status())),
+                    response_time_ms: elapsed,
+                }
+            }
+        }
+        Err(e) => {
+            let elapsed = start.elapsed().as_millis() as i64;
+            AttemptResult {
+                success: false,
+                http_status: None,
+                error_message: Some(e.to_string()),
+                response_time_ms: elapsed,
+            }
+        }
+    }
+}
+
+/// Fire a webhook for the given environment. Returns Ok(true) if the first attempt succeeded
+/// and timestamp updated, Ok(false) if webhook URL not configured, Err if the first attempt failed
+/// (background retries will continue automatically).
 pub async fn fire_webhook(
     client: &reqwest::Client,
     audit: &AuditLogger,
@@ -46,6 +97,7 @@ pub async fn fire_webhook(
     let triggered_by = match source {
         TriggerSource::Cron => "cron",
         TriggerSource::Manual => "manual",
+        TriggerSource::Retry => "retry",
     };
 
     let payload = WebhookPayload {
@@ -55,38 +107,92 @@ pub async fn fire_webhook(
         triggered_by,
     };
 
-    let mut req = client.post(url).json(&payload);
-    if let Some(token) = auth_token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req.send().await?;
+    let group_id = uuid::Uuid::new_v4().to_string();
 
-    if resp.status().is_success() {
-        audit.mark_fired(environment).await?;
-        audit.log(
-            "system",
-            "webhook_fire",
-            "webhook",
+    // First attempt (synchronous)
+    let result = attempt_webhook(client, url, auth_token, &payload).await;
+    let status = if result.success { "success" } else { "failed" };
+
+    if let Err(e) = audit
+        .record_webhook_attempt(
             environment,
-            Some(
-                &serde_json::json!({"status": "success", "triggered_by": triggered_by}).to_string(),
-            ),
-        );
-        Ok(true)
-    } else {
-        let status = resp.status();
-        audit.log(
-            "system",
-            "webhook_fire",
-            "webhook",
-            environment,
-            Some(
-                &serde_json::json!({"status": "failed", "http_status": status.as_u16()})
-                    .to_string(),
-            ),
-        );
-        eyre::bail!("Webhook returned HTTP {status}")
+            triggered_by,
+            status,
+            result.http_status,
+            result.error_message.as_deref(),
+            Some(result.response_time_ms),
+            1,
+            &group_id,
+        )
+        .await
+    {
+        tracing::warn!("Failed to record webhook attempt: {e}");
     }
+
+    if result.success {
+        let _ = audit.mark_fired(environment).await;
+        return Ok(true);
+    }
+
+    // Spawn background retries
+    let client = client.clone();
+    let audit = audit.clone();
+    let url = url.to_string();
+    let auth_token = auth_token.map(|s| s.to_string());
+    let environment = environment.to_string();
+    let group_id_clone = group_id.clone();
+
+    tokio::spawn(async move {
+        let delays = [
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(30),
+        ];
+
+        for (i, delay) in delays.iter().enumerate() {
+            tokio::time::sleep(*delay).await;
+            let attempt_num = (i + 2) as i32;
+
+            let retry_result =
+                attempt_webhook(&client, &url, auth_token.as_deref(), &payload).await;
+            let retry_status = if retry_result.success {
+                "success"
+            } else {
+                "failed"
+            };
+
+            if let Err(e) = audit
+                .record_webhook_attempt(
+                    &environment,
+                    "retry",
+                    retry_status,
+                    retry_result.http_status,
+                    retry_result.error_message.as_deref(),
+                    Some(retry_result.response_time_ms),
+                    attempt_num,
+                    &group_id_clone,
+                )
+                .await
+            {
+                tracing::warn!("Failed to record webhook retry attempt: {e}");
+            }
+
+            if retry_result.success {
+                let _ = audit.mark_fired(&environment).await;
+                return;
+            }
+        }
+
+        tracing::warn!(
+            "Webhook for {} exhausted all retries (group {})",
+            environment,
+            group_id_clone
+        );
+    });
+
+    eyre::bail!(
+        "Webhook failed: {}",
+        result.error_message.unwrap_or_default()
+    )
 }
 
 /// Spawn the background cron task that auto-fires the staging webhook when dirty.

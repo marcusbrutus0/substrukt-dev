@@ -90,6 +90,8 @@
       }
     });
   </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
 </head>
 <body class="bg-surface text-primary min-h-screen" hx-boost="true" hx-target="#main-content" hx-swap="innerHTML">
@@ -119,7 +121,120 @@
       div.setAttribute('data-index', index);
       div.innerHTML = '<div class="flex justify-end mb-1"><button type="button" onclick="this.closest(\'.array-item\').remove()" class="text-danger text-sm hover:text-danger">Remove</button></div>' + html;
       container.appendChild(div);
+      initMarkdownEditors();
+      initUploadZones();
     }
+    function initMarkdownEditors() {
+      document.querySelectorAll('[data-markdown]:not(.easymde-attached)').forEach(function(el) {
+        el.classList.add('easymde-attached');
+        new EasyMDE({
+          element: el,
+          spellChecker: false,
+          status: false,
+          forceSync: true
+        });
+      });
+    }
+    function formatFileSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+    function initUploadZones() {
+      document.querySelectorAll('[data-upload-zone]:not(.upload-zone-init)').forEach(function(zone) {
+        zone.classList.add('upload-zone-init');
+        var input = zone.querySelector('[data-upload-input]');
+        var prompt = zone.querySelector('.upload-zone-prompt');
+        var info = zone.querySelector('.upload-zone-info');
+        var preview = zone.querySelector('.upload-zone-preview');
+        if (!input) return;
+
+        zone.addEventListener('dragover', function(e) {
+          e.preventDefault();
+          zone.classList.add('border-accent', 'bg-accent-soft');
+        });
+        zone.addEventListener('dragleave', function(e) {
+          e.preventDefault();
+          zone.classList.remove('border-accent', 'bg-accent-soft');
+        });
+        zone.addEventListener('drop', function(e) {
+          e.preventDefault();
+          zone.classList.remove('border-accent', 'bg-accent-soft');
+          if (e.dataTransfer && e.dataTransfer.files.length > 0) {
+            input.files = e.dataTransfer.files;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        });
+
+        input.addEventListener('change', function() {
+          if (!input.files || !input.files[0]) return;
+          var file = input.files[0];
+
+          // Show file info
+          info.textContent = file.name + ' (' + formatFileSize(file.size) + ', ' + (file.type || 'unknown type') + ')';
+          info.classList.remove('hidden');
+          prompt.classList.add('hidden');
+
+          // Revoke previous preview URL if any
+          var prevImg = preview.querySelector('img');
+          if (prevImg && prevImg.dataset.objectUrl) {
+            URL.revokeObjectURL(prevImg.dataset.objectUrl);
+          }
+          // Show image preview using safe DOM methods
+          while (preview.firstChild) preview.removeChild(preview.firstChild);
+          if (file.type && file.type.startsWith('image/')) {
+            var url = URL.createObjectURL(file);
+            var img = document.createElement('img');
+            img.src = url;
+            img.alt = 'Preview';
+            img.dataset.objectUrl = url;
+            img.className = 'h-24 max-w-xs object-contain rounded border border-border-light';
+            img.onload = function() { URL.revokeObjectURL(url); };
+            preview.appendChild(img);
+            preview.classList.remove('hidden');
+          } else {
+            preview.classList.add('hidden');
+          }
+        });
+      });
+    }
+    function initSubmitSpinner() {
+      document.querySelectorAll('form[enctype="multipart/form-data"]:not(.spinner-init)').forEach(function(form) {
+        form.classList.add('spinner-init');
+        form.addEventListener('submit', function() {
+          var hasFiles = false;
+          form.querySelectorAll('input[type="file"]').forEach(function(input) {
+            if (input.files && input.files.length > 0) hasFiles = true;
+          });
+          if (hasFiles) {
+            var btn = form.querySelector('button[type="submit"]');
+            if (btn) {
+              btn.disabled = true;
+              btn.dataset.originalText = btn.textContent;
+              btn.textContent = 'Uploading...';
+              btn.classList.add('opacity-75');
+            }
+          }
+        });
+      });
+    }
+    function resetSubmitSpinners() {
+      document.querySelectorAll('button[type="submit"][data-original-text]').forEach(function(btn) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.originalText;
+        btn.classList.remove('opacity-75');
+        delete btn.dataset.originalText;
+      });
+    }
+    initMarkdownEditors();
+    initUploadZones();
+    initSubmitSpinner();
+    document.body.addEventListener('htmx:afterSwap', function() {
+      initMarkdownEditors();
+      initUploadZones();
+      initSubmitSpinner();
+      resetSubmitSpinners();
+    });
     function toggleTheme() {
       var isDark = document.documentElement.classList.toggle('dark');
       localStorage.setItem('theme', isDark ? 'dark' : 'light');
