@@ -52,6 +52,7 @@ impl TestServer {
             production_webhook_auth_token,
             Some(3600), // long interval so cron doesn't fire during tests
             10,         // version_history_count
+            50,         // max_body_size_mb
         );
         config.ensure_dirs().unwrap();
 
@@ -2211,6 +2212,128 @@ fn extract_hidden_token(html: &str) -> Option<String> {
         }
     }
     None
+}
+
+// ── Upload ETag / 304 tests ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn upload_api_returns_etag_header() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("etag-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Upload a file via the API.
+    let file_part = reqwest::multipart::Part::bytes(b"etag test content".to_vec())
+        .file_name("test.png")
+        .mime_str("image/png")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+    let resp = api
+        .post(s.url("/api/v1/uploads"))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let hash = body["hash"].as_str().unwrap().to_string();
+
+    // Fetch the upload — response must include an ETag header matching the hash.
+    let resp = api
+        .get(s.url(&format!("/api/v1/uploads/{hash}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp.headers().get("etag").expect("ETag header must be present");
+    assert_eq!(etag.to_str().unwrap(), format!("\"{}\"", hash));
+}
+
+#[tokio::test]
+async fn upload_api_returns_304_when_if_none_match_matches() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("304-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Upload a file via the API.
+    let file_part = reqwest::multipart::Part::bytes(b"conditional request content".to_vec())
+        .file_name("test.png")
+        .mime_str("image/png")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+    let resp = api
+        .post(s.url("/api/v1/uploads"))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let hash = body["hash"].as_str().unwrap().to_string();
+
+    // Send If-None-Match with the correct hash — must get 304 with no body.
+    let resp = api
+        .get(s.url(&format!("/api/v1/uploads/{hash}")))
+        .bearer_auth(&token)
+        .header("If-None-Match", format!("\"{}\"", hash))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    let body = resp.bytes().await.unwrap();
+    assert!(body.is_empty(), "304 response must have no body");
+}
+
+#[tokio::test]
+async fn upload_api_returns_200_when_if_none_match_differs() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("etag-mismatch-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Upload a file via the API.
+    let file_part = reqwest::multipart::Part::bytes(b"mismatch content".to_vec())
+        .file_name("test.png")
+        .mime_str("image/png")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+    let resp = api
+        .post(s.url("/api/v1/uploads"))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let hash = body["hash"].as_str().unwrap().to_string();
+
+    // Send If-None-Match with a different hash — must get 200 with full body.
+    let resp = api
+        .get(s.url(&format!("/api/v1/uploads/{hash}")))
+        .bearer_auth(&token)
+        .header("If-None-Match", "\"differenthash\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.bytes().await.unwrap();
+    assert_eq!(&body[..], b"mismatch content");
 }
 
 /// Extract the CSRF token from an HTML page's hidden input or meta tag.
