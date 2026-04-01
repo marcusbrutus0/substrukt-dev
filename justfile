@@ -8,7 +8,7 @@ check:
     cargo check
 
 dev:
-    cargo run -- serve
+    cargo run -- serve --port 3001
 
 test:
     cargo test

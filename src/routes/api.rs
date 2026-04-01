@@ -511,10 +511,10 @@ async fn upload_file(
 
 async fn get_upload(
     State(state): State<AppState>,
-    _token: BearerToken,
     Path(hash): Path<String>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
-    crate::routes::uploads::serve_upload_by_hash(&state, &hash).await
+    crate::routes::uploads::serve_upload_by_hash(&state, &hash, &headers).await
 }
 
 async fn export_bundle(State(state): State<AppState>, _token: BearerToken) -> impl IntoResponse {

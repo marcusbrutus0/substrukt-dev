@@ -6,6 +6,7 @@ use axum::{
     response::{Html, IntoResponse, Json},
     routing::get,
 };
+use axum::http::HeaderMap;
 use axum_htmx::HxRequest;
 use tower_sessions::Session;
 
@@ -274,25 +275,44 @@ async fn serve_upload(
     State(state): State<AppState>,
     Path((hash, _filename)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    serve_file(&state, &hash).await
+    serve_file(&state, &hash, &HeaderMap::new()).await
 }
 
 async fn serve_upload_no_name(
     State(state): State<AppState>,
     Path(hash): Path<String>,
 ) -> impl IntoResponse {
-    serve_file(&state, &hash).await
+    serve_file(&state, &hash, &HeaderMap::new()).await
 }
 
-pub async fn serve_upload_by_hash(state: &AppState, hash: &str) -> axum::response::Response {
-    serve_file(state, hash).await
+pub async fn serve_upload_by_hash(
+    state: &AppState,
+    hash: &str,
+    request_headers: &HeaderMap,
+) -> axum::response::Response {
+    serve_file(state, hash, request_headers).await
 }
 
-async fn serve_file(state: &AppState, hash: &str) -> axum::response::Response {
+async fn serve_file(
+    state: &AppState,
+    hash: &str,
+    request_headers: &HeaderMap,
+) -> axum::response::Response {
     let path = match uploads::get_upload_path(&state.config.uploads_dir(), hash) {
         Some(p) => p,
         None => return StatusCode::NOT_FOUND.into_response(),
     };
+
+    // The hash IS the ETag — if the client already has it, return 304.
+    let etag = format!("\"{}\"", hash);
+    if let Some(if_none_match) = request_headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    {
+        if if_none_match == etag {
+            return StatusCode::NOT_MODIFIED.into_response();
+        }
+    }
 
     let meta = uploads::db_get_upload_meta(&state.pool, hash)
         .await
@@ -311,6 +331,9 @@ async fn serve_file(state: &AppState, hash: &str) -> axum::response::Response {
                 HeaderValue::from_str(&content_type)
                     .unwrap_or(HeaderValue::from_static("application/octet-stream")),
             );
+            if let Ok(val) = HeaderValue::from_str(&etag) {
+                response.headers_mut().insert(header::ETAG, val);
+            }
             if let Some(meta) = &meta {
                 let disposition = format!("inline; filename=\"{}\"", meta.filename);
                 if let Ok(val) = HeaderValue::from_str(&disposition) {
