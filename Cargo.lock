@@ -3288,6 +3288,7 @@ dependencies = [
  "sha2",
  "slug",
  "sqlx",
+ "subtle",
  "tar",
  "tempfile",
  "tokio",

@@ -108,7 +108,11 @@ pub async fn ensure_csrf_token(session: &Session) -> String {
 /// Verify a submitted CSRF token against the session.
 pub async fn verify_csrf_token(session: &Session, submitted: &str) -> bool {
     if let Ok(Some(expected)) = session.get::<String>(CSRF_KEY).await {
-        expected == submitted
+        if expected.len() != submitted.len() {
+            return false;
+        }
+        use subtle::ConstantTimeEq;
+        expected.as_bytes().ct_eq(submitted.as_bytes()).into()
     } else {
         false
     }
