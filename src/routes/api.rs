@@ -16,6 +16,14 @@ use crate::schema;
 use crate::state::AppState;
 use crate::uploads;
 
+fn internal_error(e: impl std::fmt::Display) -> (StatusCode, Json<serde_json::Value>) {
+    tracing::error!("Internal error: {e}");
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({"error": "Internal server error"})),
+    )
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct ListParams {
     #[serde(default)]
@@ -199,11 +207,7 @@ async fn list_schemas(
                 .collect();
             Json(serde_json::json!(data)).into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -220,11 +224,7 @@ async fn get_schema(
     match schema::get_schema(&schemas_dir, &slug) {
         Ok(Some(s)) => Json(s.schema).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -244,11 +244,7 @@ async fn list_entries(
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -278,11 +274,7 @@ async fn list_entries(
                 .collect();
             Json(serde_json::json!(data)).into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -301,11 +293,7 @@ async fn get_entry(
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -316,11 +304,7 @@ async fn get_entry(
             Json(data).into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -343,11 +327,7 @@ async fn create_entry(
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -390,11 +370,7 @@ async fn create_entry(
             );
             (StatusCode::CREATED, Json(serde_json::json!({"id": id}))).into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -418,11 +394,7 @@ async fn update_entry(
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -475,11 +447,7 @@ async fn update_entry(
             );
             StatusCode::OK.into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -502,11 +470,7 @@ async fn delete_entry(
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -526,11 +490,7 @@ async fn delete_entry(
             );
             StatusCode::NO_CONTENT.into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -550,11 +510,7 @@ async fn get_single(
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -575,11 +531,7 @@ async fn get_single(
             Json(data).into_response()
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -603,11 +555,7 @@ async fn upsert_single(
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -660,11 +608,7 @@ async fn upsert_single(
             );
             StatusCode::OK.into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -687,11 +631,7 @@ async fn delete_single(
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -711,11 +651,7 @@ async fn delete_single(
             );
             StatusCode::NO_CONTENT.into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -737,11 +673,7 @@ async fn api_publish_entry(
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -754,11 +686,7 @@ async fn api_publish_entry(
             )
                 .into_response();
         }
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": msg})),
-        )
-            .into_response();
+        return internal_error(e).into_response();
     }
 
     crate::cache::reload_entry(
@@ -799,11 +727,7 @@ async fn api_unpublish_entry(
         Ok(Some(s)) => s,
         Ok(None) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -816,11 +740,7 @@ async fn api_unpublish_entry(
             )
                 .into_response();
         }
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": msg})),
-        )
-            .into_response();
+        return internal_error(e).into_response();
     }
 
     crate::cache::reload_entry(
@@ -897,11 +817,7 @@ async fn upload_file(
                 .into_response();
             }
             Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": e.to_string()})),
-                )
-                    .into_response();
+                return internal_error(e).into_response();
             }
         }
     }
@@ -1141,6 +1057,10 @@ async fn api_fire_deployment(
     }
 }
 
+// Backup endpoints are intentionally global (no app-scoping). Backups cover the
+// entire data directory, so any valid admin token may query or trigger them.
+// The BearerToken extractor already validates the token exists in the database
+// and require_api_role ensures the caller has admin privileges.
 async fn api_backup_status(State(state): State<AppState>, token: BearerToken) -> impl IntoResponse {
     if let Err(e) = require_api_role(&token, "admin") {
         return e.into_response();
