@@ -9,9 +9,10 @@ pub mod uploads;
 
 use axum::{
     Router,
-    extract::State,
+    extract::{Request, State},
     middleware,
-    response::{Html, IntoResponse, Redirect},
+    middleware::Next,
+    response::{Html, IntoResponse, Redirect, Response},
 };
 use axum_htmx::HxRequest;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -55,7 +56,26 @@ pub fn build_router(state: AppState) -> Router {
         .fallback(not_found)
         .layer(middleware::from_fn(metrics::track_metrics))
         .layer(CatchPanicLayer::custom(handle_panic))
+        .layer(middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+/// Middleware that sets HTTP security headers on every response.
+async fn security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert("X-Frame-Options", "DENY".parse().unwrap());
+    headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
+    headers.insert(
+        "Referrer-Policy",
+        "strict-origin-when-cross-origin".parse().unwrap(),
+    );
+    headers.insert("X-XSS-Protection", "1; mode=block".parse().unwrap());
+    headers.insert(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=()".parse().unwrap(),
+    );
+    response
 }
 
 fn handle_panic(_err: Box<dyn std::any::Any + Send + 'static>) -> axum::response::Response {
