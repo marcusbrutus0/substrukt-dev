@@ -193,7 +193,6 @@ pub async fn require_auth(State(state): State<AppState>, request: Request, next:
         || path.starts_with("/setup")
         || path.starts_with("/signup")
         || path.starts_with("/api/")
-        || path.starts_with("/uploads/file/")
     {
         return next.run(request).await;
     }
