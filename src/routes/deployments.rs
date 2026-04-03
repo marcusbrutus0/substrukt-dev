@@ -13,7 +13,7 @@ use crate::audit::validate_deployment_slug;
 use crate::auth;
 use crate::state::AppState;
 use crate::templates::base_for_htmx;
-use crate::webhooks;
+use crate::webhooks::{self, validate_webhook_url};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -199,6 +199,10 @@ async fn create_deployment(
         return render_form_with_error(&state, &app, &session, is_htmx, &e, None).await;
     }
 
+    if let Err(e) = validate_webhook_url(webhook_url, state.config.allow_private_webhooks) {
+        return render_form_with_error(&state, &app, &session, is_htmx, &e, None).await;
+    }
+
     let auth_token = if form.webhook_auth_token.trim().is_empty() {
         None
     } else {
@@ -352,6 +356,10 @@ async fn update_deployment(
     }
 
     if let Err(e) = validate_deployment_slug(new_slug) {
+        return render_form_with_error(&state, &app, &session, is_htmx, &e, Some(&dep)).await;
+    }
+
+    if let Err(e) = validate_webhook_url(webhook_url, state.config.allow_private_webhooks) {
         return render_form_with_error(&state, &app, &session, is_htmx, &e, Some(&dep)).await;
     }
 

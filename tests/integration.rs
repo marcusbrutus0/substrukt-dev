@@ -25,7 +25,7 @@ impl TestServer {
     async fn start() -> Self {
         let data_dir = tempfile::tempdir().unwrap();
         let db_path = data_dir.path().join("test.db");
-        let config = Config::new(
+        let mut config = Config::new(
             Some(data_dir.path().to_path_buf()),
             Some(db_path),
             Some(0),
@@ -33,6 +33,7 @@ impl TestServer {
             10, // version_history_count
             10, // max_body_size_mb
         );
+        config.allow_private_webhooks = true;
         config.ensure_dirs().unwrap();
         config.ensure_app_dirs("default").unwrap();
 

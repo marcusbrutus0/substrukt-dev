@@ -9,6 +9,7 @@ pub struct Config {
     pub secure_cookies: bool,
     pub version_history_count: usize,
     pub max_body_size: usize,
+    pub allow_private_webhooks: bool,
 }
 
 impl Config {
@@ -30,6 +31,7 @@ impl Config {
             secure_cookies,
             version_history_count,
             max_body_size: max_body_size_mb * 1024 * 1024,
+            allow_private_webhooks: false,
         }
     }
 
