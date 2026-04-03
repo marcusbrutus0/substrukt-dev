@@ -876,18 +876,10 @@ async fn export_bundle(
             }
             Err(e) => {
                 let _ = std::fs::remove_file(&tmp);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": e.to_string()})),
-                )
-                    .into_response()
+                internal_error(e).into_response()
             }
         },
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -935,11 +927,7 @@ async fn import_bundle(
                 .into_response();
             }
             Err(e) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({"error": e.to_string()})),
-                )
-                    .into_response();
+                return internal_error(e).into_response();
             }
         }
     }
@@ -976,11 +964,7 @@ async fn api_list_deployments(
                 .collect();
             Json(serde_json::json!(data)).into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        )
-            .into_response(),
+        Err(e) => internal_error(e).into_response(),
     }
 }
 
@@ -1011,11 +995,7 @@ async fn api_fire_deployment(
                 .into_response();
         }
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
@@ -1069,11 +1049,7 @@ async fn api_backup_status(State(state): State<AppState>, token: BearerToken) ->
     let config = match state.audit.get_backup_config().await {
         Ok(c) => c,
         Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
-                .into_response();
+            return internal_error(e).into_response();
         }
     };
 
