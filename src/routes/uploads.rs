@@ -260,6 +260,20 @@ async fn upload_file(
             continue;
         }
 
+        if !uploads::is_mime_allowed(&content_type) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "MIME type '{}' is not allowed. Allowed types: {}",
+                        content_type,
+                        uploads::allowed_mimes_display()
+                    )
+                })),
+            )
+                .into_response();
+        }
+
         match uploads::store_upload(
             &uploads_dir,
             &state.pool,

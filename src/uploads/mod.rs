@@ -5,6 +5,40 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
+/// Default allowlist of safe MIME types for file uploads.
+const DEFAULT_ALLOWED_MIMES: &[&str] = &[
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/svg+xml",
+    "application/pdf",
+    "text/plain",
+    "text/csv",
+    "text/html",
+    "text/markdown",
+    "application/json",
+    "video/mp4",
+    "video/webm",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "application/zip",
+    "application/gzip",
+];
+
+/// Check whether a MIME type is in the allowed upload list.
+/// Strips any parameters (e.g. `; charset=utf-8`) before comparing.
+pub fn is_mime_allowed(mime: &str) -> bool {
+    let base = mime.split(';').next().unwrap_or(mime).trim();
+    DEFAULT_ALLOWED_MIMES.contains(&base)
+}
+
+/// Build a human-readable comma-separated list of allowed MIME types.
+pub fn allowed_mimes_display() -> String {
+    DEFAULT_ALLOWED_MIMES.join(", ")
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UploadMeta {
     pub hash: String,
@@ -55,6 +89,14 @@ pub async fn store_upload(
     mime: &str,
     data: &[u8],
 ) -> eyre::Result<UploadMeta> {
+    if !is_mime_allowed(mime) {
+        return Err(eyre::eyre!(
+            "MIME type '{}' is not allowed. Allowed types: {}",
+            mime,
+            allowed_mimes_display()
+        ));
+    }
+
     let mut hasher = Sha256::new();
     hasher.update(data);
     let hash = hex::encode(hasher.finalize());
@@ -450,5 +492,44 @@ mod tests {
         });
         let hashes = extract_upload_hashes(&data);
         assert_eq!(hashes.len(), 0);
+    }
+
+    #[test]
+    fn test_is_mime_allowed_accepts_valid_types() {
+        assert!(is_mime_allowed("image/jpeg"));
+        assert!(is_mime_allowed("image/png"));
+        assert!(is_mime_allowed("image/gif"));
+        assert!(is_mime_allowed("image/webp"));
+        assert!(is_mime_allowed("image/svg+xml"));
+        assert!(is_mime_allowed("application/pdf"));
+        assert!(is_mime_allowed("text/plain"));
+        assert!(is_mime_allowed("text/csv"));
+        assert!(is_mime_allowed("text/html"));
+        assert!(is_mime_allowed("text/markdown"));
+        assert!(is_mime_allowed("application/json"));
+        assert!(is_mime_allowed("video/mp4"));
+        assert!(is_mime_allowed("video/webm"));
+        assert!(is_mime_allowed("audio/mpeg"));
+        assert!(is_mime_allowed("audio/ogg"));
+        assert!(is_mime_allowed("audio/wav"));
+        assert!(is_mime_allowed("application/zip"));
+        assert!(is_mime_allowed("application/gzip"));
+    }
+
+    #[test]
+    fn test_is_mime_allowed_rejects_disallowed_types() {
+        assert!(!is_mime_allowed("application/octet-stream"));
+        assert!(!is_mime_allowed("application/x-executable"));
+        assert!(!is_mime_allowed("application/x-sharedlib"));
+        assert!(!is_mime_allowed("text/x-shellscript"));
+        assert!(!is_mime_allowed("application/x-msdownload"));
+        assert!(!is_mime_allowed(""));
+    }
+
+    #[test]
+    fn test_is_mime_allowed_strips_parameters() {
+        assert!(is_mime_allowed("text/plain; charset=utf-8"));
+        assert!(is_mime_allowed("application/json; charset=utf-8"));
+        assert!(!is_mime_allowed("application/octet-stream; charset=binary"));
     }
 }

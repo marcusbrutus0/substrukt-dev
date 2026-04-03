@@ -94,12 +94,16 @@ pub async fn api_rate_limit(
     request: axum::extract::Request,
     next: middleware::Next,
 ) -> axum::response::Response {
-    let ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|xff| xff.split(',').next())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let ip = if state.config.trust_proxy_headers {
+        headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|xff| xff.split(',').next())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "direct".to_string())
+    } else {
+        "direct".to_string()
+    };
 
     if !state.api_limiter.check(&ip) {
         return (
@@ -795,6 +799,20 @@ async fn upload_file(
 
         if data.is_empty() {
             continue;
+        }
+
+        if !uploads::is_mime_allowed(&content_type) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!(
+                        "MIME type '{}' is not allowed. Allowed types: {}",
+                        content_type,
+                        uploads::allowed_mimes_display()
+                    )
+                })),
+            )
+                .into_response();
         }
 
         match uploads::store_upload(
