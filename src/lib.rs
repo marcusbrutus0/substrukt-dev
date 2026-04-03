@@ -8,6 +8,7 @@ pub mod content;
 pub mod db;
 pub mod history;
 pub mod metrics;
+pub mod openapi;
 pub mod rate_limit;
 pub mod routes;
 pub mod schema;

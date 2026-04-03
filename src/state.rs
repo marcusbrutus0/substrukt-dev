@@ -14,6 +14,7 @@ use crate::config::Config;
 use crate::rate_limit::RateLimiter;
 
 pub type ContentCache = DashMap<String, serde_json::Value>;
+pub type OpenApiCache = Arc<std::sync::RwLock<Option<serde_json::Value>>>;
 
 pub struct AppStateInner {
     pub pool: SqlitePool,
@@ -30,6 +31,7 @@ pub struct AppStateInner {
     pub backup_trigger: Option<mpsc::Sender<()>>,
     pub backup_running: AtomicBool,
     pub backup_cancel: Option<CancellationToken>,
+    pub openapi_cache: OpenApiCache,
 }
 
 pub type AppState = Arc<AppStateInner>;

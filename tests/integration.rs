@@ -68,6 +68,7 @@ impl TestServer {
             backup_trigger: None,
             backup_running: std::sync::atomic::AtomicBool::new(false),
             backup_cancel: None,
+            openapi_cache: std::sync::Arc::new(std::sync::RwLock::new(None)),
         });
 
         let app = routes::build_router(state).layer(session_layer);
@@ -6353,4 +6354,86 @@ async fn test_app_scoped_deployments() {
     let deps = deps.as_array().unwrap();
     assert_eq!(deps.len(), 1);
     assert_eq!(deps[0]["name"], "Blog Deploy");
+}
+
+// =============================================================================
+// OpenAPI Spec
+// =============================================================================
+
+#[tokio::test]
+async fn test_openapi_spec_returns_valid_json() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // No auth required -- should be publicly accessible
+    let api = Client::builder().build().unwrap();
+    let resp = api
+        .get(s.url("/api/v1/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let spec: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(spec["openapi"], "3.1.0");
+    assert!(spec["info"]["title"].is_string());
+    assert!(spec["paths"].is_object());
+    assert!(spec["components"]["securitySchemes"]["bearerAuth"].is_object());
+
+    // Should have static routes
+    let paths = spec["paths"].as_object().unwrap();
+    assert!(paths.contains_key("/openapi.json"));
+    assert!(paths.contains_key("/backups/status"));
+    assert!(paths.contains_key("/backups/trigger"));
+}
+
+#[tokio::test]
+async fn test_openapi_spec_includes_dynamic_content_routes() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Create a schema first
+    let schema_json = r#"{
+        "type": "object",
+        "x-substrukt": { "title": "Articles", "slug": "articles" },
+        "properties": {
+            "title": { "type": "string" },
+            "body": { "type": "string" }
+        },
+        "required": ["title"]
+    }"#;
+    s.create_schema(schema_json).await;
+
+    let api = Client::builder().build().unwrap();
+    let resp = api
+        .get(s.url("/api/v1/openapi.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let spec: serde_json::Value = resp.json().await.unwrap();
+    let paths = spec["paths"].as_object().unwrap();
+
+    // Dynamic routes for the "articles" schema under the "default" app
+    assert!(
+        paths.contains_key("/apps/default/content/articles"),
+        "Expected content list/create route for articles"
+    );
+    assert!(
+        paths.contains_key("/apps/default/content/articles/{entry_id}"),
+        "Expected content CRUD route for articles"
+    );
+    assert!(
+        paths.contains_key("/apps/default/content/articles/{entry_id}/publish"),
+        "Expected publish route for articles"
+    );
+
+    // Verify the schema properties appear in the request body
+    let create_op = &paths["/apps/default/content/articles"]["post"];
+    let req_schema = &create_op["requestBody"]["content"]["application/json"]["schema"];
+    assert!(
+        req_schema["properties"]["title"].is_object(),
+        "Expected title property in request schema"
+    );
 }

@@ -6,7 +6,7 @@ use notify::{RecursiveMode, Watcher};
 
 use crate::content;
 use crate::schema;
-use crate::state::ContentCache;
+use crate::state::{ContentCache, OpenApiCache};
 
 /// Populate the cache from disk on startup. Auto-discovers app directories.
 pub fn populate(cache: &ContentCache, data_dir: &Path) {
@@ -135,9 +135,15 @@ pub fn rebuild(cache: &ContentCache, data_dir: &Path) {
 
 /// Spawn a file watcher that rebuilds the cache on content/schema changes.
 /// Watches the entire data directory recursively (covers all apps).
+/// Also clears the OpenAPI spec cache so it regenerates on next request.
 /// Returns a guard that keeps the watcher alive; drop it to stop watching.
-pub fn spawn_watcher(cache: Arc<ContentCache>, data_dir: PathBuf) -> Option<impl Drop> {
+pub fn spawn_watcher(
+    cache: Arc<ContentCache>,
+    openapi_cache: OpenApiCache,
+    data_dir: PathBuf,
+) -> Option<impl Drop> {
     let cache_for_handler = cache.clone();
+    let openapi_for_handler = openapi_cache.clone();
     let data_dir_for_handler = data_dir.clone();
 
     // Debounce events with a channel -- coalesce rapid changes into one rebuild
@@ -173,6 +179,11 @@ pub fn spawn_watcher(cache: Arc<ContentCache>, data_dir: PathBuf) -> Option<impl
 
             tracing::debug!("File change detected, rebuilding cache");
             rebuild(&cache_for_handler, &data_dir_for_handler);
+
+            // Invalidate the OpenAPI spec cache so it regenerates with new schemas
+            if let Ok(mut openapi) = openapi_for_handler.write() {
+                *openapi = None;
+            }
         }
     });
 
