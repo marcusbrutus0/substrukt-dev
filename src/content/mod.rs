@@ -291,16 +291,26 @@ pub fn set_entry_status(
     Ok(())
 }
 
+/// Maximum nesting depth for recursive JSON traversal to prevent stack overflow.
+const MAX_NESTING_DEPTH: usize = 32;
+
 /// Check if any string value in the JSON data contains the query (case-insensitive).
 /// The query must already be lowercased by the caller.
 pub fn matches_query(data: &Value, query_lower: &str) -> bool {
+    matches_query_inner(data, query_lower, 0)
+}
+
+fn matches_query_inner(data: &Value, query_lower: &str, depth: usize) -> bool {
+    if depth > MAX_NESTING_DEPTH {
+        return false;
+    }
     match data {
         Value::String(s) => s.to_lowercase().contains(query_lower),
         Value::Object(map) => map
             .iter()
             .filter(|(k, _)| !k.starts_with('_'))
-            .any(|(_, v)| matches_query(v, query_lower)),
-        Value::Array(arr) => arr.iter().any(|v| matches_query(v, query_lower)),
+            .any(|(_, v)| matches_query_inner(v, query_lower, depth + 1)),
+        Value::Array(arr) => arr.iter().any(|v| matches_query_inner(v, query_lower, depth + 1)),
         _ => false,
     }
 }

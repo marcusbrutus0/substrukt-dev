@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
+/// Maximum nesting depth for recursive schema traversal to prevent stack overflow.
+const MAX_NESTING_DEPTH: usize = 32;
+
 /// Map from field name to list of (id, label) pairs for reference dropdowns.
 pub type ReferenceOptions = HashMap<String, Vec<(String, String)>>;
 
@@ -210,6 +213,20 @@ pub fn render_form_fields(
     prefix: &str,
     ref_options: &ReferenceOptions,
 ) -> String {
+    render_form_fields_inner(schema, data, prefix, ref_options, 0)
+}
+
+fn render_form_fields_inner(
+    schema: &Value,
+    data: Option<&Value>,
+    prefix: &str,
+    ref_options: &ReferenceOptions,
+    depth: usize,
+) -> String {
+    if depth > MAX_NESTING_DEPTH {
+        return r#"<div class="mb-4 text-danger text-sm">Error: maximum nesting depth exceeded</div>"#.to_string();
+    }
+
     let mut html = String::new();
 
     let properties = match schema.get("properties").and_then(|p| p.as_object()) {
@@ -255,6 +272,7 @@ pub fn render_form_fields(
             field_value,
             is_required,
             ref_options,
+            depth,
         ));
     }
 
@@ -270,6 +288,7 @@ fn render_field(
     value: Option<&Value>,
     required: bool,
     ref_options: &ReferenceOptions,
+    depth: usize,
 ) -> String {
     let req_attr = if required { " required" } else { "" };
     let req_star = if required { " *" } else { "" };
@@ -459,7 +478,7 @@ fn render_field(
             )
         }
         ("object", _) => {
-            let inner = render_form_fields(schema, value, name, ref_options);
+            let inner = render_form_fields_inner(schema, value, name, ref_options, depth + 1);
             format!(
                 r#"<fieldset class="mb-4 p-4 border border-border-light rounded-md">
   <legend class="text-sm font-medium text-secondary px-2">{label}</legend>
@@ -486,7 +505,7 @@ fn render_field(
   </div>
   {}
 </div>"#,
-                        render_form_fields(&items_schema, Some(item), &item_name, ref_options)
+                        render_form_fields_inner(&items_schema, Some(item), &item_name, ref_options, depth + 1)
                     ));
                 }
             }
@@ -494,7 +513,7 @@ fn render_field(
             // Template for new items (hidden, used by JS)
             let template_name = format!("{name}[__INDEX__]");
             let template_html =
-                render_form_fields(&items_schema, None, &template_name, ref_options);
+                render_form_fields_inner(&items_schema, None, &template_name, ref_options, depth + 1);
 
             // Array constraints (hint only)
             let mut hints = Vec::new();
@@ -539,6 +558,19 @@ fn render_field(
 
 /// Parse submitted form data into a JSON Value based on the schema.
 pub fn form_data_to_json(schema: &Value, form: &[(String, String)], prefix: &str) -> Value {
+    form_data_to_json_inner(schema, form, prefix, 0)
+}
+
+fn form_data_to_json_inner(
+    schema: &Value,
+    form: &[(String, String)],
+    prefix: &str,
+    depth: usize,
+) -> Value {
+    if depth > MAX_NESTING_DEPTH {
+        return Value::Object(Default::default());
+    }
+
     let properties = match schema.get("properties").and_then(|p| p.as_object()) {
         Some(p) => p,
         None => return Value::Object(Default::default()),
@@ -616,8 +648,10 @@ pub fn form_data_to_json(schema: &Value, form: &[(String, String)], prefix: &str
                     _ => Value::Null,
                 }
             }
-            ("object", _) => form_data_to_json(prop_schema, form, &field_name),
-            ("array", _) => parse_array_form_data(prop_schema, form, &field_name),
+            ("object", _) => form_data_to_json_inner(prop_schema, form, &field_name, depth + 1),
+            ("array", _) => {
+                parse_array_form_data(prop_schema, form, &field_name, depth + 1)
+            }
             _ => {
                 // String or fallback
                 let val = form
@@ -640,7 +674,16 @@ pub fn form_data_to_json(schema: &Value, form: &[(String, String)], prefix: &str
     Value::Object(obj)
 }
 
-fn parse_array_form_data(schema: &Value, form: &[(String, String)], prefix: &str) -> Value {
+fn parse_array_form_data(
+    schema: &Value,
+    form: &[(String, String)],
+    prefix: &str,
+    depth: usize,
+) -> Value {
+    if depth > MAX_NESTING_DEPTH {
+        return Value::Array(Vec::new());
+    }
+
     let items_schema = match schema.get("items") {
         Some(s) => s,
         None => return Value::Array(Vec::new()),
@@ -664,7 +707,7 @@ fn parse_array_form_data(schema: &Value, form: &[(String, String)], prefix: &str
         .into_iter()
         .map(|i| {
             let item_prefix = format!("{prefix}[{i}]");
-            form_data_to_json(items_schema, form, &item_prefix)
+            form_data_to_json_inner(items_schema, form, &item_prefix, depth)
         })
         .collect();
 
