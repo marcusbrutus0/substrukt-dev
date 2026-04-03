@@ -55,6 +55,10 @@ struct Cli {
     /// Maximum request body size in megabytes
     #[arg(long, global = true, default_value = "50")]
     max_body_size: usize,
+
+    /// Trust X-Forwarded-For headers for rate limiting (enable only behind a trusted reverse proxy)
+    #[arg(long, global = true)]
+    trust_proxy_headers: bool,
 }
 
 #[derive(Subcommand)]
@@ -99,7 +103,7 @@ async fn main() -> eyre::Result<()> {
 
     let cli = Cli::parse();
     let api_rate_limit = cli.api_rate_limit;
-    let config = Config::new(
+    let mut config = Config::new(
         cli.data_dir,
         cli.db_path,
         cli.port,
@@ -107,6 +111,7 @@ async fn main() -> eyre::Result<()> {
         cli.version_history_count,
         cli.max_body_size,
     );
+    config.trust_proxy_headers = cli.trust_proxy_headers;
     config.ensure_dirs()?;
 
     match cli.command.unwrap_or(Command::Serve) {

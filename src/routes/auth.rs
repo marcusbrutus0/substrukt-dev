@@ -51,7 +51,7 @@ async fn login_submit(
     session: Session,
     Form(form): Form<LoginForm>,
 ) -> impl IntoResponse {
-    let ip = client_ip(&headers);
+    let ip = client_ip(&headers, state.config.trust_proxy_headers);
     if !state.login_limiter.check(&ip) {
         return (
             axum::http::StatusCode::TOO_MANY_REQUESTS,
@@ -242,7 +242,7 @@ async fn signup_submit(
     session: Session,
     Form(form): Form<SignupForm>,
 ) -> impl IntoResponse {
-    let ip = client_ip(&headers);
+    let ip = client_ip(&headers, state.config.trust_proxy_headers);
     if !state.login_limiter.check(&ip) {
         return (
             axum::http::StatusCode::TOO_MANY_REQUESTS,
@@ -401,11 +401,13 @@ async fn render_template(
     Ok(Html(html))
 }
 
-fn client_ip(headers: &HeaderMap) -> String {
-    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())
-        && let Some(first_ip) = xff.split(',').next()
-    {
-        return first_ip.trim().to_string();
+fn client_ip(headers: &HeaderMap, trust_proxy_headers: bool) -> String {
+    if trust_proxy_headers {
+        if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())
+            && let Some(first_ip) = xff.split(',').next()
+        {
+            return first_ip.trim().to_string();
+        }
     }
-    "unknown".to_string()
+    "direct".to_string()
 }

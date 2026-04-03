@@ -10,6 +10,10 @@ pub struct Config {
     pub version_history_count: usize,
     pub max_body_size: usize,
     pub allow_private_webhooks: bool,
+    /// When true, trust X-Forwarded-For headers for rate limiting.
+    /// Only enable this when running behind a trusted reverse proxy.
+    /// When false (default), rate limiting uses a single global bucket.
+    pub trust_proxy_headers: bool,
 }
 
 impl Config {
@@ -32,6 +36,7 @@ impl Config {
             version_history_count,
             max_body_size: max_body_size_mb * 1024 * 1024,
             allow_private_webhooks: false,
+            trust_proxy_headers: false,
         }
     }
 
