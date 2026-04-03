@@ -8,6 +8,7 @@ pub type ReferenceOptions = HashMap<String, Vec<(String, String)>>;
 fn escape_html_attr(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
@@ -275,7 +276,7 @@ fn render_field(
 
     match (field_type, format) {
         ("string", Some("markdown")) => {
-            let val = value.and_then(|v| v.as_str()).unwrap_or("");
+            let val = escape_html_attr(value.and_then(|v| v.as_str()).unwrap_or(""));
             let (constraint_attrs, hints) = string_constraints(schema, true);
             let hint_html = build_hint_line(&hints);
             format!(
@@ -287,7 +288,7 @@ fn render_field(
             )
         }
         ("string", Some("textarea")) => {
-            let val = value.and_then(|v| v.as_str()).unwrap_or("");
+            let val = escape_html_attr(value.and_then(|v| v.as_str()).unwrap_or(""));
             let (constraint_attrs, hints) = string_constraints(schema, true);
             let hint_html = build_hint_line(&hints);
             format!(
@@ -301,14 +302,20 @@ fn render_field(
         ("string", Some("upload")) => {
             let mut current_html = String::new();
             if let Some(obj) = value.and_then(|v| v.as_object()) {
-                let filename = obj
-                    .get("filename")
-                    .and_then(|f| f.as_str())
-                    .unwrap_or("file");
-                let hash = obj.get("hash").and_then(|h| h.as_str()).unwrap_or("");
-                let mime = obj.get("mime").and_then(|m| m.as_str()).unwrap_or("");
-                let json_val =
-                    serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default();
+                let filename = escape_html_attr(
+                    obj.get("filename")
+                        .and_then(|f| f.as_str())
+                        .unwrap_or("file"),
+                );
+                let hash = escape_html_attr(
+                    obj.get("hash").and_then(|h| h.as_str()).unwrap_or(""),
+                );
+                let mime = escape_html_attr(
+                    obj.get("mime").and_then(|m| m.as_str()).unwrap_or(""),
+                );
+                let json_val = escape_html_attr(
+                    &serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default(),
+                );
 
                 // Show image thumbnail for image MIME types
                 let thumbnail = if mime.starts_with("image/") {
@@ -354,8 +361,10 @@ fn render_field(
             let mut opts_html = r#"<option value="">-- Select --</option>"#.to_string();
             for (id, label_text) in options {
                 let selected = if id == val { " selected" } else { "" };
+                let escaped_id = escape_html_attr(id);
+                let escaped_label = escape_html_attr(label_text);
                 opts_html.push_str(&format!(
-                    r#"<option value="{id}"{selected}>{label_text}</option>"#
+                    r#"<option value="{escaped_id}"{selected}>{escaped_label}</option>"#
                 ));
             }
             let hint_html =
@@ -378,8 +387,9 @@ fn render_field(
                 for ev in enum_values {
                     let ev_str = ev.as_str().unwrap_or("");
                     let selected = if ev_str == val { " selected" } else { "" };
+                    let escaped_ev = escape_html_attr(ev_str);
                     options.push_str(&format!(
-                        r#"<option value="{ev_str}"{selected}>{ev_str}</option>"#
+                        r#"<option value="{escaped_ev}"{selected}>{escaped_ev}</option>"#
                     ));
                 }
                 let hint_html =
@@ -394,7 +404,7 @@ fn render_field(
 "#
                 )
             } else {
-                let val = value.and_then(|v| v.as_str()).unwrap_or("");
+                let val = escape_html_attr(value.and_then(|v| v.as_str()).unwrap_or(""));
                 let (constraint_attrs, hints) = string_constraints(schema, false);
                 let hint_html = build_hint_line(&hints);
                 format!(
@@ -407,8 +417,8 @@ fn render_field(
             }
         }
         ("number" | "integer", _) => {
-            let val = value.map(|v| v.to_string()).unwrap_or_default();
-            let val = val.trim_matches('"');
+            let raw_val = value.map(|v| v.to_string()).unwrap_or_default();
+            let val = escape_html_attr(raw_val.trim_matches('"'));
             let is_integer = field_type == "integer";
 
             let (constraint_attrs, hints) = number_constraints(schema, is_integer);
@@ -515,7 +525,7 @@ fn render_field(
             )
         }
         _ => {
-            let val = value.and_then(|v| v.as_str()).unwrap_or("");
+            let val = escape_html_attr(value.and_then(|v| v.as_str()).unwrap_or(""));
             format!(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
