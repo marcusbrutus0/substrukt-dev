@@ -221,6 +221,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
         backup_trigger: backup_trigger_tx,
         backup_running: AtomicBool::new(false),
         backup_cancel: backup_cancel.clone(),
+        openapi_cache: Arc::new(std::sync::RwLock::new(None)),
     });
 
     // Spawn auto-deploy tasks for all enabled deployments
@@ -237,8 +238,12 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
         substrukt::backup::spawn_backup_task(state.clone(), s3_cfg, rx, cancel.child_token());
     }
 
-    // File watcher for cache invalidation
-    let _watcher = cache::spawn_watcher(Arc::new(state.cache.clone()), config.data_dir.clone());
+    // File watcher for cache invalidation (content + openapi spec)
+    let _watcher = cache::spawn_watcher(
+        Arc::new(state.cache.clone()),
+        state.openapi_cache.clone(),
+        config.data_dir.clone(),
+    );
 
     let app = routes::build_router(state)
         .layer(axum::extract::DefaultBodyLimit::max(config.max_body_size))

@@ -26,8 +26,26 @@ pub struct ListParams {
 
 pub fn api_global_routes() -> Router<AppState> {
     Router::new()
+        .route("/openapi.json", get(openapi_spec))
         .route("/backups/status", get(api_backup_status))
         .route("/backups/trigger", post(api_trigger_backup))
+}
+
+async fn openapi_spec(State(state): State<AppState>) -> impl IntoResponse {
+    // Try to read from cache first
+    {
+        let cached = state.openapi_cache.read().unwrap();
+        if let Some(spec) = cached.as_ref() {
+            return Json(spec.clone()).into_response();
+        }
+    }
+
+    // Generate and cache
+    let spec = crate::openapi::generate_spec(&state.config.data_dir);
+    if let Ok(mut cache) = state.openapi_cache.write() {
+        *cache = Some(spec.clone());
+    }
+    Json(spec).into_response()
 }
 
 pub fn api_app_routes() -> Router<AppState> {
