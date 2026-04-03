@@ -4,6 +4,7 @@ use minijinja_autoreload::AutoReloader;
 pub fn create_reloader() -> AutoReloader {
     AutoReloader::new(move |notifier| {
         let mut env = Environment::new();
+        env.set_auto_escape_callback(minijinja::default_auto_escape_callback);
 
         // Debug: load from filesystem with hot-reload
         // Release: embed templates into the binary

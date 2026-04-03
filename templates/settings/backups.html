@@ -171,10 +171,10 @@
         </td>
         <td class="px-4 py-2.5 text-sm text-muted">{{ entry.trigger_source }}</td>
         <td class="px-4 py-2.5 text-sm text-muted font-mono">
-          {% if entry.size_bytes %}{{ (entry.size_bytes / 1048576)|round(1) }} MB{% else %}&mdash;{% endif %}
+          {% if entry.size_bytes %}{{ (entry.size_bytes / 1048576)|round(1) }} MB{% else %}—{% endif %}
         </td>
         <td class="px-4 py-2.5 text-sm text-muted font-mono truncate max-w-xs" title="{{ entry.s3_key }}">
-          {{ entry.s3_key if entry.s3_key else "&mdash;" }}
+          {{ entry.s3_key if entry.s3_key else "—" }}
         </td>
       </tr>
       {% if entry.status == "failed" and entry.error_message %}
