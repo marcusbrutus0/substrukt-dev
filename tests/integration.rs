@@ -2115,7 +2115,7 @@ async fn upload_api_returns_etag_header() {
         .unwrap();
     let form = reqwest::multipart::Form::new().part("file", file_part);
     let resp = api
-        .post(s.url("/api/v1/uploads"))
+        .post(s.url("/api/v1/apps/default/uploads"))
         .bearer_auth(&token)
         .multipart(form)
         .send()
@@ -2126,7 +2126,7 @@ async fn upload_api_returns_etag_header() {
     let hash = body["hash"].as_str().unwrap().to_string();
 
     let resp = api
-        .get(s.url(&format!("/api/v1/uploads/{hash}")))
+        .get(s.url(&format!("/api/v1/apps/default/uploads/{hash}")))
         .bearer_auth(&token)
         .send()
         .await
@@ -2156,7 +2156,7 @@ async fn upload_api_returns_304_when_etag_matches() {
         .unwrap();
     let form = reqwest::multipart::Form::new().part("file", file_part);
     let resp = api
-        .post(s.url("/api/v1/uploads"))
+        .post(s.url("/api/v1/apps/default/uploads"))
         .bearer_auth(&token)
         .multipart(form)
         .send()
@@ -2166,7 +2166,7 @@ async fn upload_api_returns_304_when_etag_matches() {
     let hash = body["hash"].as_str().unwrap().to_string();
 
     let resp = api
-        .get(s.url(&format!("/api/v1/uploads/{hash}")))
+        .get(s.url(&format!("/api/v1/apps/default/uploads/{hash}")))
         .bearer_auth(&token)
         .header("If-None-Match", format!("\"{hash}\""))
         .send()
@@ -2198,7 +2198,7 @@ async fn upload_api_returns_200_when_etag_differs() {
         .unwrap();
     let form = reqwest::multipart::Form::new().part("file", file_part);
     let resp = api
-        .post(s.url("/api/v1/uploads"))
+        .post(s.url("/api/v1/apps/default/uploads"))
         .bearer_auth(&token)
         .multipart(form)
         .send()
@@ -2208,7 +2208,7 @@ async fn upload_api_returns_200_when_etag_differs() {
     let hash = body["hash"].as_str().unwrap().to_string();
 
     let resp = api
-        .get(s.url(&format!("/api/v1/uploads/{hash}")))
+        .get(s.url(&format!("/api/v1/apps/default/uploads/{hash}")))
         .bearer_auth(&token)
         .header("If-None-Match", "\"differenthash\"")
         .send()
@@ -2235,7 +2235,7 @@ async fn content_api_get_entry_returns_etag() {
     s.create_schema(BLOG_SCHEMA).await;
     let entry = serde_json::json!({"title": "Hello", "body": "World"});
     let resp = api
-        .post(s.url("/api/v1/default/content/blog-posts"))
+        .post(s.url("/api/v1/apps/default/content/blog-posts"))
         .bearer_auth(&token)
         .json(&entry)
         .send()
@@ -2247,7 +2247,7 @@ async fn content_api_get_entry_returns_etag() {
 
     // GET the entry — should include an ETag header
     let resp = api
-        .get(s.url(&format!("/api/v1/default/content/blog-posts/{id}")))
+        .get(s.url(&format!("/api/v1/apps/default/content/blog-posts/{id}")))
         .bearer_auth(&token)
         .send()
         .await
@@ -2264,7 +2264,7 @@ async fn content_api_get_entry_returns_etag() {
 
     // Repeat with If-None-Match — should get 304
     let resp = api
-        .get(s.url(&format!("/api/v1/default/content/blog-posts/{id}")))
+        .get(s.url(&format!("/api/v1/apps/default/content/blog-posts/{id}")))
         .bearer_auth(&token)
         .header("If-None-Match", &etag)
         .send()
@@ -2289,7 +2289,7 @@ async fn content_api_list_entries_returns_etag() {
     // Create an entry (defaults to draft, use status=all to list it)
     let entry = serde_json::json!({"title": "Post 1"});
     let resp = api
-        .post(s.url("/api/v1/default/content/blog-posts"))
+        .post(s.url("/api/v1/apps/default/content/blog-posts"))
         .bearer_auth(&token)
         .json(&entry)
         .send()
@@ -2299,7 +2299,7 @@ async fn content_api_list_entries_returns_etag() {
 
     // GET list — should include ETag
     let resp = api
-        .get(s.url("/api/v1/default/content/blog-posts?status=all"))
+        .get(s.url("/api/v1/apps/default/content/blog-posts?status=all"))
         .bearer_auth(&token)
         .send()
         .await
@@ -2315,7 +2315,7 @@ async fn content_api_list_entries_returns_etag() {
 
     // Repeat with If-None-Match — should get 304
     let resp = api
-        .get(s.url("/api/v1/default/content/blog-posts?status=all"))
+        .get(s.url("/api/v1/apps/default/content/blog-posts?status=all"))
         .bearer_auth(&token)
         .header("If-None-Match", &etag)
         .send()
