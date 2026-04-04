@@ -216,6 +216,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
         config: config.clone(),
         templates: reloader,
         cache: content_cache,
+        etag_cache: DashMap::new(),
         login_limiter: RateLimiter::new(10, std::time::Duration::from_secs(60)),
         api_limiter: RateLimiter::new(api_rate_limit, std::time::Duration::from_secs(60)),
         metrics_handle,
@@ -246,6 +247,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     // File watcher for cache invalidation (content + openapi spec)
     let _watcher = cache::spawn_watcher(
         Arc::new(state.cache.clone()),
+        Arc::new(state.etag_cache.clone()),
         state.openapi_cache.clone(),
         config.data_dir.clone(),
     );

@@ -475,6 +475,7 @@ async fn create_entry(
         Ok(id) => {
             crate::cache::reload_entry(
                 &state.cache,
+                &state.etag_cache,
                 &content_dir,
                 &schema_file,
                 &id,
@@ -599,6 +600,7 @@ async fn update_entry(
         Ok(_) => {
             crate::cache::reload_entry(
                 &state.cache,
+                &state.etag_cache,
                 &content_dir,
                 &schema_file,
                 &entry_id,
@@ -712,6 +714,7 @@ async fn publish_entry(
 
     crate::cache::reload_entry(
         &state.cache,
+        &state.etag_cache,
         &content_dir,
         &schema_file,
         &entry_id,
@@ -798,6 +801,7 @@ async fn unpublish_entry(
 
     crate::cache::reload_entry(
         &state.cache,
+        &state.etag_cache,
         &content_dir,
         &schema_file,
         &entry_id,
@@ -1058,6 +1062,7 @@ async fn revert_entry(
         Ok(_) => {
             crate::cache::reload_entry(
                 &state.cache,
+                &state.etag_cache,
                 &content_dir,
                 &schema_file,
                 &entry_id,

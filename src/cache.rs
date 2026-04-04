@@ -6,7 +6,7 @@ use notify::{RecursiveMode, Watcher};
 
 use crate::content;
 use crate::schema;
-use crate::state::{ContentCache, OpenApiCache};
+use crate::state::{ContentCache, EtagCache, OpenApiCache};
 
 /// Populate the cache from disk on startup. Auto-discovers app directories.
 pub fn populate(cache: &ContentCache, data_dir: &Path) {
@@ -79,6 +79,7 @@ pub fn remove_app(cache: &ContentCache, app_slug: &str) {
 /// Reload all entries for a specific schema within an app.
 pub fn reload_schema(
     cache: &ContentCache,
+    etag_cache: &EtagCache,
     content_dir: &Path,
     schema: &schema::models::SchemaFile,
     app_slug: &str,
@@ -86,6 +87,7 @@ pub fn reload_schema(
     let prefix = format!("{}/{}/", app_slug, schema.meta.slug);
     // Remove old entries for this schema in this app
     cache.retain(|k, _| !k.starts_with(&prefix));
+    etag_cache.retain(|k, _| !k.starts_with(&prefix));
 
     // Reload
     match content::list_entries(content_dir, schema) {
@@ -108,12 +110,14 @@ pub fn reload_schema(
 /// Reload a single entry within an app.
 pub fn reload_entry(
     cache: &ContentCache,
+    etag_cache: &EtagCache,
     content_dir: &Path,
     schema: &schema::models::SchemaFile,
     entry_id: &str,
     app_slug: &str,
 ) {
     let key = format!("{}/{}/{}", app_slug, schema.meta.slug, entry_id);
+    etag_cache.remove(&key);
     match content::get_entry(content_dir, schema, entry_id) {
         Ok(Some(entry)) => {
             cache.insert(key, entry.data);
@@ -128,8 +132,10 @@ pub fn reload_entry(
 }
 
 /// Clear and rebuild the entire cache from all apps.
-pub fn rebuild(cache: &ContentCache, data_dir: &Path) {
+/// Also clears the ETag cache since content has changed.
+pub fn rebuild(cache: &ContentCache, etag_cache: &crate::state::EtagCache, data_dir: &Path) {
     cache.clear();
+    etag_cache.clear();
     populate(cache, data_dir);
 }
 
@@ -139,10 +145,12 @@ pub fn rebuild(cache: &ContentCache, data_dir: &Path) {
 /// Returns a guard that keeps the watcher alive; drop it to stop watching.
 pub fn spawn_watcher(
     cache: Arc<ContentCache>,
+    etag_cache: Arc<EtagCache>,
     openapi_cache: OpenApiCache,
     data_dir: PathBuf,
 ) -> Option<impl Drop> {
     let cache_for_handler = cache.clone();
+    let etag_for_handler = etag_cache.clone();
     let openapi_for_handler = openapi_cache.clone();
     let data_dir_for_handler = data_dir.clone();
 
@@ -178,7 +186,7 @@ pub fn spawn_watcher(
             while rx.recv_timeout(Duration::from_millis(200)).is_ok() {}
 
             tracing::debug!("File change detected, rebuilding cache");
-            rebuild(&cache_for_handler, &data_dir_for_handler);
+            rebuild(&cache_for_handler, &etag_for_handler, &data_dir_for_handler);
 
             // Invalidate the OpenAPI spec cache so it regenerates with new schemas
             if let Ok(mut openapi) = openapi_for_handler.write() {

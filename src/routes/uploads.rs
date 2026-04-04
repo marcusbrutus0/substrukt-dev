@@ -2,7 +2,7 @@ use axum::{
     Router,
     body::Body,
     extract::{Multipart, Path, Query, State},
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Json},
     routing::get,
 };
@@ -331,11 +331,18 @@ pub async fn serve_upload_by_hash(
     app_id: i64,
     uploads_dir: &std::path::Path,
     hash: &str,
+    request_headers: &HeaderMap,
 ) -> axum::response::Response {
     let path = match uploads::get_upload_path(uploads_dir, hash) {
         Some(p) => p,
         None => return StatusCode::NOT_FOUND.into_response(),
     };
+
+    // The content-addressed hash is a natural ETag.
+    let etag = format!("\"{hash}\"");
+    if etag_matches(request_headers, &etag) {
+        return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag)]).into_response();
+    }
 
     let meta = uploads::db_get_upload_meta(&state.pool, app_id, hash)
         .await
@@ -354,6 +361,9 @@ pub async fn serve_upload_by_hash(
                 HeaderValue::from_str(&content_type)
                     .unwrap_or(HeaderValue::from_static("application/octet-stream")),
             );
+            response
+                .headers_mut()
+                .insert(header::ETAG, HeaderValue::from_str(&etag).unwrap());
             if let Some(meta) = &meta {
                 let disposition = format!("inline; filename=\"{}\"", meta.filename);
                 if let Ok(val) = HeaderValue::from_str(&disposition) {
@@ -370,5 +380,14 @@ pub async fn serve_upload_by_hash(
 
 async fn serve_file(state: &AppState, app: &AppContext, hash: &str) -> axum::response::Response {
     let uploads_dir = state.config.app_uploads_dir(&app.app.slug);
-    serve_upload_by_hash(state, app.app.id, &uploads_dir, hash).await
+    serve_upload_by_hash(state, app.app.id, &uploads_dir, hash, &HeaderMap::new()).await
+}
+
+/// Check if any value in If-None-Match matches the given ETag.
+fn etag_matches(headers: &HeaderMap, etag: &str) -> bool {
+    headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.split(',').any(|t| t.trim() == etag))
+        .unwrap_or(false)
 }

@@ -3,11 +3,12 @@ use std::sync::atomic::Ordering;
 use axum::{
     Router,
     extract::{Multipart, Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware,
     response::{IntoResponse, Json},
     routing::{get, post},
 };
+use sha2::{Digest, Sha256};
 
 use crate::app_context::ApiAppContext;
 use crate::auth::token::BearerToken;
@@ -22,6 +23,47 @@ fn internal_error(e: impl std::fmt::Display) -> (StatusCode, Json<serde_json::Va
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(serde_json::json!({"error": "Internal server error"})),
     )
+}
+
+/// Build a JSON response with an ETag derived from the body, returning 304 if
+/// the client already has a matching version. When `cache_key` is provided,
+/// the computed ETag is stored in `etag_cache` so subsequent requests skip the
+/// hash computation until the cache entry is invalidated.
+fn json_with_etag(
+    value: &serde_json::Value,
+    request_headers: &HeaderMap,
+    etag_cache: &crate::state::EtagCache,
+    cache_key: Option<&str>,
+) -> axum::response::Response {
+    let etag = if let Some(key) = cache_key {
+        if let Some(cached) = etag_cache.get(key) {
+            cached.clone()
+        } else {
+            let body = serde_json::to_vec(value).unwrap();
+            let hash = hex::encode(Sha256::digest(&body));
+            let tag = format!("\"{hash}\"");
+            etag_cache.insert(key.to_string(), tag.clone());
+            tag
+        }
+    } else {
+        let body = serde_json::to_vec(value).unwrap();
+        let hash = hex::encode(Sha256::digest(&body));
+        format!("\"{hash}\"")
+    };
+
+    if let Some(inm) = request_headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    {
+        if inm.split(',').any(|t| t.trim() == etag) {
+            return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag)]).into_response();
+        }
+    }
+
+    let mut resp = Json(value.clone()).into_response();
+    resp.headers_mut()
+        .insert(header::ETAG, HeaderValue::from_str(&etag).unwrap());
+    resp
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -238,6 +280,7 @@ async fn list_entries(
     app: ApiAppContext,
     Path((_app_slug, schema_slug)): Path<(String, String)>,
     Query(params): Query<ListParams>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Err(e) = require_token_app(&token, &app) {
         return e.into_response();
@@ -276,7 +319,8 @@ async fn list_entries(
                     d
                 })
                 .collect();
-            Json(serde_json::json!(data)).into_response()
+            let value = serde_json::json!(data);
+            json_with_etag(&value, &headers, &state.etag_cache, None)
         }
         Err(e) => internal_error(e).into_response(),
     }
@@ -287,6 +331,7 @@ async fn get_entry(
     token: BearerToken,
     app: ApiAppContext,
     Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Err(e) = require_token_app(&token, &app) {
         return e.into_response();
@@ -305,7 +350,8 @@ async fn get_entry(
         Ok(Some(entry)) => {
             let mut data = content::strip_internal_status(&entry.data);
             resolve_references(&mut data, &schema_file.schema, &state.cache, &app.app.slug);
-            Json(data).into_response()
+            let cache_key = format!("{}/{}/{}", app.app.slug, schema_slug, entry_id);
+            json_with_etag(&data, &headers, &state.etag_cache, Some(&cache_key))
         }
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => internal_error(e).into_response(),
@@ -356,6 +402,7 @@ async fn create_entry(
         Ok(id) => {
             crate::cache::reload_entry(
                 &state.cache,
+                &state.etag_cache,
                 &content_dir,
                 &schema_file,
                 &id,
@@ -428,6 +475,7 @@ async fn update_entry(
         Ok(_) => {
             crate::cache::reload_entry(
                 &state.cache,
+                &state.etag_cache,
                 &content_dir,
                 &schema_file,
                 &entry_id,
@@ -589,6 +637,7 @@ async fn upsert_single(
         Ok(_) => {
             crate::cache::reload_entry(
                 &state.cache,
+                &state.etag_cache,
                 &content_dir,
                 &schema_file,
                 "_single",
@@ -695,6 +744,7 @@ async fn api_publish_entry(
 
     crate::cache::reload_entry(
         &state.cache,
+        &state.etag_cache,
         &content_dir,
         &schema_file,
         &entry_id,
@@ -749,6 +799,7 @@ async fn api_unpublish_entry(
 
     crate::cache::reload_entry(
         &state.cache,
+        &state.etag_cache,
         &content_dir,
         &schema_file,
         &entry_id,
@@ -852,12 +903,14 @@ async fn get_upload(
     token: BearerToken,
     app: ApiAppContext,
     Path((_app_slug, hash)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Err(e) = require_token_app(&token, &app) {
         return e.into_response();
     }
     let uploads_dir = state.config.app_uploads_dir(&app.app.slug);
-    crate::routes::uploads::serve_upload_by_hash(&state, app.app.id, &uploads_dir, &hash).await
+    crate::routes::uploads::serve_upload_by_hash(&state, app.app.id, &uploads_dir, &hash, &headers)
+        .await
 }
 
 async fn export_bundle(
@@ -934,7 +987,7 @@ async fn import_bundle(
         {
             Ok(warnings) => {
                 // Rebuild cache after import
-                crate::cache::rebuild(&state.cache, &state.config.data_dir);
+                crate::cache::rebuild(&state.cache, &state.etag_cache, &state.config.data_dir);
                 state
                     .audit
                     .log_with_app("api", "import", "bundle", "", None, Some(app.app.id));

@@ -14,6 +14,7 @@ use crate::config::Config;
 use crate::rate_limit::RateLimiter;
 
 pub type ContentCache = DashMap<String, serde_json::Value>;
+pub type EtagCache = DashMap<String, String>;
 pub type OpenApiCache = Arc<std::sync::RwLock<Option<serde_json::Value>>>;
 
 pub struct AppStateInner {
@@ -21,6 +22,7 @@ pub struct AppStateInner {
     pub config: Config,
     pub templates: AutoReloader,
     pub cache: ContentCache,
+    pub etag_cache: EtagCache,
     pub login_limiter: RateLimiter,
     pub api_limiter: RateLimiter,
     pub metrics_handle: PrometheusHandle,
