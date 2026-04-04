@@ -310,7 +310,9 @@ fn matches_query_inner(data: &Value, query_lower: &str, depth: usize) -> bool {
             .iter()
             .filter(|(k, _)| !k.starts_with('_'))
             .any(|(_, v)| matches_query_inner(v, query_lower, depth + 1)),
-        Value::Array(arr) => arr.iter().any(|v| matches_query_inner(v, query_lower, depth + 1)),
+        Value::Array(arr) => arr
+            .iter()
+            .any(|v| matches_query_inner(v, query_lower, depth + 1)),
         _ => false,
     }
 }

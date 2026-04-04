@@ -326,12 +326,8 @@ fn render_field(
                         .and_then(|f| f.as_str())
                         .unwrap_or("file"),
                 );
-                let hash = escape_html_attr(
-                    obj.get("hash").and_then(|h| h.as_str()).unwrap_or(""),
-                );
-                let mime = escape_html_attr(
-                    obj.get("mime").and_then(|m| m.as_str()).unwrap_or(""),
-                );
+                let hash = escape_html_attr(obj.get("hash").and_then(|h| h.as_str()).unwrap_or(""));
+                let mime = escape_html_attr(obj.get("mime").and_then(|m| m.as_str()).unwrap_or(""));
                 let json_val = escape_html_attr(
                     &serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default(),
                 );
@@ -512,8 +508,13 @@ fn render_field(
 
             // Template for new items (hidden, used by JS)
             let template_name = format!("{name}[__INDEX__]");
-            let template_html =
-                render_form_fields_inner(&items_schema, None, &template_name, ref_options, depth + 1);
+            let template_html = render_form_fields_inner(
+                &items_schema,
+                None,
+                &template_name,
+                ref_options,
+                depth + 1,
+            );
 
             // Array constraints (hint only)
             let mut hints = Vec::new();
@@ -649,9 +650,7 @@ fn form_data_to_json_inner(
                 }
             }
             ("object", _) => form_data_to_json_inner(prop_schema, form, &field_name, depth + 1),
-            ("array", _) => {
-                parse_array_form_data(prop_schema, form, &field_name, depth + 1)
-            }
+            ("array", _) => parse_array_form_data(prop_schema, form, &field_name, depth + 1),
             _ => {
                 // String or fallback
                 let val = form

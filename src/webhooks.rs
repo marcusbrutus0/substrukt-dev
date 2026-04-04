@@ -12,10 +12,7 @@ use crate::state::AppState;
 ///
 /// When `allow_private` is true, private/reserved hosts and IPs are permitted
 /// (useful for testing with local mock servers).
-pub fn validate_webhook_url(
-    raw_url: &str,
-    allow_private: bool,
-) -> std::result::Result<(), String> {
+pub fn validate_webhook_url(raw_url: &str, allow_private: bool) -> std::result::Result<(), String> {
     let parsed = reqwest::Url::parse(raw_url).map_err(|e| format!("Invalid URL: {e}"))?;
 
     // Must be http or https
@@ -396,9 +393,8 @@ mod tests {
 
     #[test]
     fn rejects_cloud_metadata_endpoint() {
-        let err =
-            validate_webhook_url("http://metadata.google.internal/computeMetadata", false)
-                .unwrap_err();
+        let err = validate_webhook_url("http://metadata.google.internal/computeMetadata", false)
+            .unwrap_err();
         assert!(err.contains("Private/reserved host"), "got: {err}");
     }
 
@@ -449,9 +445,7 @@ mod tests {
 
     #[test]
     fn accepts_url_with_path_and_query() {
-        assert!(
-            validate_webhook_url("https://example.com/api/deploy?token=abc", false).is_ok()
-        );
+        assert!(validate_webhook_url("https://example.com/api/deploy?token=abc", false).is_ok());
     }
 
     #[test]
