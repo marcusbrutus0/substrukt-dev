@@ -59,6 +59,7 @@ impl TestServer {
             config,
             templates: reloader,
             cache: content_cache,
+            etag_cache: DashMap::new(),
             login_limiter: RateLimiter::new(100, std::time::Duration::from_secs(60)),
             api_limiter: RateLimiter::new(1000, std::time::Duration::from_secs(60)),
             metrics_handle,
@@ -2093,6 +2094,234 @@ fn extract_hidden_token(html: &str) -> Option<String> {
         }
     }
     None
+}
+
+// ── Upload ETag / 304 tests ───────────────────────────────────────────────────
+
+#[tokio::test]
+async fn upload_api_returns_etag_header() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("etag-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let file_part = reqwest::multipart::Part::bytes(b"etag test content".to_vec())
+        .file_name("test.png")
+        .mime_str("image/png")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+    let resp = api
+        .post(s.url("/api/v1/uploads"))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let hash = body["hash"].as_str().unwrap().to_string();
+
+    let resp = api
+        .get(s.url(&format!("/api/v1/uploads/{hash}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp
+        .headers()
+        .get("etag")
+        .expect("ETag header must be present");
+    assert_eq!(etag.to_str().unwrap(), format!("\"{hash}\""));
+}
+
+#[tokio::test]
+async fn upload_api_returns_304_when_etag_matches() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("304-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let file_part = reqwest::multipart::Part::bytes(b"conditional request content".to_vec())
+        .file_name("test.png")
+        .mime_str("image/png")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+    let resp = api
+        .post(s.url("/api/v1/uploads"))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let hash = body["hash"].as_str().unwrap().to_string();
+
+    let resp = api
+        .get(s.url(&format!("/api/v1/uploads/{hash}")))
+        .bearer_auth(&token)
+        .header("If-None-Match", format!("\"{hash}\""))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+    let etag = resp
+        .headers()
+        .get("etag")
+        .expect("304 must include ETag header");
+    assert_eq!(etag.to_str().unwrap(), format!("\"{hash}\""));
+    assert!(resp.bytes().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn upload_api_returns_200_when_etag_differs() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("etag-mismatch-test").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let file_part = reqwest::multipart::Part::bytes(b"mismatch content".to_vec())
+        .file_name("test.png")
+        .mime_str("image/png")
+        .unwrap();
+    let form = reqwest::multipart::Form::new().part("file", file_part);
+    let resp = api
+        .post(s.url("/api/v1/uploads"))
+        .bearer_auth(&token)
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let hash = body["hash"].as_str().unwrap().to_string();
+
+    let resp = api
+        .get(s.url(&format!("/api/v1/uploads/{hash}")))
+        .bearer_auth(&token)
+        .header("If-None-Match", "\"differenthash\"")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(&resp.bytes().await.unwrap()[..], b"mismatch content");
+}
+
+// ── Content API ETag / 304 tests ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn content_api_get_entry_returns_etag() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("content-etag").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    // Create a schema and entry
+    s.create_schema(BLOG_SCHEMA).await;
+    let entry = serde_json::json!({"title": "Hello", "body": "World"});
+    let resp = api
+        .post(s.url("/api/v1/default/content/blog-posts"))
+        .bearer_auth(&token)
+        .json(&entry)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let id = body["id"].as_str().unwrap().to_string();
+
+    // GET the entry — should include an ETag header
+    let resp = api
+        .get(s.url(&format!("/api/v1/default/content/blog-posts/{id}")))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp
+        .headers()
+        .get("etag")
+        .expect("ETag header must be present")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(etag.starts_with('"') && etag.ends_with('"'));
+
+    // Repeat with If-None-Match — should get 304
+    let resp = api
+        .get(s.url(&format!("/api/v1/default/content/blog-posts/{id}")))
+        .bearer_auth(&token)
+        .header("If-None-Match", &etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
+}
+
+#[tokio::test]
+async fn content_api_list_entries_returns_etag() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("list-etag").await;
+
+    let api = Client::builder()
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    s.create_schema(BLOG_SCHEMA).await;
+
+    // Create an entry (defaults to draft, use status=all to list it)
+    let entry = serde_json::json!({"title": "Post 1"});
+    let resp = api
+        .post(s.url("/api/v1/default/content/blog-posts"))
+        .bearer_auth(&token)
+        .json(&entry)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // GET list — should include ETag
+    let resp = api
+        .get(s.url("/api/v1/default/content/blog-posts?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp
+        .headers()
+        .get("etag")
+        .expect("ETag header must be present on list")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // Repeat with If-None-Match — should get 304
+    let resp = api
+        .get(s.url("/api/v1/default/content/blog-posts?status=all"))
+        .bearer_auth(&token)
+        .header("If-None-Match", &etag)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_MODIFIED);
 }
 
 /// Extract the CSRF token from an HTML page's hidden input or meta tag.
@@ -6368,11 +6597,7 @@ async fn test_openapi_spec_returns_valid_json() {
 
     // No auth required -- should be publicly accessible
     let api = Client::builder().build().unwrap();
-    let resp = api
-        .get(s.url("/api/v1/openapi.json"))
-        .send()
-        .await
-        .unwrap();
+    let resp = api.get(s.url("/api/v1/openapi.json")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     let spec: serde_json::Value = resp.json().await.unwrap();
@@ -6406,11 +6631,7 @@ async fn test_openapi_spec_includes_dynamic_content_routes() {
     s.create_schema(schema_json).await;
 
     let api = Client::builder().build().unwrap();
-    let resp = api
-        .get(s.url("/api/v1/openapi.json"))
-        .send()
-        .await
-        .unwrap();
+    let resp = api.get(s.url("/api/v1/openapi.json")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
     let spec: serde_json::Value = resp.json().await.unwrap();
