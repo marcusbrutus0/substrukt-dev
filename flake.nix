@@ -36,6 +36,32 @@
           vendorHash = "sha256-1BJsEPP5SYZFGCWHLn532IUKlzcGDg5nhrqGWylEHgY=";
           doCheck = false;
         });
+        playwrightDeps = with pkgs; [
+          glib
+          nss
+          nspr
+          atk
+          at-spi2-atk
+          cups.lib
+          dbus
+          libdrm
+          expat
+          libxkbcommon
+          xorg.libX11
+          xorg.libXcomposite
+          xorg.libXdamage
+          xorg.libXext
+          xorg.libXfixes
+          xorg.libXrandr
+          xorg.libxcb
+          mesa
+          pango
+          cairo
+          alsa-lib
+          gtk3
+          systemd
+          libgbm
+        ];
       in
       {
         devShells.default =
@@ -51,6 +77,7 @@
               mdbook
               dolt
               beads-latest
+              nodejs
             ];
 
             buildInputs = [
@@ -58,6 +85,11 @@
               pkg-config
               toolchain
             ];
+
+            shellHook = ''
+              export LD_LIBRARY_PATH="${lib.makeLibraryPath playwrightDeps}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
+            '';
           };
       }
     );
