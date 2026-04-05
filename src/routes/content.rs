@@ -982,8 +982,12 @@ async fn entry_history(
     let version_data: Vec<minijinja::Value> = versions
         .iter()
         .map(|v| {
+            let formatted_time = chrono::DateTime::from_timestamp_millis(v.timestamp as i64)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| v.timestamp.to_string());
             minijinja::context! {
                 timestamp => v.timestamp,
+                formatted_time => formatted_time,
                 size => v.size,
             }
         })
