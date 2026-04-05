@@ -418,6 +418,18 @@ fn render_field(
 {hint_html}</div>
 "#
                 )
+            } else if schema.get("x-control").and_then(|v| v.as_str()) == Some("textarea") {
+                // x-control: textarea extension renders a multi-line textarea
+                let val = escape_html_attr(value.and_then(|v| v.as_str()).unwrap_or(""));
+                let (constraint_attrs, hints) = string_constraints(schema, true);
+                let hint_html = build_hint_line(&hints);
+                format!(
+                    r#"<div class="mb-4">
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
+{hint_html}</div>
+"#
+                )
             } else {
                 let val = escape_html_attr(value.and_then(|v| v.as_str()).unwrap_or(""));
                 let (constraint_attrs, hints) = string_constraints(schema, false);
@@ -1033,6 +1045,85 @@ mod tests {
         let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
         assert!(html.contains("Min 1 item"), "should use singular 'item'");
         assert!(!html.contains("Min 1 items"), "should not use plural for 1");
+    }
+
+    #[test]
+    fn x_control_textarea_renders_textarea() {
+        let schema = json!({
+            "properties": {
+                "body": {
+                    "type": "string",
+                    "title": "Body",
+                    "x-control": "textarea"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains("<textarea"),
+            "x-control: textarea should render a <textarea>"
+        );
+        assert!(
+            !html.contains("<input type=\"text\""),
+            "x-control: textarea should NOT render a text input"
+        );
+        assert!(
+            html.contains("rows=\"6\""),
+            "should have rows attribute"
+        );
+    }
+
+    #[test]
+    fn x_control_textarea_with_constraints() {
+        let schema = json!({
+            "properties": {
+                "body": {
+                    "type": "string",
+                    "title": "Body",
+                    "x-control": "textarea",
+                    "maxLength": 2000,
+                    "pattern": "^[A-Z]"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        assert!(
+            html.contains("<textarea"),
+            "should render textarea"
+        );
+        assert!(
+            html.contains(r#"maxlength="2000""#),
+            "should have maxlength attr"
+        );
+        assert!(
+            !html.contains(r#"pattern="#),
+            "textarea should not have pattern attr (hint only)"
+        );
+        assert!(
+            html.contains("Pattern:"),
+            "should show pattern as hint text"
+        );
+    }
+
+    #[test]
+    fn x_control_textarea_preserves_existing_value() {
+        let schema = json!({
+            "properties": {
+                "body": {
+                    "type": "string",
+                    "title": "Body",
+                    "x-control": "textarea"
+                }
+            }
+        });
+        let data = json!({
+            "body": "Hello world"
+        });
+        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new());
+        assert!(
+            html.contains(">Hello world</textarea>"),
+            "should preserve existing value inside textarea"
+        );
     }
 
     #[test]
