@@ -33,7 +33,7 @@
   <a href="/settings/backups" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Backups</a>
   {% endif %}
   <div class="mt-auto pt-4 border-t border-border-light flex items-center justify-between">
-    <form method="post" action="/logout">
+    <form method="post" action="/logout" hx-boost="false">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <button type="submit" class="text-left px-3 py-2 rounded hover:bg-sidebar-hover text-muted">Logout</button>
     </form>
