@@ -24,6 +24,7 @@ pub fn routes() -> Router<AppState> {
             "/users/invitations/{id}/delete",
             axum::routing::post(delete_invitation),
         )
+        .route("/profile", get(profile_page).post(change_password))
         .route("/audit-log", get(audit_log_page))
         .route("/backups", get(backups_page).post(update_backup_config))
         .route("/backups/trigger", axum::routing::post(trigger_backup))
@@ -40,6 +41,10 @@ async fn users_page(
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
+    let users = models::list_users(&state.pool)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
     let csrf_token = auth::ensure_csrf_token(&session).await;
 
     let inv_data: Vec<minijinja::Value> = invitations
@@ -51,6 +56,18 @@ async fn users_page(
                 role => i.role,
                 created_at => i.created_at,
                 expires_at => i.expires_at,
+            }
+        })
+        .collect();
+
+    let user_data: Vec<minijinja::Value> = users
+        .iter()
+        .map(|u| {
+            minijinja::context! {
+                id => u.id,
+                username => u.username,
+                role => u.role,
+                created_at => u.created_at,
             }
         })
         .collect();
@@ -71,6 +88,7 @@ async fn users_page(
             user_role => user_role,
             current_username => current_username,
             invitations => inv_data,
+            users => user_data,
         })
         .map_err(|e| format!("Render error: {e}"))?;
     Ok(Html(html).into_response())
@@ -152,48 +170,7 @@ async fn invite_user(
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
-    let inv_data: Vec<minijinja::Value> = invitations
-        .iter()
-        .map(|i| {
-            minijinja::context! {
-                id => i.id,
-                email => i.email,
-                role => i.role,
-                created_at => i.created_at,
-                expires_at => i.expires_at,
-            }
-        })
-        .collect();
-
-    let csrf_token = auth::ensure_csrf_token(&session).await;
-    let current_username = auth::current_username(&session).await.unwrap_or_default();
-    let tmpl = state
-        .templates
-        .acquire_env()
-        .map_err(|e| format!("Template env error: {e}"))?;
-    let template = tmpl
-        .get_template("settings/users.html")
-        .map_err(|e| format!("Template error: {e}"))?;
-    let html = template
-        .render(minijinja::context! {
-            base_template => base_for_htmx(is_htmx),
-            csrf_token => csrf_token,
-            user_role => "admin",
-            current_username => current_username,
-            invitations => inv_data,
-            invite_url => invite_url,
-        })
-        .map_err(|e| format!("Render error: {e}"))?;
-    Ok(Html(html).into_response())
-}
-
-async fn render_users_with_error(
-    state: &AppState,
-    session: &Session,
-    is_htmx: bool,
-    error: &str,
-) -> axum::response::Result<axum::response::Response> {
-    let invitations = models::list_pending_invitations(&state.pool)
+    let users = models::list_users(&state.pool)
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
@@ -210,7 +187,83 @@ async fn render_users_with_error(
         })
         .collect();
 
+    let user_data: Vec<minijinja::Value> = users
+        .iter()
+        .map(|u| {
+            minijinja::context! {
+                id => u.id,
+                username => u.username,
+                role => u.role,
+                created_at => u.created_at,
+            }
+        })
+        .collect();
+
+    let csrf_token = auth::ensure_csrf_token(&session).await;
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("settings/users.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            csrf_token => csrf_token,
+            user_role => user_role,
+            current_username => current_username,
+            invitations => inv_data,
+            users => user_data,
+            invite_url => invite_url,
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html).into_response())
+}
+
+async fn render_users_with_error(
+    state: &AppState,
+    session: &Session,
+    is_htmx: bool,
+    error: &str,
+) -> axum::response::Result<axum::response::Response> {
+    let invitations = models::list_pending_invitations(&state.pool)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let users = models::list_users(&state.pool)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let inv_data: Vec<minijinja::Value> = invitations
+        .iter()
+        .map(|i| {
+            minijinja::context! {
+                id => i.id,
+                email => i.email,
+                role => i.role,
+                created_at => i.created_at,
+                expires_at => i.expires_at,
+            }
+        })
+        .collect();
+
+    let user_data: Vec<minijinja::Value> = users
+        .iter()
+        .map(|u| {
+            minijinja::context! {
+                id => u.id,
+                username => u.username,
+                role => u.role,
+                created_at => u.created_at,
+            }
+        })
+        .collect();
+
     let csrf_token = auth::ensure_csrf_token(session).await;
+    let user_role = auth::current_user_role(session).await.unwrap_or_default();
     let current_username = auth::current_username(session).await.unwrap_or_default();
     let tmpl = state
         .templates
@@ -223,13 +276,118 @@ async fn render_users_with_error(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
-            user_role => "admin",
+            user_role => user_role,
             current_username => current_username,
             invitations => inv_data,
+            users => user_data,
             error => error,
         })
         .map_err(|e| format!("Render error: {e}"))?;
     Ok(Html(html).into_response())
+}
+
+async fn profile_page(
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+) -> axum::response::Result<axum::response::Response> {
+    let user_id = auth::current_user_id(&session)
+        .await
+        .ok_or("Not authenticated")?;
+
+    let user = models::find_user_by_id(&state.pool, user_id)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?
+        .ok_or("User not found")?;
+
+    let csrf_token = auth::ensure_csrf_token(&session).await;
+    let (flash_kind, flash_message) = match auth::take_flash(&session).await {
+        Some((kind, msg)) => (kind, msg),
+        None => (String::new(), String::new()),
+    };
+    let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
+
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("settings/profile.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            csrf_token => csrf_token,
+            user_role => user_role,
+            current_username => current_username,
+            username => user.username,
+            flash_kind => flash_kind,
+            flash_message => flash_message,
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html).into_response())
+}
+
+#[derive(serde::Deserialize)]
+struct ChangePasswordForm {
+    current_password: String,
+    new_password: String,
+    confirm_password: String,
+}
+
+async fn change_password(
+    State(state): State<AppState>,
+    session: Session,
+    Form(form): Form<ChangePasswordForm>,
+) -> axum::response::Result<axum::response::Redirect> {
+    let user_id = auth::current_user_id(&session)
+        .await
+        .ok_or("Not authenticated")?;
+
+    // Validate new password length
+    if form.new_password.len() < 8 {
+        auth::set_flash(
+            &session,
+            "error",
+            "New password must be at least 8 characters",
+        )
+        .await;
+        return Ok(axum::response::Redirect::to("/settings/profile"));
+    }
+
+    // Confirm passwords match
+    if form.new_password != form.confirm_password {
+        auth::set_flash(&session, "error", "New passwords do not match").await;
+        return Ok(axum::response::Redirect::to("/settings/profile"));
+    }
+
+    // Verify current password
+    let user = models::find_user_by_id(&state.pool, user_id)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?
+        .ok_or("User not found")?;
+
+    if !user.verify_password(&form.current_password) {
+        auth::set_flash(&session, "error", "Current password is incorrect").await;
+        return Ok(axum::response::Redirect::to("/settings/profile"));
+    }
+
+    // Update password
+    models::update_user_password(&state.pool, user_id, &form.new_password)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    state.audit.log(
+        &user_id.to_string(),
+        "password_changed",
+        "user",
+        &user_id.to_string(),
+        None,
+    );
+
+    auth::set_flash(&session, "success", "Password updated successfully").await;
+    Ok(axum::response::Redirect::to("/settings/profile"))
 }
 
 async fn delete_invitation(

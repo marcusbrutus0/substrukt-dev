@@ -1,0 +1,45 @@
+{% extends base_template %}
+{% block title %}Profile — Substrukt{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold tracking-tight mb-6">Profile</h1>
+
+{% if flash_message %}
+<div class="p-4 rounded mb-6 text-sm border
+  {% if flash_kind == 'success' %}bg-success-soft border-success text-success
+  {% elif flash_kind == 'error' %}bg-danger-soft border-danger text-danger
+  {% else %}bg-card-alt border-border-light text-primary{% endif %}">
+  {{ flash_message }}
+</div>
+{% endif %}
+
+<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
+  <h2 class="text-lg font-medium mb-4">Account</h2>
+  <div class="text-sm text-muted mb-1">Username</div>
+  <div class="text-primary font-medium mb-4">{{ username }}</div>
+</div>
+
+<div class="bg-card border border-border-light rounded-lg p-6">
+  <h2 class="text-lg font-medium mb-4">Change Password</h2>
+  <form method="post" action="/settings/profile" class="space-y-4 max-w-md">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <div>
+      <label class="block text-sm font-medium text-muted mb-1" for="current_password">Current Password</label>
+      <input type="password" id="current_password" name="current_password" required
+        class="w-full px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-muted mb-1" for="new_password">New Password</label>
+      <input type="password" id="new_password" name="new_password" required minlength="8"
+        class="w-full px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-muted mb-1" for="confirm_password">Confirm New Password</label>
+      <input type="password" id="confirm_password" name="confirm_password" required minlength="8"
+        class="w-full px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+    </div>
+    <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
+      Update Password
+    </button>
+  </form>
+</div>
+{% endblock %}

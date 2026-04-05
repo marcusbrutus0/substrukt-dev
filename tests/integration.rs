@@ -6659,3 +6659,126 @@ async fn test_openapi_spec_includes_dynamic_content_routes() {
         "Expected title property in request schema"
     );
 }
+
+// ── User Management Tests ─────────────────────────────────────
+
+#[tokio::test]
+async fn users_page_lists_registered_users() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s.client.get(s.url("/settings/users")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+
+    assert!(body.contains("Registered Users"));
+    assert!(body.contains(">admin<"));
+}
+
+#[tokio::test]
+async fn profile_page_accessible() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s
+        .client
+        .get(s.url("/settings/profile"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Profile"));
+    assert!(body.contains("Change Password"));
+    assert!(body.contains("admin"));
+}
+
+#[tokio::test]
+async fn change_password_success() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/profile").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/profile"))
+        .form(&[
+            ("_csrf", csrf.as_str()),
+            ("current_password", "testpassword"),
+            ("new_password", "newpassword123"),
+            ("confirm_password", "newpassword123"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let resp = s
+        .client
+        .get(s.url("/settings/profile"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Password updated successfully"));
+}
+
+#[tokio::test]
+async fn change_password_wrong_current() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/profile").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/profile"))
+        .form(&[
+            ("_csrf", csrf.as_str()),
+            ("current_password", "wrongpassword"),
+            ("new_password", "newpassword123"),
+            ("confirm_password", "newpassword123"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let resp = s
+        .client
+        .get(s.url("/settings/profile"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Current password is incorrect"));
+}
+
+#[tokio::test]
+async fn change_password_mismatch() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/profile").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/profile"))
+        .form(&[
+            ("_csrf", csrf.as_str()),
+            ("current_password", "testpassword"),
+            ("new_password", "newpassword123"),
+            ("confirm_password", "differentpassword"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let resp = s
+        .client
+        .get(s.url("/settings/profile"))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("New passwords do not match"));
+}
