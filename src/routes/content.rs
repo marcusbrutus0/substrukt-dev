@@ -115,6 +115,7 @@ async fn list_entries(
     let column_headers: Vec<&str> = columns.iter().map(|(_, label)| label.as_str()).collect();
 
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let flash = auth::take_flash(&session).await;
     let tmpl = state
         .templates
@@ -128,6 +129,7 @@ async fn list_entries(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             schema_title => schema_file.meta.title,
@@ -285,6 +287,7 @@ async fn new_entry_page(
     auth::require_role(&session, "editor").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
     let schema_file = schema::get_schema(&schemas_dir, &schema_slug)
         .map_err(|e| format!("Error: {e}"))?
@@ -313,6 +316,7 @@ async fn new_entry_page(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             schema_title => schema_file.meta.title,
@@ -363,6 +367,7 @@ async fn edit_entry_page(
     );
 
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -376,6 +381,7 @@ async fn edit_entry_page(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             schema_title => schema_file.meta.title,
@@ -451,6 +457,7 @@ async fn create_entry(
     if let Err(errors) = content::validate_content(&schema_file, &data) {
         let csrf_token = auth::ensure_csrf_token(&session).await;
         let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+        let current_username = auth::current_username(&session).await.unwrap_or_default();
         let ref_options =
             build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
         let form_html =
@@ -461,6 +468,7 @@ async fn create_entry(
                 base_template => base_for_htmx(is_htmx),
                 csrf_token => csrf_token,
                 user_role => user_role,
+                current_username => current_username,
                 app => app.template_context(),
                 nav_schemas => app.nav_schemas(&state.config),
                 schema_title => schema_file.meta.title,
@@ -565,6 +573,7 @@ async fn update_entry(
     if let Err(errors) = content::validate_content(&schema_file, &data) {
         let csrf_token = auth::ensure_csrf_token(&session).await;
         let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+        let current_username = auth::current_username(&session).await.unwrap_or_default();
         let ref_options =
             build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
         let form_html =
@@ -575,6 +584,7 @@ async fn update_entry(
                 base_template => base_for_htmx(is_htmx),
                 csrf_token => csrf_token,
                 user_role => user_role,
+                current_username => current_username,
                 app => app.template_context(),
                 nav_schemas => app.nav_schemas(&state.config),
                 schema_title => schema_file.meta.title,
@@ -746,6 +756,7 @@ async fn publish_entry(
     if is_htmx {
         let csrf_token = auth::ensure_csrf_token(&session).await;
         let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+        let current_username = auth::current_username(&session).await.unwrap_or_default();
         let tmpl = state
             .templates
             .acquire_env()
@@ -759,6 +770,7 @@ async fn publish_entry(
             .render(minijinja::context! {
                 csrf_token => csrf_token,
                 user_role => user_role,
+                current_username => current_username,
                 app => app.template_context(),
                 schema_slug => schema_slug,
                 entry_id => entry_id,
@@ -833,6 +845,7 @@ async fn unpublish_entry(
     if is_htmx {
         let csrf_token = auth::ensure_csrf_token(&session).await;
         let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+        let current_username = auth::current_username(&session).await.unwrap_or_default();
         let tmpl = state
             .templates
             .acquire_env()
@@ -846,6 +859,7 @@ async fn unpublish_entry(
             .render(minijinja::context! {
                 csrf_token => csrf_token,
                 user_role => user_role,
+                current_username => current_username,
                 app => app.template_context(),
                 schema_slug => schema_slug,
                 entry_id => entry_id,
@@ -994,6 +1008,7 @@ async fn entry_history(
         .collect();
 
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -1006,6 +1021,7 @@ async fn entry_history(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             schema_title => schema_file.meta.title,

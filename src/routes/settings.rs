@@ -56,6 +56,7 @@ async fn users_page(
         .collect();
 
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -68,6 +69,7 @@ async fn users_page(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             invitations => inv_data,
         })
         .map_err(|e| format!("Render error: {e}"))?;
@@ -164,6 +166,7 @@ async fn invite_user(
         .collect();
 
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -175,6 +178,7 @@ async fn invite_user(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            current_username => current_username,
             invitations => inv_data,
             invite_url => invite_url,
         })
@@ -206,6 +210,7 @@ async fn render_users_with_error(
         .collect();
 
     let csrf_token = auth::ensure_csrf_token(session).await;
+    let current_username = auth::current_username(session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -217,6 +222,7 @@ async fn render_users_with_error(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            current_username => current_username,
             invitations => inv_data,
             error => error,
         })
@@ -337,6 +343,7 @@ async fn audit_log_page(
     };
 
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -348,6 +355,7 @@ async fn audit_log_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             user_role => user_role,
+            current_username => current_username,
             entries => entry_data,
             actors => actor_options,
             filter_action => filter.action,
@@ -455,6 +463,7 @@ async fn backups_page(
 
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
 
     let latest_ctx = latest_backup.as_ref().map(|b| {
         minijinja::context! {
@@ -491,6 +500,7 @@ async fn backups_page(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             config => minijinja::context! {
                 frequency_hours => config.frequency_hours,
                 retention_count => config.retention_count,

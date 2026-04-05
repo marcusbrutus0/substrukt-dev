@@ -52,6 +52,7 @@ async fn list_apps(
 ) -> axum::response::Result<Html<String>> {
     let user_id = auth::current_user_id(&session).await.unwrap_or(0);
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let flash = auth::take_flash(&session).await;
 
@@ -93,6 +94,7 @@ async fn list_apps(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             apps => app_data,
             flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
             flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
@@ -109,6 +111,7 @@ async fn new_app_form(
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
 
     let tmpl = state
         .templates
@@ -122,6 +125,7 @@ async fn new_app_form(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
         })
         .map_err(|e| format!("Render error: {e}"))?;
     Ok(Html(html))
@@ -188,6 +192,7 @@ async fn app_settings(
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let flash = auth::take_flash(&session).await;
 
     let users = models::list_app_users(&state.pool, app.app.id)
@@ -233,6 +238,7 @@ async fn app_settings(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             users => user_data,
@@ -402,6 +408,7 @@ async fn data_page(
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let flash = auth::take_flash(&session).await;
 
     let data_result = flash.as_ref().and_then(|(k, v)| {
@@ -424,6 +431,7 @@ async fn data_page(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             data_result => data_result,

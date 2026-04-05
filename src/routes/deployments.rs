@@ -51,6 +51,7 @@ async fn list_deployments(
     auth::require_role(&session, "editor").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let flash = auth::take_flash(&session).await;
 
     let deployments = state
@@ -129,6 +130,7 @@ async fn list_deployments(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             deployments => deployment_data,
@@ -149,6 +151,7 @@ async fn new_deployment_form(
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
 
     let tmpl = state
         .templates
@@ -162,6 +165,7 @@ async fn new_deployment_form(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             editing => false,
@@ -268,6 +272,7 @@ async fn edit_deployment_form(
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
 
     let dep = state
         .audit
@@ -297,6 +302,7 @@ async fn edit_deployment_form(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             editing => true,
@@ -552,6 +558,7 @@ async fn render_form_with_error(
 ) -> axum::response::Result<axum::response::Response> {
     let csrf_token = auth::ensure_csrf_token(session).await;
     let user_role = auth::current_user_role(session).await.unwrap_or_default();
+    let current_username = auth::current_username(session).await.unwrap_or_default();
 
     let tmpl = state
         .templates
@@ -581,6 +588,7 @@ async fn render_form_with_error(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             editing => editing,

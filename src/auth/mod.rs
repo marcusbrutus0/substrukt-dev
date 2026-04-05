@@ -13,16 +13,26 @@ use crate::state::AppState;
 
 const USER_ID_KEY: &str = "user_id";
 const USER_ROLE_KEY: &str = "user_role";
+const USERNAME_KEY: &str = "username";
 const FLASH_KEY: &str = "_flash";
 const CSRF_KEY: &str = "_csrf";
 
-pub async fn login_user(session: &Session, user_id: i64, role: &str) -> eyre::Result<()> {
+pub async fn login_user(
+    session: &Session,
+    user_id: i64,
+    role: &str,
+    username: &str,
+) -> eyre::Result<()> {
     session
         .insert(USER_ID_KEY, user_id)
         .await
         .map_err(|e| eyre::eyre!("Session insert error: {e}"))?;
     session
         .insert(USER_ROLE_KEY, role)
+        .await
+        .map_err(|e| eyre::eyre!("Session insert error: {e}"))?;
+    session
+        .insert(USERNAME_KEY, username)
         .await
         .map_err(|e| eyre::eyre!("Session insert error: {e}"))?;
     Ok(())
@@ -42,6 +52,10 @@ pub async fn current_user_id(session: &Session) -> Option<i64> {
 
 pub async fn current_user_role(session: &Session) -> Option<String> {
     session.get::<String>(USER_ROLE_KEY).await.ok().flatten()
+}
+
+pub async fn current_username(session: &Session) -> Option<String> {
+    session.get::<String>(USERNAME_KEY).await.ok().flatten()
 }
 
 /// Check that the current user has at least the given role level.

@@ -191,6 +191,7 @@ async fn list_uploads(
         .collect();
 
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let env = state
         .templates
         .acquire_env()
@@ -203,6 +204,7 @@ async fn list_uploads(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             uploads => upload_rows,

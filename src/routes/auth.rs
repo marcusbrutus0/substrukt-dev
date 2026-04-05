@@ -63,7 +63,7 @@ async fn login_submit(
     let user = models::find_user_by_username(&state.pool, &form.username).await;
     match user {
         Ok(Some(user)) if user.verify_password(&form.password) => {
-            if let Err(e) = auth::login_user(&session, user.id, &user.role).await {
+            if let Err(e) = auth::login_user(&session, user.id, &user.role, &user.username).await {
                 tracing::error!("Failed to create session: {e}");
                 return Redirect::to("/login").into_response();
             }
@@ -170,7 +170,7 @@ async fn setup_submit(
 
     match models::create_user(&state.pool, &form.username, &form.password, "admin").await {
         Ok(user) => {
-            let _ = auth::login_user(&session, user.id, &user.role).await;
+            let _ = auth::login_user(&session, user.id, &user.role, &user.username).await;
             state.audit.log(
                 &user.id.to_string(),
                 "user_create",
@@ -335,7 +335,7 @@ async fn signup_submit(
                 }
             }
             // Auto-login
-            let _ = auth::login_user(&session, user.id, &user.role).await;
+            let _ = auth::login_user(&session, user.id, &user.role, &user.username).await;
             state.audit.log(
                 &user.id.to_string(),
                 "user_create",

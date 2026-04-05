@@ -52,6 +52,7 @@ async fn list_schemas(
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let flash = auth::take_flash(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -64,6 +65,7 @@ async fn list_schemas(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             schemas => schema_data,
@@ -83,6 +85,7 @@ async fn new_schema_page(
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let default_schema = serde_json::json!({
         "x-substrukt": {
             "title": "",
@@ -106,6 +109,7 @@ async fn new_schema_page(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             is_new => true,
@@ -218,6 +222,7 @@ async fn edit_schema_page(
     auth::require_role(&session, "admin").await?;
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
+    let current_username = auth::current_username(&session).await.unwrap_or_default();
     let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
     let schema = schema::get_schema(&schemas_dir, &slug)
         .map_err(|e| format!("Error: {e}"))?
@@ -235,6 +240,7 @@ async fn edit_schema_page(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             is_new => false,
@@ -343,6 +349,7 @@ async fn render_schema_edit(
 ) -> axum::response::Result<Html<String>> {
     let csrf_token = auth::ensure_csrf_token(session).await;
     let user_role = auth::current_user_role(session).await.unwrap_or_default();
+    let current_username = auth::current_username(session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -355,6 +362,7 @@ async fn render_schema_edit(
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
             user_role => user_role,
+            current_username => current_username,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             is_new => is_new,

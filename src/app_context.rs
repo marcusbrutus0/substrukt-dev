@@ -112,8 +112,7 @@ impl FromRequestParts<AppState> for AppContext {
                     (StatusCode::INTERNAL_SERVER_ERROR, Html(html)).into_response()
                 })?;
             if !has_access {
-                let html =
-                    render_error(state, 403, "You do not have access to this app", is_htmx);
+                let html = render_error(state, 403, "You do not have access to this app", is_htmx);
                 return Err((StatusCode::FORBIDDEN, Html(html)).into_response());
             }
         }
