@@ -33,13 +33,13 @@ pub fn routes() -> Router<AppState> {
             "/{app_slug}/settings/tokens/{token_id}/delete",
             axum::routing::post(delete_token),
         )
-        .route("/{app_slug}/settings/data", get(data_page))
+        .route("/{app_slug}/data", get(data_page))
         .route(
-            "/{app_slug}/settings/data/import",
+            "/{app_slug}/data/import",
             axum::routing::post(import_data),
         )
         .route(
-            "/{app_slug}/settings/data/export",
+            "/{app_slug}/data/export",
             axum::routing::post(export_data),
         )
         .route("/{app_slug}/delete", axum::routing::post(delete_app))
@@ -452,6 +452,9 @@ async fn import_data(
     let data = loop {
         match multipart.next_field().await {
             Ok(Some(field)) => {
+                if field.name() != Some("bundle") {
+                    continue;
+                }
                 let bytes = field
                     .bytes()
                     .await
@@ -467,7 +470,7 @@ async fn import_data(
                     &serde_json::json!({"status": "error", "message": "No file provided", "warnings": []}).to_string(),
                 ).await;
                 return Ok(
-                    Redirect::to(&format!("/apps/{}/settings/data", app.app.slug)).into_response(),
+                    Redirect::to(&format!("/apps/{}/data", app.app.slug)).into_response(),
                 );
             }
             Err(e) => {
@@ -477,7 +480,7 @@ async fn import_data(
                     &serde_json::json!({"status": "error", "message": e.to_string(), "warnings": []}).to_string(),
                 ).await;
                 return Ok(
-                    Redirect::to(&format!("/apps/{}/settings/data", app.app.slug)).into_response(),
+                    Redirect::to(&format!("/apps/{}/data", app.app.slug)).into_response(),
                 );
             }
         }
@@ -530,7 +533,7 @@ async fn import_data(
         }
     }
 
-    Ok(Redirect::to(&format!("/apps/{}/settings/data", app.app.slug)).into_response())
+    Ok(Redirect::to(&format!("/apps/{}/data", app.app.slug)).into_response())
 }
 
 async fn export_data(
@@ -577,13 +580,13 @@ async fn export_data(
                 Err(e) => {
                     let _ = std::fs::remove_file(&tmp);
                     auth::set_flash(&session, "error", &format!("Export failed: {e}")).await;
-                    Redirect::to(&format!("/apps/{}/settings/data", app.app.slug)).into_response()
+                    Redirect::to(&format!("/apps/{}/data", app.app.slug)).into_response()
                 }
             },
             Err(e) => {
                 let _ = std::fs::remove_file(&tmp);
                 auth::set_flash(&session, "error", &format!("Export failed: {e}")).await;
-                Redirect::to(&format!("/apps/{}/settings/data", app.app.slug)).into_response()
+                Redirect::to(&format!("/apps/{}/data", app.app.slug)).into_response()
             }
         },
     )
