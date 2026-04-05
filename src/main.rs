@@ -89,6 +89,10 @@ enum Command {
         #[arg(long)]
         app: String,
     },
+    /// Output AI-optimized workflow context for LLM agents
+    Prime,
+    /// Output a minimal snippet for AGENTS.md / CLAUDE.md
+    Onboard,
 }
 
 #[tokio::main]
@@ -115,6 +119,14 @@ async fn main() -> eyre::Result<()> {
     config.ensure_dirs()?;
 
     match cli.command.unwrap_or(Command::Serve) {
+        Command::Prime => {
+            print!("{}", substrukt::prime::prime_output(&config));
+            Ok(())
+        }
+        Command::Onboard => {
+            print!("{}", substrukt::prime::onboard_output());
+            Ok(())
+        }
         Command::Serve => run_server(config, api_rate_limit).await,
         Command::Import { path, app } => {
             let pool = db::init_pool(&config.db_path).await?;
