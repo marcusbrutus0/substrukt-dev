@@ -8,6 +8,28 @@ use axum::{
 };
 use tower_sessions::Session;
 
+/// Return a redirect response that works correctly with htmx.
+/// If the request came from htmx (has HX-Request header), returns a 200 with
+/// HX-Redirect header so htmx performs a full page navigation instead of
+/// swapping the response into the content area.
+/// Otherwise, returns a standard HTTP redirect.
+fn htmx_aware_redirect(request: &Request, location: &str) -> Response {
+    let is_htmx = request.headers().get("HX-Request").is_some();
+    if is_htmx {
+        (
+            [(
+                axum::http::header::HeaderName::from_static("hx-redirect"),
+                axum::http::header::HeaderValue::from_str(location)
+                    .expect("redirect location is valid header value"),
+            )],
+            "",
+        )
+            .into_response()
+    } else {
+        Redirect::to(location).into_response()
+    }
+}
+
 use crate::db::models;
 use crate::state::AppState;
 
@@ -218,7 +240,7 @@ pub async fn require_auth(State(state): State<AppState>, request: Request, next:
     // Check if any users exist
     let user_count = models::user_count(&state.pool).await.unwrap_or(0);
     if user_count == 0 {
-        return Redirect::to("/setup").into_response();
+        return htmx_aware_redirect(&request, "/setup");
     }
 
     // Check session - get from request extensions
@@ -226,11 +248,11 @@ pub async fn require_auth(State(state): State<AppState>, request: Request, next:
     match session {
         Some(session) => {
             if current_user_id(&session).await.is_none() {
-                return Redirect::to("/login").into_response();
+                return htmx_aware_redirect(&request, "/login");
             }
         }
         None => {
-            return Redirect::to("/login").into_response();
+            return htmx_aware_redirect(&request, "/login");
         }
     }
 
