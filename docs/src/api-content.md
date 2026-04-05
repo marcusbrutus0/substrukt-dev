@@ -1,18 +1,20 @@
 # Content API
 
-Full CRUD for content entries. Endpoints differ slightly for [collection vs single](./single-vs-collection.md) schemas.
+Full CRUD for content entries. All endpoints are scoped to an app. Endpoints differ slightly for [collection vs single](./single-vs-collection.md) schemas.
 
 ## Collection endpoints
 
 ### List entries
 
 ```
-GET /api/v1/content/:schema_slug
+GET /api/v1/apps/:app_slug/content/:schema_slug
 ```
+
+By default, only published entries are returned. Use `?status=all` to include drafts, or `?status=draft` for drafts only. Use `?q=search` to filter entries by text.
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" \
-  http://localhost:3000/api/v1/content/blog-posts
+  http://localhost:3000/api/v1/apps/my-app/content/blog-posts
 ```
 
 Response:
@@ -33,12 +35,12 @@ Response:
 ### Get an entry
 
 ```
-GET /api/v1/content/:schema_slug/:entry_id
+GET /api/v1/apps/:app_slug/content/:schema_slug/:entry_id
 ```
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" \
-  http://localhost:3000/api/v1/content/blog-posts/my-first-post
+  http://localhost:3000/api/v1/apps/my-app/content/blog-posts/my-first-post
 ```
 
 Response -- the entry data directly (no wrapper):
@@ -56,16 +58,18 @@ Returns `404` if the entry does not exist.
 ### Create an entry
 
 ```
-POST /api/v1/content/:schema_slug
+POST /api/v1/apps/:app_slug/content/:schema_slug
 Content-Type: application/json
 ```
+
+Requires editor role or above.
 
 ```sh
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title": "New Post", "body": "Content here"}' \
-  http://localhost:3000/api/v1/content/blog-posts
+  http://localhost:3000/api/v1/apps/my-app/content/blog-posts
 ```
 
 Response (`201 Created`):
@@ -89,16 +93,18 @@ Validation errors return `400`:
 ### Update an entry
 
 ```
-PUT /api/v1/content/:schema_slug/:entry_id
+PUT /api/v1/apps/:app_slug/content/:schema_slug/:entry_id
 Content-Type: application/json
 ```
+
+Requires editor role or above. A version history snapshot is saved before updating.
 
 ```sh
 curl -X PUT \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"title": "Updated Post", "body": "New content", "published": true}' \
-  http://localhost:3000/api/v1/content/blog-posts/new-post
+  http://localhost:3000/api/v1/apps/my-app/content/blog-posts/new-post
 ```
 
 Returns `200 OK` on success.
@@ -106,16 +112,27 @@ Returns `200 OK` on success.
 ### Delete an entry
 
 ```
-DELETE /api/v1/content/:schema_slug/:entry_id
+DELETE /api/v1/apps/:app_slug/content/:schema_slug/:entry_id
 ```
+
+Requires editor role or above.
 
 ```sh
 curl -X DELETE \
   -H "Authorization: Bearer $TOKEN" \
-  http://localhost:3000/api/v1/content/blog-posts/new-post
+  http://localhost:3000/api/v1/apps/my-app/content/blog-posts/new-post
 ```
 
 Returns `204 No Content` on success.
+
+### Publish / Unpublish
+
+```
+POST /api/v1/apps/:app_slug/content/:schema_slug/:entry_id/publish
+POST /api/v1/apps/:app_slug/content/:schema_slug/:entry_id/unpublish
+```
+
+See [Deployments API](./api-publish.md) for details.
 
 ## Single endpoints
 
@@ -124,18 +141,18 @@ For schemas with `kind: "single"`, use the `/single` endpoints instead:
 ### Get
 
 ```
-GET /api/v1/content/:schema_slug/single
+GET /api/v1/apps/:app_slug/content/:schema_slug/single
 ```
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" \
-  http://localhost:3000/api/v1/content/site-settings/single
+  http://localhost:3000/api/v1/apps/my-app/content/site-settings/single
 ```
 
 ### Create or update
 
 ```
-PUT /api/v1/content/:schema_slug/single
+PUT /api/v1/apps/:app_slug/content/:schema_slug/single
 Content-Type: application/json
 ```
 
@@ -144,13 +161,13 @@ curl -X PUT \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"site_name": "My Site", "tagline": "A great site"}' \
-  http://localhost:3000/api/v1/content/site-settings/single
+  http://localhost:3000/api/v1/apps/my-app/content/site-settings/single
 ```
 
 ### Delete
 
 ```
-DELETE /api/v1/content/:schema_slug/single
+DELETE /api/v1/apps/:app_slug/content/:schema_slug/single
 ```
 
 ## Working with uploads in content

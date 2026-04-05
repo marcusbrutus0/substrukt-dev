@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Substrukt is a schema-driven CMS built in Rust. Users define JSON Schemas, then edit data conforming to those schemas through a web UI. Data is stored as JSON files on disk (with in-memory caching) and served via an API. The CMS also supports file uploads via a custom `upload` type in schemas. User accounts and other project-independent data live in SQLite via sqlx.
+Substrukt is a schema-driven CMS built in Rust with multi-app support. Users define JSON Schemas, then edit data conforming to those schemas through a web UI. Data is stored as JSON files on disk (with in-memory caching) and served via a REST API scoped per app. The CMS also supports file uploads via a custom `upload` type in schemas, per-entry draft/published status, version history, configurable deployment webhooks, and S3-compatible backups. User accounts and other project-independent data live in SQLite via sqlx.
 
 ## Tech Stack
 
@@ -48,12 +48,15 @@ cargo clippy
 
 **Data flow**: JSON Schema → UI form generation → JSON file on disk → served via API
 
+- **Apps** provide isolated content spaces within a single instance. Each app has its own schemas, content, uploads, and deployment targets. Data lives at `data/<app-slug>/`.
 - **Schemas** define the structure of content types. The `upload` type is a custom extension for file uploads.
-- **Content** is persisted as JSON files, read into memory for caching, and served from cache.
-- **SQLite** (via sqlx) handles only base infrastructure: users, sessions, auth, API tokens. Not content.
-- **API access**: All content is also available via a REST API, authenticated with bearer tokens. Users create/manage tokens through the UI; tokens are stored in SQLite.
+- **Content** is persisted as JSON files, read into memory for caching, and served from cache. Entries have draft/published status and version history.
+- **SQLite** (via sqlx) handles infrastructure: users, sessions, auth, API tokens, apps, upload metadata. Not content.
+- **API access**: All content is available via a REST API at `/api/v1/apps/<app-slug>/...`, authenticated with bearer tokens scoped to apps. Role-based access control (admin, editor, viewer).
+- **Deployments**: Admin-managed webhook targets per app, with optional auto-deploy on content changes. Replaces old CLI webhook flags.
 - **UI** is server-rendered with minijinja templates, enhanced with htmx for interactivity. twind provides styling without a build step.
-- **Sync/transfer**: The CMS supports exporting and importing a full project bundle (schemas, data, uploads) so that local changes can be pushed to a cloud-deployed instance. The target workflow is a GitHub Action that syncs content as part of the push/release cycle.
+- **Sync/transfer**: The CMS supports exporting and importing a full app bundle (schemas, data, uploads) so that local changes can be pushed to a cloud-deployed instance.
+- **Backups**: S3-compatible backup system with scheduled frequency, retention policies, and manual trigger.
 
 ## Working Notes
 

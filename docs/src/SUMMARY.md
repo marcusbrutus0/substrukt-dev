@@ -13,7 +13,7 @@
 - [Content Management](./content-management.md)
 - [File Uploads](./uploads.md)
 - [Import and Export](./import-export.md)
-- [Webhooks](./webhooks.md)
+- [Deployments](./webhooks.md)
 
 # API Reference
 
@@ -22,7 +22,7 @@
 - [Content API](./api-content.md)
 - [Uploads API](./api-uploads.md)
 - [Sync API](./api-sync.md)
-- [Publish API](./api-publish.md)
+- [Deployments API](./api-publish.md)
 
 # Operations
 

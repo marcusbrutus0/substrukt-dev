@@ -28,15 +28,15 @@ The server starts on `http://localhost:3000` by default.
 
 ## First-run setup
 
-On your first visit, Substrukt redirects you to `/setup` where you create an admin account. This only happens once -- when there are no users in the database.
+On your first visit, Substrukt redirects you to `/setup` where you create an admin account. This only happens once -- when there are no users in the database. A default app is created automatically.
 
 1. Open `http://localhost:3000` in your browser
 2. Enter a username and password on the setup page
-3. You are logged in and redirected to the dashboard
+3. You are logged in and redirected to the apps dashboard
 
 ## Create your first schema
 
-Navigate to **Schemas** in the sidebar and click **New Schema**. Paste in a JSON Schema definition:
+Navigate to your app, then click **Schemas** in the sidebar and click **New Schema**. Paste in a JSON Schema definition:
 
 ```json
 {
@@ -59,12 +59,12 @@ Click **Save**. The new content type appears in the sidebar.
 
 ## Create content
 
-Click **Blog Posts** in the sidebar. Click **New Entry**. Fill in the form fields that were generated from your schema and save. The entry is stored as a JSON file at `data/content/blog-posts/<id>.json`.
+Click **Blog Posts** in the sidebar. Click **New Entry**. Fill in the form fields that were generated from your schema and save. The entry is stored as a JSON file at `data/default/content/blog-posts/<id>.json`.
 
 ## Access via API
 
-Create an API token in **Settings > API Tokens**. Use it to fetch content:
+Create an API token in your app's **Settings > API Tokens** page. Use it to fetch content:
 
 ```sh
-curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:3000/api/v1/content/blog-posts
+curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:3000/api/v1/apps/default/content/blog-posts
 ```

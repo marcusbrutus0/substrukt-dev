@@ -1,19 +1,19 @@
 # Sync API
 
-Export and import content bundles via the API.
+Export and import content bundles via the API. All sync endpoints are scoped to an app and require admin role.
 
 ## Export
 
 ```
-POST /api/v1/export
+POST /api/v1/apps/:app_slug/export
 ```
 
-Downloads a tar.gz bundle containing all schemas, content, and uploads.
+Downloads a tar.gz bundle containing all schemas, content, and uploads for the app.
 
 ```sh
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
-  http://localhost:3000/api/v1/export \
+  http://localhost:3000/api/v1/apps/my-app/export \
   -o backup.tar.gz
 ```
 
@@ -27,17 +27,17 @@ Content-Disposition: attachment; filename="bundle.tar.gz"
 ## Import
 
 ```
-POST /api/v1/import
+POST /api/v1/apps/:app_slug/import
 Content-Type: multipart/form-data
 ```
 
-Uploads and extracts a tar.gz bundle, replacing existing content.
+Uploads and extracts a tar.gz bundle, replacing existing app content.
 
 ```sh
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -F "bundle=@backup.tar.gz" \
-  http://localhost:3000/api/v1/import
+  http://localhost:3000/api/v1/apps/my-app/import
 ```
 
 Response:

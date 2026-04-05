@@ -48,7 +48,7 @@ Per-IP sliding window rate limiters protect against brute force and abuse:
 | Login (`/login`) | 10 requests | 1 minute |
 | API (`/api/v1/*`) | 100 requests | 1 minute |
 
-The client IP is determined from the `X-Forwarded-For` header (first IP in the chain). Configure your reverse proxy to set this header correctly.
+The API rate limit is configurable via `--api-rate-limit` (default: 100). The client IP is determined from the `X-Forwarded-For` header when `--trust-proxy-headers` is enabled. Without this flag, a single global bucket is used.
 
 When rate limited, login returns an error page and the API returns `429 Too Many Requests`.
 

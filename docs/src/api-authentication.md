@@ -7,14 +7,16 @@ All API endpoints under `/api/v1/` require a bearer token in the `Authorization`
 ### Via the UI
 
 1. Log in to the web interface
-2. Go to **Settings > API Tokens**
+2. Go to **Apps > [App] > Settings > API Tokens**
 3. Enter a name for the token and click **Create**
 4. Copy the displayed token immediately -- it is shown only once
+
+Tokens are scoped to a specific app. A token can only access the app it was created for.
 
 ### Via the CLI
 
 ```sh
-substrukt create-token "My token name"
+substrukt create-token "My token name" --app my-app
 ```
 
 Prints the raw token to stdout. Requires at least one user to exist.
@@ -25,7 +27,7 @@ Include the token in the `Authorization` header:
 
 ```sh
 curl -H "Authorization: Bearer YOUR_TOKEN" \
-  http://localhost:3000/api/v1/schemas
+  http://localhost:3000/api/v1/apps/my-app/schemas
 ```
 
 ## Token storage
@@ -37,12 +39,22 @@ Tokens are hashed with SHA-256 before storage. The raw token is never stored -- 
 
 ## Managing tokens
 
-Tokens are scoped to the user who created them. Each user can:
+Tokens are scoped to apps. Admins and editors can create tokens. Each user can:
 
-- View their own tokens (name and creation date)
-- Delete their own tokens
+- View tokens for apps they have access to (name and creation date)
+- Delete tokens they created
 
-Token management is available at **Settings > API Tokens** in the UI.
+Token management is available at **Apps > [App] > Settings** in the UI.
+
+## Role-based access
+
+API actions are restricted by the token creator's role:
+
+| Role | Permissions |
+|------|------------|
+| `admin` | Full access including import/export, backup, and app settings |
+| `editor` | Create, update, delete content and uploads; fire deployments |
+| `viewer` | Read-only access to schemas, content, and uploads |
 
 ## Rate limiting
 
@@ -58,7 +70,7 @@ HTTP/1.1 429 Too Many Requests
 }
 ```
 
-The rate limiter uses a sliding window per IP, determined by the `X-Forwarded-For` header (for requests behind a reverse proxy) or falls back to a default identifier.
+The rate limit is configurable via `--api-rate-limit`. The rate limiter uses a sliding window per IP, determined by the `X-Forwarded-For` header when `--trust-proxy-headers` is enabled, or uses a global bucket otherwise.
 
 ## Error responses
 

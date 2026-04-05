@@ -1,26 +1,49 @@
-# Publish API
+# Deployments API
 
-Trigger webhook notifications to rebuild your frontend.
+Manage and trigger deployment webhooks via the API.
 
-## Trigger a publish
+## List deployments
 
 ```
-POST /api/v1/publish/:environment
+GET /api/v1/apps/:app_slug/deployments
 ```
 
-Fires the configured webhook for the specified environment.
+Returns all deployment targets configured for the app.
 
-| Environment | Webhook flag | Behavior |
-|-------------|-------------|----------|
-| `staging` | `--staging-webhook-url` | Also fired automatically by the background cron |
-| `production` | `--production-webhook-url` | Only fired manually via this endpoint or the UI |
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/apps/my-app/deployments
+```
+
+Response:
+
+```json
+[
+  {
+    "name": "Production",
+    "slug": "production",
+    "webhook_url": "https://api.example.com/hooks/deploy",
+    "include_drafts": false,
+    "auto_deploy": true,
+    "debounce_seconds": 300
+  }
+]
+```
+
+## Trigger a deployment
+
+```
+POST /api/v1/apps/:app_slug/deployments/:slug/fire
+```
+
+Fires the webhook for the specified deployment target. Requires editor role or above.
 
 ### Example
 
 ```sh
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
-  http://localhost:3000/api/v1/publish/production
+  http://localhost:3000/api/v1/apps/my-app/deployments/production/fire
 ```
 
 ### Responses
@@ -33,7 +56,7 @@ Success:
 }
 ```
 
-Webhook URL not configured:
+Deployment not found:
 
 ```
 404 Not Found
@@ -41,7 +64,7 @@ Webhook URL not configured:
 
 ```json
 {
-  "error": "Webhook URL not configured"
+  "error": "Deployment not found"
 }
 ```
 
@@ -57,16 +80,43 @@ Webhook endpoint returned an error:
 }
 ```
 
-Invalid environment (not "staging" or "production"):
+## Content publish/unpublish
+
+Individual content entries can be published or unpublished via the API:
 
 ```
-404 Not Found
+POST /api/v1/apps/:app_slug/content/:schema_slug/:entry_id/publish
+POST /api/v1/apps/:app_slug/content/:schema_slug/:entry_id/unpublish
 ```
+
+```sh
+# Publish an entry
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/apps/my-app/content/blog-posts/my-post/publish
+
+# Unpublish an entry
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  http://localhost:3000/api/v1/apps/my-app/content/blog-posts/my-post/unpublish
+```
+
+Publish response:
 
 ```json
 {
-  "error": "Unknown environment"
+  "status": "published",
+  "entry_id": "my-post"
 }
 ```
 
-See [Webhooks](./webhooks.md) for details on how the webhook system works.
+Unpublish response:
+
+```json
+{
+  "status": "draft",
+  "entry_id": "my-post"
+}
+```
+
+See [Deployments](./webhooks.md) for details on how deployment webhooks work.

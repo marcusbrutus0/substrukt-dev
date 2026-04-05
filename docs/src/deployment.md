@@ -37,8 +37,7 @@ docker run -p 8080:8080 \
   substrukt serve \
     --data-dir /data \
     --port 8080 \
-    --secure-cookies \
-    --staging-webhook-url https://api.example.com/hooks/build
+    --secure-cookies
 ```
 
 ### Docker Compose example
@@ -136,8 +135,8 @@ When using HTTPS, pass `--secure-cookies` to Substrukt so that session cookies h
 ## Production checklist
 
 - [ ] Use `--secure-cookies` when behind HTTPS
-- [ ] Set `X-Forwarded-For` header in your reverse proxy (used for rate limiting)
+- [ ] Set `X-Forwarded-For` header in your reverse proxy and use `--trust-proxy-headers` (used for rate limiting)
 - [ ] Mount persistent storage for `/data` (Docker) or `--data-dir` (binary)
-- [ ] Back up `substrukt.db` regularly (contains users and tokens)
+- [ ] Back up `substrukt.db` regularly (contains users and tokens), or configure S3 backups via the UI
 - [ ] Set `RUST_LOG=substrukt=info` for production logging level
-- [ ] Configure webhook URLs if using the publish workflow
+- [ ] Configure deployment targets in the UI if using the deploy workflow

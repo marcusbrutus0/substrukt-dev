@@ -5,15 +5,17 @@ Upload and retrieve files via the API.
 ## Upload a file
 
 ```
-POST /api/v1/uploads
+POST /api/v1/apps/:app_slug/uploads
 Content-Type: multipart/form-data
 ```
+
+Requires editor role or above.
 
 ```sh
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@photo.jpg" \
-  http://localhost:3000/api/v1/uploads
+  http://localhost:3000/api/v1/apps/my-app/uploads
 ```
 
 Response:
@@ -34,12 +36,12 @@ If the same file is uploaded again (identical content, same SHA-256 hash), the e
 ## Download a file
 
 ```
-GET /api/v1/uploads/:hash
+GET /api/v1/apps/:app_slug/uploads/:hash
 ```
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" \
-  http://localhost:3000/api/v1/uploads/a1b2c3d4e5f67890... \
+  http://localhost:3000/api/v1/apps/my-app/uploads/a1b2c3d4e5f67890... \
   -o photo.jpg
 ```
 
@@ -52,7 +54,7 @@ Returns `404` if no upload with that hash exists.
 Uploads are also available without authentication at:
 
 ```
-/uploads/file/:hash/:filename
+/apps/:app_slug/uploads/file/:hash/:filename
 ```
 
 This public URL is used by the web UI to display uploaded images and link to files. The filename in the URL is cosmetic -- the hash is what identifies the file.

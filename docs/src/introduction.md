@@ -18,7 +18,7 @@ Most CMS options fall into two camps: heavy database-backed systems that require
 3. Content is saved as **JSON files** on disk and cached in memory for fast reads
 4. A **REST API** serves the content to your frontend, static site generator, or mobile app
 5. **Import/export** bundles let you sync content between local and production environments
-6. **Webhooks** can trigger rebuilds of your frontend when content changes
+6. **Deployments** trigger webhooks to rebuild your frontend when content changes
 
 ## Core concepts
 
@@ -27,5 +27,7 @@ Most CMS options fall into two camps: heavy database-backed systems that require
 | **Schema** | A JSON Schema document with an `x-substrukt` extension that defines a content type |
 | **Content entry** | A JSON object conforming to a schema, stored as a file on disk |
 | **Upload** | A file (image, document, etc.) stored with content-addressed deduplication |
+| **App** | An isolated content space with its own schemas, content, uploads, and deployments |
 | **Bundle** | A tar.gz archive containing all schemas, content, and uploads for syncing |
-| **API token** | A bearer token for authenticating API requests |
+| **API token** | A bearer token for authenticating API requests, scoped to a specific app |
+| **Deployment** | A webhook target that fires when content changes, configured per app |

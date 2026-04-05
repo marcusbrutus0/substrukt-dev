@@ -87,17 +87,13 @@ Each audit entry contains:
 | `resource_id` | Identifier of the affected resource |
 | `details` | Optional JSON string with additional context |
 
-### Querying the audit log
+### Viewing the audit log
 
-There is no UI for the audit log. Query it directly with SQLite:
+The audit log is viewable in the web UI at **Settings > Audit Log**. You can also query it directly with SQLite:
 
 ```sh
 sqlite3 data/audit.db "SELECT timestamp, actor, action, resource_type, resource_id FROM audit_log ORDER BY timestamp DESC LIMIT 20"
 ```
-
-### Dirty tracking for webhooks
-
-The audit database also stores `webhook_state` -- the timestamp of the last webhook fire for each environment (staging, production). This is how Substrukt determines whether content has changed since the last deploy.
 
 ## Structured logging
 
