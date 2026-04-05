@@ -82,8 +82,8 @@
           {% if inv.role == 'admin' %}bg-danger-soft text-danger
           {% elif inv.role == 'editor' %}bg-accent-soft text-accent
           {% else %}bg-card-alt text-muted{% endif %}">{{ inv.role }}</span></td>
-        <td class="px-4 py-2.5 text-muted text-sm">{{ inv.created_at }}</td>
-        <td class="px-4 py-2.5 text-muted text-sm">{{ inv.expires_at }}</td>
+        <td class="px-4 py-2.5 text-muted text-sm">{{ inv.created_at|datefmt }}</td>
+        <td class="px-4 py-2.5 text-muted text-sm">{{ inv.expires_at|datefmt }}</td>
         <td class="px-4 py-2.5 text-right">
           <form method="post" action="/settings/users/invitations/{{ inv.id }}/delete" class="inline">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">

@@ -51,7 +51,7 @@
     <tbody class="divide-y divide-border-light">
       {% for entry in entries %}
       <tr class="hover:bg-card-alt">
-        <td class="px-4 py-2.5 text-sm text-muted font-mono">{{ entry.timestamp[:19] }}</td>
+        <td class="px-4 py-2.5 text-sm text-muted">{{ entry.timestamp|datefmt }}</td>
         <td class="px-4 py-2.5 text-sm">{{ entry.actor }}</td>
         <td class="px-4 py-2.5 text-sm">
           <span class="px-2 py-0.5 rounded text-xs font-medium
