@@ -40,6 +40,7 @@ For argon2 OsRng: `use argon2::password_hash::rand_core::OsRng` (NOT `rand::rngs
 - Upload fields in schemas use `type: "string", format: "upload"` but are stored as `{hash, filename, mime}` objects. Content validation patches the schema at runtime to accept either string or object for upload fields.
 - HTML forms can't send PUT/DELETE. Schema update uses POST, deletes use `fetch()` with DELETE and return 204.
 - serde_json uses BTreeMap for JSON objects — properties iterate alphabetically, not in insertion order. This affects `generate_entry_id` which picks the first string field.
+- **serde_json preserve_order**: Enabled `preserve_order` feature on serde_json so JSON object keys use IndexMap instead of BTreeMap. This preserves schema property ordering in form field rendering, API output, and `generate_entry_id`. The `indexmap` crate was already a direct dependency.
 - Per-entry publish/unpublish: `set_entry_status` writes `_status` directly to disk without going through `save_entry` (avoids re-validation and snapshots). `save_entry` now respects explicit `_status` in incoming data for API inline status. `publish_all_drafts` removed; publish routes only fire webhooks.
 - API token creation requires editor+ role. Viewers can view the tokens page but cannot create tokens. This means "viewer API token" tests must be done through the UI session path, not via API bearer tokens.
 - Test infrastructure: `signup_user_with_role` creates a user with a specific role via the admin invite flow. Use the returned `Client` for session-based tests with that role.
