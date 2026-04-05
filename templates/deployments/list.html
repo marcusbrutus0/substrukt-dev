@@ -57,7 +57,7 @@
           {% endif %}
         </td>
         <td class="px-4 py-2.5 text-sm text-muted font-mono">
-          {% if dep.last_fired %}{{ dep.last_fired[:19] }}{% else %}Never{% endif %}
+          {% if dep.last_fired %}{{ dep.last_fired|datefmt }}{% else %}Never{% endif %}
         </td>
         <td class="px-4 py-2.5 text-right">
           <div class="flex items-center justify-end gap-2">
@@ -104,7 +104,7 @@
     <tbody class="divide-y divide-border-light">
       {% for entry in history %}
       <tr class="hover:bg-card-alt">
-        <td class="px-4 py-2.5 text-sm text-muted font-mono">{{ entry.created_at[:19] }}</td>
+        <td class="px-4 py-2.5 text-sm text-muted">{{ entry.created_at|datefmt }}</td>
         <td class="px-4 py-2.5 text-sm">
           <span class="px-2 py-0.5 rounded text-xs font-medium bg-accent-soft text-accent">{{ entry.deployment_name }}</span>
         </td>
