@@ -212,8 +212,9 @@ pub fn render_form_fields(
     data: Option<&Value>,
     prefix: &str,
     ref_options: &ReferenceOptions,
+    app_slug: &str,
 ) -> String {
-    render_form_fields_inner(schema, data, prefix, ref_options, 0)
+    render_form_fields_inner(schema, data, prefix, ref_options, app_slug, 0)
 }
 
 fn render_form_fields_inner(
@@ -221,6 +222,7 @@ fn render_form_fields_inner(
     data: Option<&Value>,
     prefix: &str,
     ref_options: &ReferenceOptions,
+    app_slug: &str,
     depth: usize,
 ) -> String {
     if depth > MAX_NESTING_DEPTH {
@@ -272,6 +274,7 @@ fn render_form_fields_inner(
             field_value,
             is_required,
             ref_options,
+            app_slug,
             depth,
         ));
     }
@@ -288,6 +291,7 @@ fn render_field(
     value: Option<&Value>,
     required: bool,
     ref_options: &ReferenceOptions,
+    app_slug: &str,
     depth: usize,
 ) -> String {
     let req_attr = if required { " required" } else { "" };
@@ -335,7 +339,7 @@ fn render_field(
                 // Show image thumbnail for image MIME types
                 let thumbnail = if mime.starts_with("image/") {
                     format!(
-                        r#"<img src="/uploads/file/{hash}/{filename}" alt="{filename}" class="h-16 w-16 object-cover rounded border border-border-light">"#
+                        r#"<img src="/apps/{app_slug}/uploads/file/{hash}/{filename}" alt="{filename}" class="h-16 w-16 object-cover rounded border border-border-light">"#
                     )
                 } else {
                     String::new()
@@ -345,7 +349,7 @@ fn render_field(
                     r#"<div class="mb-2 text-sm text-secondary flex items-center gap-3">
     {thumbnail}
     <div>
-      <div>Current: <a href="/uploads/file/{hash}/{filename}" class="text-accent underline" target="_blank">{filename}</a></div>
+      <div>Current: <a href="/apps/{app_slug}/uploads/file/{hash}/{filename}" class="text-accent underline" target="_blank">{filename}</a></div>
       <div class="text-muted text-xs">{mime}</div>
     </div>
   </div>
@@ -486,7 +490,7 @@ fn render_field(
             )
         }
         ("object", _) => {
-            let inner = render_form_fields_inner(schema, value, name, ref_options, depth + 1);
+            let inner = render_form_fields_inner(schema, value, name, ref_options, app_slug, depth + 1);
             format!(
                 r#"<fieldset class="mb-4 p-4 border border-border-light rounded-md">
   <legend class="text-sm font-medium text-secondary px-2">{label}</legend>
@@ -513,7 +517,7 @@ fn render_field(
   </div>
   {}
 </div>"#,
-                        render_form_fields_inner(&items_schema, Some(item), &item_name, ref_options, depth + 1)
+                        render_form_fields_inner(&items_schema, Some(item), &item_name, ref_options, app_slug, depth + 1)
                     ));
                 }
             }
@@ -525,6 +529,7 @@ fn render_field(
                 None,
                 &template_name,
                 ref_options,
+                app_slug,
                 depth + 1,
             );
 
@@ -742,7 +747,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
             html.contains(r#"minlength="3""#),
             "should have minlength attr"
@@ -768,7 +773,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
             html.contains(r#"pattern="^[a-z0-9-]+$""#),
             "should have pattern attr"
@@ -789,7 +794,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
             !html.contains(r#"pattern="#),
             "textarea should not have pattern attr"
@@ -815,7 +820,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
             html.contains("Your primary email address"),
             "should show description"
@@ -836,7 +841,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
             !html.contains("text-xs text-muted"),
             "should not have hint line"
@@ -854,7 +859,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(html.contains("data-upload-zone"), "should have drop zone");
         assert!(
             html.contains("data-upload-input"),
@@ -893,13 +898,13 @@ mod tests {
                 "mime": "image/png"
             }
         });
-        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new(), "test-app");
         assert!(
             html.contains("<img"),
             "should show image thumbnail for image MIME"
         );
         assert!(
-            html.contains("/uploads/file/abc123/test.png"),
+            html.contains("/apps/test-app/uploads/file/abc123/test.png"),
             "should link to upload"
         );
         assert!(
@@ -926,13 +931,13 @@ mod tests {
                 "mime": "application/pdf"
             }
         });
-        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new(), "test-app");
         assert!(
             !html.contains("<img"),
             "should NOT show thumbnail for non-image"
         );
         assert!(
-            html.contains("/uploads/file/def456/readme.pdf"),
+            html.contains("/apps/test-app/uploads/file/def456/readme.pdf"),
             "should link to upload"
         );
         assert!(
@@ -953,7 +958,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(html.contains(r#"min="0.01""#), "should have min attr");
         assert!(html.contains(r#"max="9999.99""#), "should have max attr");
         assert!(html.contains("0.01–9999.99"), "should show range hint");
@@ -971,7 +976,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
             html.contains(r#"min="1""#),
             "exclusive min 0 -> min 1 for integer"
@@ -993,7 +998,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
             !html.contains(r#"min="#),
             "no min attr for exclusive float bound"
@@ -1019,7 +1024,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
             html.contains("1–5 items"),
             "should show item count range hint"
@@ -1042,7 +1047,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(html.contains("Min 1 item"), "should use singular 'item'");
         assert!(!html.contains("Min 1 items"), "should not use plural for 1");
     }
@@ -1058,7 +1063,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
             html.contains("<textarea"),
             "x-control: textarea should render a <textarea>"
@@ -1083,7 +1088,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(html.contains("<textarea"), "should render textarea");
         assert!(
             html.contains(r#"maxlength="2000""#),
@@ -1113,7 +1118,7 @@ mod tests {
         let data = json!({
             "body": "Hello world"
         });
-        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new(), "test-app");
         assert!(
             html.contains(">Hello world</textarea>"),
             "should preserve existing value inside textarea"
@@ -1131,7 +1136,7 @@ mod tests {
                 }
             }
         });
-        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
             html.contains(r#"step="5""#),
             "should override step with multipleOf"

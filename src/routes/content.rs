@@ -306,7 +306,7 @@ async fn new_entry_page(
     }
 
     let ref_options = build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
-    let form_html = content_form::render_form_fields(&schema_file.schema, None, "", &ref_options);
+    let form_html = content_form::render_form_fields(&schema_file.schema, None, "", &ref_options, &app.app.slug);
 
     let tmpl = state
         .templates
@@ -368,6 +368,7 @@ async fn edit_entry_page(
         existing_data.as_ref(),
         "",
         &ref_options,
+        &app.app.slug,
     );
 
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
@@ -465,7 +466,7 @@ async fn create_entry(
         let ref_options =
             build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
         let form_html =
-            content_form::render_form_fields(&schema_file.schema, Some(&data), "", &ref_options);
+            content_form::render_form_fields(&schema_file.schema, Some(&data), "", &ref_options, &app.app.slug);
         if let Ok(tmpl) = state.templates.acquire_env()
             && let Ok(template) = tmpl.get_template("content/edit.html")
             && let Ok(html) = template.render(minijinja::context! {
@@ -581,7 +582,7 @@ async fn update_entry(
         let ref_options =
             build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
         let form_html =
-            content_form::render_form_fields(&schema_file.schema, Some(&data), "", &ref_options);
+            content_form::render_form_fields(&schema_file.schema, Some(&data), "", &ref_options, &app.app.slug);
         if let Ok(tmpl) = state.templates.acquire_env()
             && let Ok(template) = tmpl.get_template("content/edit.html")
             && let Ok(html) = template.render(minijinja::context! {

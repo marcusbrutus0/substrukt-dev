@@ -449,9 +449,14 @@ async fn import_data(
     let user_id = auth::require_role(&session, "admin").await?;
     let app_dir = state.config.app_dir(&app.app.slug);
 
+    let mut csrf_token = None;
     let data = loop {
         match multipart.next_field().await {
             Ok(Some(field)) => {
+                if field.name() == Some("_csrf") {
+                    csrf_token = field.text().await.ok();
+                    continue;
+                }
                 if field.name() != Some("bundle") {
                     continue;
                 }
@@ -485,6 +490,11 @@ async fn import_data(
             }
         }
     };
+
+    if !matches!(csrf_token.as_deref(), Some(token) if auth::verify_csrf_token(&session, token).await)
+    {
+        return Ok((axum::http::StatusCode::FORBIDDEN, "Invalid CSRF token").into_response());
+    }
 
     match crate::sync::import_bundle_from_bytes(&app_dir, &state.pool, app.app.id, &data).await {
         Ok(warnings) => {
