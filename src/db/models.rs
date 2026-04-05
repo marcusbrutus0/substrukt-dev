@@ -843,4 +843,44 @@ mod tests {
         // App still exists
         assert!(find_app_by_slug(&pool, "blog").await.unwrap().is_some());
     }
+
+    // ── User query and password update tests ────────────────────
+
+    #[tokio::test]
+    async fn test_list_users() {
+        let pool = test_pool().await;
+        let _u1 = create_user(&pool, "alice", "pass", "admin").await.unwrap();
+        let _u2 = create_user(&pool, "bob", "pass", "editor").await.unwrap();
+
+        let users = list_users(&pool).await.unwrap();
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].username, "alice");
+        assert_eq!(users[1].username, "bob");
+    }
+
+    #[tokio::test]
+    async fn test_find_user_by_id() {
+        let pool = test_pool().await;
+        let user = create_user(&pool, "alice", "pass", "admin").await.unwrap();
+
+        let found = find_user_by_id(&pool, user.id).await.unwrap().unwrap();
+        assert_eq!(found.username, "alice");
+
+        assert!(find_user_by_id(&pool, 9999).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_user_password() {
+        let pool = test_pool().await;
+        let user = create_user(&pool, "alice", "oldpass", "admin")
+            .await
+            .unwrap();
+        assert!(user.verify_password("oldpass"));
+
+        update_user_password(&pool, user.id, "newpass").await.unwrap();
+
+        let updated = find_user_by_id(&pool, user.id).await.unwrap().unwrap();
+        assert!(!updated.verify_password("oldpass"));
+        assert!(updated.verify_password("newpass"));
+    }
 }

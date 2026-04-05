@@ -36,7 +36,7 @@
   {% endif %}
   <div class="mt-auto pt-4 border-t border-border-light">
     {% if current_username %}
-    <div class="px-3 py-1 text-sm text-muted truncate" title="{{ current_username }}">{{ current_username }}</div>
+    <a href="/settings/profile" class="block px-3 py-1 text-sm text-muted truncate hover:text-primary" title="{{ current_username }}">{{ current_username }}</a>
     {% endif %}
     <div class="flex items-center justify-between">
     <form method="post" action="/logout" hx-boost="false">
