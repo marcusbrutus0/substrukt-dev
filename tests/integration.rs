@@ -2503,9 +2503,9 @@ async fn rbac_editor_restrictions() {
     let resp = editor.get(s.url("/settings/users")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
-    // Editor CANNOT access app settings/data (admin only)
+    // Editor CANNOT access app data page (admin only)
     let resp = editor
-        .get(s.url("/apps/default/settings/data"))
+        .get(s.url("/apps/default/data"))
         .send()
         .await
         .unwrap();

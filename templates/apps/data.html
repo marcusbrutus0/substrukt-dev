@@ -3,7 +3,7 @@
 {% block content %}
 <div class="flex items-center justify-between mb-6">
   <h1 class="text-2xl font-bold tracking-tight">{{ app.name }} — Data</h1>
-  <a href="/apps/{{ app.slug }}/settings" class="text-muted hover:text-primary text-sm">Back to Settings</a>
+  <a href="/apps/{{ app.slug }}/schemas" class="text-muted hover:text-primary text-sm">Back to App</a>
 </div>
 
 {% if data_result %}
@@ -35,7 +35,7 @@
 <div class="bg-card border border-border-light rounded-lg p-6 mb-6">
   <h2 class="text-lg font-medium mb-2">Export</h2>
   <p class="text-muted text-sm mb-4">Export all schemas, content, and uploads for this app as a .tar.gz bundle.</p>
-  <form method="post" action="/apps/{{ app.slug }}/settings/data/export" hx-disable>
+  <form method="post" action="/apps/{{ app.slug }}/data/export" hx-disable>
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
       Download Bundle
@@ -46,7 +46,7 @@
 <div class="bg-card border border-border-light rounded-lg p-6">
   <h2 class="text-lg font-medium mb-2">Import</h2>
   <p class="text-muted text-sm mb-4">Import a .tar.gz bundle. This will overwrite existing schemas, content, and uploads for this app.</p>
-  <form method="post" action="/apps/{{ app.slug }}/settings/data/import" enctype="multipart/form-data" hx-disable>
+  <form method="post" action="/apps/{{ app.slug }}/data/import" enctype="multipart/form-data" hx-disable>
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <div class="flex gap-3 items-end">
       <input type="file" name="bundle" accept=".tar.gz,.tgz,application/gzip" required
