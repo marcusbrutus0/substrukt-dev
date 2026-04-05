@@ -229,9 +229,28 @@
         delete btn.dataset.originalText;
       });
     }
+    function highlightActiveNav() {
+      var path = window.location.pathname;
+      document.querySelectorAll('#sidebar-nav a').forEach(function(link) {
+        var href = link.getAttribute('href');
+        if (!href) return;
+        var isActive;
+        if (href === '/apps') {
+          isActive = (path === '/apps');
+        } else {
+          isActive = (path === href) || path.startsWith(href + '/');
+        }
+        if (isActive) {
+          link.classList.add('bg-sidebar-hover', 'text-white');
+        } else {
+          link.classList.remove('bg-sidebar-hover', 'text-white');
+        }
+      });
+    }
     initMarkdownEditors();
     initUploadZones();
     initSubmitSpinner();
+    highlightActiveNav();
     document.body.addEventListener('htmx:afterSwap', function() {
       initMarkdownEditors();
       initUploadZones();
@@ -242,6 +261,9 @@
         document.title = titleEl.textContent.trim();
         titleEl.remove();
       }
+    });
+    document.body.addEventListener('htmx:afterSettle', function() {
+      highlightActiveNav();
     });
     function toggleTheme() {
       var isDark = document.documentElement.classList.toggle('dark');
