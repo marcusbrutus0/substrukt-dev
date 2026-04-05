@@ -49,7 +49,8 @@ Substrukt is a single Rust binary that handles everything: web UI, REST API, fil
   +------+------+            +--------+--------+
   | substrukt.db|            |    audit.db     |
   | (users,     |            | (audit log,     |
-  |  tokens,    |            |  webhook state) |
+  |  tokens,    |            |  deployments,   |
+  |  apps,      |            |  backup config) |
   |  uploads)   |            +-----------------+
   +-------------+
 ```
@@ -75,7 +76,11 @@ Substrukt is a single Rust binary that handles everything: web UI, REST API, fil
 | `rate_limit.rs` | Per-IP sliding window rate limiter |
 | `metrics.rs` | Prometheus recorder and metrics middleware |
 | `audit.rs` | Audit logger with async writes, dirty tracking |
-| `webhooks.rs` | Webhook firing and background cron |
+| `webhooks.rs` | Deployment webhook firing and auto-deploy background tasks |
+| `backup.rs` | S3 backup archive creation and scheduled uploads |
+| `history.rs` | Content version history snapshots |
+| `openapi.rs` | Auto-generated OpenAPI specification |
+| `app_context.rs` | App-scoped request context extraction |
 | `db/` | SQLite pool initialization and migrations |
 | `db/models.rs` | User, ApiToken queries |
 | `auth/` | Session management, CSRF, login/logout |
@@ -108,7 +113,7 @@ Substrukt is a single Rust binary that handles everything: web UI, REST API, fil
 - **DashMap** provides lock-free concurrent reads for the content cache
 - **Async audit writes** -- audit log entries are spawned as fire-and-forget tasks
 - **File watcher** runs in a background thread with debounced events
-- **Webhook cron** runs as a background tokio task on a timer
+- **Auto-deploy tasks** run as independent background tokio tasks per deployment target
 - **Rate limiters** use DashMap for lock-free per-IP tracking
 
 ## Data ownership
@@ -124,4 +129,6 @@ Substrukt is a single Rust binary that handles everything: web UI, REST API, fil
 | Content entries | JSON files | `content/mod.rs` |
 | Upload files | Binary files | `uploads/mod.rs` |
 | Audit log | `audit.db` | `audit.rs` |
-| Webhook state | `audit.db` | `audit.rs` |
+| Deployments | `audit.db` | `audit.rs` |
+| Backup config | `audit.db` | `audit.rs` |
+| Apps | `substrukt.db` | `db/models.rs` |

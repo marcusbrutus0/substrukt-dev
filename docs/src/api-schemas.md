@@ -5,7 +5,7 @@ Read-only access to schema definitions.
 ## List schemas
 
 ```
-GET /api/v1/schemas
+GET /api/v1/apps/:app_slug/schemas
 ```
 
 Returns all schemas.
@@ -37,13 +37,13 @@ Each object includes the full JSON Schema document in the `schema` field.
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" \
-  http://localhost:3000/api/v1/schemas
+  http://localhost:3000/api/v1/apps/my-app/schemas
 ```
 
 ## Get a schema
 
 ```
-GET /api/v1/schemas/:slug
+GET /api/v1/apps/:app_slug/schemas/:slug
 ```
 
 Returns the full JSON Schema document for a single schema.
@@ -70,7 +70,7 @@ Returns the full JSON Schema document for a single schema.
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" \
-  http://localhost:3000/api/v1/schemas/blog-posts
+  http://localhost:3000/api/v1/apps/my-app/schemas/blog-posts
 ```
 
 Returns `404` if the schema does not exist.

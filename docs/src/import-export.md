@@ -18,18 +18,18 @@ The bundle does **not** include users, sessions, API tokens, or audit logs -- on
 ### Export
 
 ```sh
-substrukt export backup.tar.gz
+substrukt export backup.tar.gz --app my-app
 ```
 
-Creates a tar.gz bundle at the specified path with all schemas, content, and uploads.
+Creates a tar.gz bundle at the specified path with all schemas, content, and uploads for the specified app.
 
 ### Import
 
 ```sh
-substrukt import backup.tar.gz
+substrukt import backup.tar.gz --app my-app
 ```
 
-Extracts the bundle into the data directory. Import behavior:
+Extracts the bundle into the app's data directory. Import behavior:
 
 1. Schemas, content, and uploads are unpacked (overwrite strategy)
 2. Upload metadata is imported into SQLite from the manifest
@@ -44,7 +44,7 @@ Extracts the bundle into the data directory. Import behavior:
 ```sh
 curl -X POST \
   -H "Authorization: Bearer YOUR_TOKEN" \
-  http://localhost:3000/api/v1/export \
+  http://localhost:3000/api/v1/apps/my-app/export \
   -o backup.tar.gz
 ```
 
@@ -56,7 +56,7 @@ Returns a `application/gzip` response with the bundle.
 curl -X POST \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -F "bundle=@backup.tar.gz" \
-  http://localhost:3000/api/v1/import
+  http://localhost:3000/api/v1/apps/my-app/import
 ```
 
 Response:
@@ -77,7 +77,7 @@ After an API import, the in-memory cache is fully rebuilt.
 A typical sync workflow with CI:
 
 1. Run Substrukt locally, edit content
-2. Export a bundle: `substrukt export bundle.tar.gz`
+2. Export a bundle: `substrukt export bundle.tar.gz --app my-app`
 3. Commit the bundle to your git repository
 4. In CI, import the bundle on the production instance:
 
@@ -85,7 +85,7 @@ A typical sync workflow with CI:
 curl -X POST \
   -H "Authorization: Bearer $DEPLOY_TOKEN" \
   -F "bundle=@bundle.tar.gz" \
-  https://cms.example.com/api/v1/import
+  https://cms.example.com/api/v1/apps/my-app/import
 ```
 
 This approach keeps content in version control and makes deployments reproducible.

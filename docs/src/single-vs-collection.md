@@ -14,11 +14,11 @@ The `kind` field in `x-substrukt` controls whether a schema represents a single 
 
 A collection holds multiple entries. The UI shows a list of entries with "New Entry" and "Delete" actions. The API supports full CRUD:
 
-- `GET /api/v1/content/:slug` -- list all entries
-- `POST /api/v1/content/:slug` -- create an entry
-- `GET /api/v1/content/:slug/:id` -- get one entry
-- `PUT /api/v1/content/:slug/:id` -- update one entry
-- `DELETE /api/v1/content/:slug/:id` -- delete one entry
+- `GET /api/v1/apps/:app/content/:slug` -- list all entries
+- `POST /api/v1/apps/:app/content/:slug` -- create an entry
+- `GET /api/v1/apps/:app/content/:slug/:id` -- get one entry
+- `PUT /api/v1/apps/:app/content/:slug/:id` -- update one entry
+- `DELETE /api/v1/apps/:app/content/:slug/:id` -- delete one entry
 
 Use collections for: blog posts, products, team members, FAQ items.
 
@@ -36,11 +36,11 @@ A single schema holds exactly one document. The UI skips the list view and goes 
 
 The API uses a different endpoint pattern:
 
-- `GET /api/v1/content/:slug/single` -- get the document
-- `PUT /api/v1/content/:slug/single` -- create or update the document
-- `DELETE /api/v1/content/:slug/single` -- delete the document
+- `GET /api/v1/apps/:app/content/:slug/single` -- get the document
+- `PUT /api/v1/apps/:app/content/:slug/single` -- create or update the document
+- `DELETE /api/v1/apps/:app/content/:slug/single` -- delete the document
 
-Creating entries via `POST /api/v1/content/:slug` returns a 400 error for single schemas.
+Creating entries via `POST /api/v1/apps/:app/content/:slug` returns a 400 error for single schemas.
 
 Use singles for: site settings, homepage content, about page, footer configuration.
 
@@ -64,4 +64,4 @@ Use singles for: site settings, homepage content, about page, footer configurati
 }
 ```
 
-This creates a single editable document for site-wide settings, accessed in the sidebar as "Site Settings" and via the API at `/api/v1/content/site-settings/single`.
+This creates a single editable document for site-wide settings, accessed in the sidebar as "Site Settings" and via the API at `/api/v1/apps/:app/content/site-settings/single`.

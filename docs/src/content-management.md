@@ -36,8 +36,8 @@ The entry list shows up to 4 columns from the schema's properties. It picks the 
 
 Content is stored as plain JSON files on disk. The file structure depends on the [storage mode](./storage-modes.md):
 
-- **Directory mode**: `data/content/<slug>/<entry-id>.json`
-- **Single-file mode**: `data/content/<slug>.json`
+- **Directory mode**: `data/<app-slug>/content/<slug>/<entry-id>.json`
+- **Single-file mode**: `data/<app-slug>/content/<slug>.json`
 
 You can edit these files directly on disk. A file watcher detects changes and updates the in-memory cache automatically.
 
@@ -49,7 +49,7 @@ Upload fields are treated specially during validation: the schema says `"type": 
 
 ## In-memory cache
 
-Content is loaded into a `DashMap` (concurrent hash map) on startup. The cache is keyed by `<schema-slug>/<entry-id>`. Cache updates happen:
+Content is loaded into a `DashMap` (concurrent hash map) on startup. The cache is keyed by `<app-slug>/<schema-slug>/<entry-id>`. Cache updates happen:
 
 - On create/update/delete via the UI or API
 - On file system changes detected by the file watcher

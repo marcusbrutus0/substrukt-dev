@@ -1,6 +1,6 @@
 # Configuration
 
-All configuration is passed as CLI flags. There are no config files or environment variables for server settings.
+Server settings are passed as CLI flags. Deployment webhooks and S3 backups are configured through the web UI.
 
 ## CLI flags
 
@@ -10,21 +10,34 @@ All configuration is passed as CLI flags. There are no config files or environme
 | `--db-path <PATH>` | `<data-dir>/substrukt.db` | Path to the main SQLite database |
 | `-p, --port <PORT>` | `3000` | HTTP listen port |
 | `--secure-cookies` | off | Set the `Secure` flag on session cookies (required for HTTPS) |
-| `--staging-webhook-url <URL>` | none | Webhook URL fired automatically when content changes |
-| `--staging-webhook-auth-token <TOKEN>` | none | Bearer token sent with staging webhook requests |
-| `--production-webhook-url <URL>` | none | Webhook URL fired on manual publish |
-| `--production-webhook-auth-token <TOKEN>` | none | Bearer token sent with production webhook requests |
-| `--webhook-check-interval <SECONDS>` | `300` | How often (in seconds) to check if the staging webhook should fire |
+| `--api-rate-limit <N>` | `100` | Max API requests per IP per minute |
+| `--version-history-count <N>` | `10` | Max content versions to keep per entry |
+| `--max-body-size <MB>` | `50` | Maximum request body size in megabytes |
+| `--trust-proxy-headers` | off | Trust `X-Forwarded-For` headers for rate limiting (enable only behind a trusted reverse proxy) |
+
+## Environment variables
+
+S3 backup credentials are configured via environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `S3_BUCKET` | S3 bucket name |
+| `S3_REGION` | AWS region (or custom region name) |
+| `S3_ENDPOINT` | Custom S3-compatible endpoint URL (for Minio, R2, B2, etc.) |
+| `S3_ACCESS_KEY` | Access key ID |
+| `S3_SECRET_KEY` | Secret access key |
+
+Backup frequency and retention are managed through the web UI at Settings > Backups.
 
 ## Commands
 
 Substrukt has four commands. If no command is specified, `serve` is the default.
 
 ```
-substrukt serve                    # Start the web server
-substrukt import <path.tar.gz>     # Import a content bundle
-substrukt export <path.tar.gz>     # Export a content bundle
-substrukt create-token <name>      # Create an API token from the command line
+substrukt serve                              # Start the web server
+substrukt import <path.tar.gz> --app <slug>  # Import a content bundle into an app
+substrukt export <path.tar.gz> --app <slug>  # Export an app's content as a bundle
+substrukt create-token <name> --app <slug>   # Create an API token for an app
 ```
 
 ### serve
@@ -37,26 +50,26 @@ substrukt serve --port 8080 --data-dir /var/lib/substrukt --secure-cookies
 
 ### import
 
-Imports a tar.gz bundle into the data directory. Overwrites existing schemas and content. Validates all imported content against its schema and prints warnings for any validation errors.
+Imports a tar.gz bundle into an app's data directory. Overwrites existing schemas and content. Validates all imported content against its schema and prints warnings for any validation errors. The `--app` flag specifies which app to import into.
 
 ```sh
-substrukt import backup.tar.gz --data-dir /var/lib/substrukt
+substrukt import backup.tar.gz --app my-app --data-dir /var/lib/substrukt
 ```
 
 ### export
 
-Exports all schemas, content, and uploads into a tar.gz bundle.
+Exports all schemas, content, and uploads for an app into a tar.gz bundle.
 
 ```sh
-substrukt export backup.tar.gz --data-dir /var/lib/substrukt
+substrukt export backup.tar.gz --app my-app --data-dir /var/lib/substrukt
 ```
 
 ### create-token
 
-Creates an API token without starting the server. Requires at least one user to exist (run the server and complete setup first).
+Creates an API token for a specific app without starting the server. Requires at least one user to exist (run the server and complete setup first).
 
 ```sh
-substrukt create-token "CI deploy"
+substrukt create-token "CI deploy" --app my-app
 ```
 
 The raw token is printed to stdout. Save it -- it cannot be retrieved again.
