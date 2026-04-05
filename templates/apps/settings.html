@@ -78,7 +78,7 @@
       {% for token in tokens %}
       <tr class="hover:bg-card-alt">
         <td class="py-2.5 font-medium">{{ token.name }}</td>
-        <td class="py-2.5 text-muted">{{ token.created_at|datefmt }}</td>
+        <td class="py-2.5 text-muted">{{ token.created_at }}</td>
         <td class="py-2.5 text-right">
           <form method="post" action="/apps/{{ app.slug }}/settings/tokens/{{ token.id }}/delete" class="inline">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">

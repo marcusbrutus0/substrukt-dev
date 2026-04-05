@@ -37,7 +37,7 @@
           <td class="py-2.5 font-mono text-xs">{{ upload.filename }}</td>
           <td class="py-2.5 text-muted text-xs">{{ upload.mime }}</td>
           <td class="py-2.5 text-muted text-xs">{{ upload.size }}</td>
-          <td class="py-2.5 text-muted text-xs">{{ upload.created_at|datefmt }}</td>
+          <td class="py-2.5 text-muted text-xs">{{ upload.created_at }}</td>
           <td class="py-2.5">
             {% if upload.references %}
               {% for ref in upload.references %}
