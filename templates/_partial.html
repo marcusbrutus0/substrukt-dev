@@ -1,4 +1,12 @@
 <span id="page-title" hidden>{% block title %}Substrukt{% endblock %}</span>
+{% if flash_kind %}
+<div class="mb-4 p-4 rounded-md text-sm
+  {% if flash_kind == 'success' %}bg-success-soft text-success border border-success
+  {% elif flash_kind == 'error' %}bg-danger-soft text-danger border border-danger
+  {% else %}bg-accent-soft text-accent border border-accent{% endif %}">
+  {{ flash_message }}
+</div>
+{% endif %}
 {% block content %}{% endblock %}
 <script>
   function addArrayItem(name) {
