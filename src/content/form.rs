@@ -1067,10 +1067,7 @@ mod tests {
             !html.contains("<input type=\"text\""),
             "x-control: textarea should NOT render a text input"
         );
-        assert!(
-            html.contains("rows=\"6\""),
-            "should have rows attribute"
-        );
+        assert!(html.contains("rows=\"6\""), "should have rows attribute");
     }
 
     #[test]
@@ -1087,10 +1084,7 @@ mod tests {
             }
         });
         let html = render_form_fields(&schema, None, "", &ReferenceOptions::new());
-        assert!(
-            html.contains("<textarea"),
-            "should render textarea"
-        );
+        assert!(html.contains("<textarea"), "should render textarea");
         assert!(
             html.contains(r#"maxlength="2000""#),
             "should have maxlength attr"

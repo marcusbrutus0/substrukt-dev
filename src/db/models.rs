@@ -906,7 +906,9 @@ mod tests {
             .unwrap();
         assert!(user.verify_password("oldpass"));
 
-        update_user_password(&pool, user.id, "newpass").await.unwrap();
+        update_user_password(&pool, user.id, "newpass")
+            .await
+            .unwrap();
 
         let updated = find_user_by_id(&pool, user.id).await.unwrap().unwrap();
         assert!(!updated.verify_password("oldpass"));
