@@ -75,6 +75,35 @@ pub async fn user_count(pool: &SqlitePool) -> eyre::Result<i64> {
     Ok(count)
 }
 
+pub async fn list_users(pool: &SqlitePool) -> eyre::Result<Vec<User>> {
+    let users = sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY username")
+        .fetch_all(pool)
+        .await?;
+    Ok(users)
+}
+
+pub async fn find_user_by_id(pool: &SqlitePool, user_id: i64) -> eyre::Result<Option<User>> {
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(user)
+}
+
+pub async fn update_user_password(
+    pool: &SqlitePool,
+    user_id: i64,
+    new_password: &str,
+) -> eyre::Result<()> {
+    let password_hash = User::hash_password(new_password)?;
+    sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        .bind(&password_hash)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 // --- Apps ---
 
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
