@@ -4,10 +4,12 @@ use axum::extract::{FromRequestParts, Path};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{Html, IntoResponse, Json, Response};
+use axum_htmx::HxRequest;
 use tower_sessions::Session;
 
 use crate::config::Config;
 use crate::db::models::{self, App};
+use crate::routes::render_error;
 use crate::schema;
 use crate::state::AppState;
 
@@ -52,48 +54,49 @@ impl FromRequestParts<AppState> for AppContext {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        // Extract HxRequest to decide partial vs full template rendering
+        let HxRequest(is_htmx) = HxRequest::from_request_parts(parts, state)
+            .await
+            .unwrap_or(HxRequest(false));
+
         // Extract app_slug from path params
         let params: HashMap<String, String> =
             match Path::<HashMap<String, String>>::from_request_parts(parts, state).await {
                 Ok(Path(params)) => params,
                 Err(_) => {
-                    return Err(
-                        (StatusCode::NOT_FOUND, Html("Not found".to_string())).into_response()
-                    );
+                    let html = render_error(state, 404, "Not found", is_htmx);
+                    return Err((StatusCode::NOT_FOUND, Html(html)).into_response());
                 }
             };
 
         let slug = params.get("app_slug").ok_or_else(|| {
-            (StatusCode::NOT_FOUND, Html("Not found".to_string())).into_response()
+            let html = render_error(state, 404, "Not found", is_htmx);
+            (StatusCode::NOT_FOUND, Html(html)).into_response()
         })?;
 
         // Look up app
         let app = models::find_app_by_slug(&state.pool, slug)
             .await
             .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Html("Internal error".to_string()),
-                )
-                    .into_response()
+                let html = render_error(state, 500, "Internal error", is_htmx);
+                (StatusCode::INTERNAL_SERVER_ERROR, Html(html)).into_response()
             })?
             .ok_or_else(|| {
-                (StatusCode::NOT_FOUND, Html("App not found".to_string())).into_response()
+                let html = render_error(state, 404, "App not found", is_htmx);
+                (StatusCode::NOT_FOUND, Html(html)).into_response()
             })?;
 
         // Check access: get session from extensions (set by require_auth middleware)
         let session = parts.extensions.get::<Session>().cloned().ok_or_else(|| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Html("Session not available".to_string()),
-            )
-                .into_response()
+            let html = render_error(state, 500, "Session not available", is_htmx);
+            (StatusCode::INTERNAL_SERVER_ERROR, Html(html)).into_response()
         })?;
 
         let user_id = crate::auth::current_user_id(&session)
             .await
             .ok_or_else(|| {
-                (StatusCode::FORBIDDEN, Html("Not authenticated".to_string())).into_response()
+                let html = render_error(state, 403, "Not authenticated", is_htmx);
+                (StatusCode::FORBIDDEN, Html(html)).into_response()
             })?;
 
         let user_role = crate::auth::current_user_role(&session)
@@ -105,18 +108,13 @@ impl FromRequestParts<AppState> for AppContext {
             let has_access = models::user_has_app_access(&state.pool, app.id, user_id)
                 .await
                 .map_err(|_| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Html("Internal error".to_string()),
-                    )
-                        .into_response()
+                    let html = render_error(state, 500, "Internal error", is_htmx);
+                    (StatusCode::INTERNAL_SERVER_ERROR, Html(html)).into_response()
                 })?;
             if !has_access {
-                return Err((
-                    StatusCode::FORBIDDEN,
-                    Html("You do not have access to this app".to_string()),
-                )
-                    .into_response());
+                let html =
+                    render_error(state, 403, "You do not have access to this app", is_htmx);
+                return Err((StatusCode::FORBIDDEN, Html(html)).into_response());
             }
         }
 
