@@ -26,6 +26,9 @@
   {% if user_role != "viewer" %}
   <a href="/apps/{{ app.slug }}/deployments" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Deployments</a>
   {% endif %}
+  {% if user_role == "admin" %}
+  <a href="/apps/{{ app.slug }}/settings" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Settings</a>
+  {% endif %}
   {% endif %}
   {% if user_role == "admin" %}
   <a href="/settings/users" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Users</a>
