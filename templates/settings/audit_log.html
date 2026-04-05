@@ -31,7 +31,7 @@
     class="px-3 py-2 border border-border rounded-md bg-input-bg text-sm">
     <option value="">All Actors</option>
     {% for a in actors %}
-    <option value="{{ a }}" {% if filter_actor == a %}selected{% endif %}>{{ a }}</option>
+    <option value="{{ a.value }}" {% if filter_actor == a.value %}selected{% endif %}>{{ a.label }}</option>
     {% endfor %}
   </select>
 </div>

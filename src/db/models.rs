@@ -446,6 +446,20 @@ pub async fn find_user_role(pool: &SqlitePool, user_id: i64) -> eyre::Result<Opt
     Ok(role)
 }
 
+/// Returns a map from user ID (as string) to username for all users in the database.
+pub async fn get_username_map(
+    pool: &SqlitePool,
+) -> eyre::Result<std::collections::HashMap<String, String>> {
+    let rows: Vec<(i64, String)> =
+        sqlx::query_as("SELECT id, username FROM users")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, username)| (id.to_string(), username))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -285,17 +285,40 @@ async fn audit_log_page(
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
+    // Build a map from user ID (string) -> username for display
+    let username_map = models::get_username_map(&state.pool)
+        .await
+        .unwrap_or_default();
+
+    let resolve_actor = |actor: &str| -> String {
+        username_map
+            .get(actor)
+            .cloned()
+            .unwrap_or_else(|| actor.to_string())
+    };
+
     let entry_data: Vec<minijinja::Value> = entries
         .iter()
         .map(|e| {
             minijinja::context! {
                 id => e.id,
                 timestamp => e.timestamp,
-                actor => e.actor,
+                actor => resolve_actor(&e.actor),
                 action => e.action,
                 resource_type => e.resource_type,
                 resource_id => e.resource_id,
                 details => e.details,
+            }
+        })
+        .collect();
+
+    // Build actor filter options with display names, keeping raw IDs as values
+    let actor_options: Vec<minijinja::Value> = actors
+        .iter()
+        .map(|a| {
+            minijinja::context! {
+                value => a,
+                label => resolve_actor(a),
             }
         })
         .collect();
@@ -326,7 +349,7 @@ async fn audit_log_page(
             base_template => base_for_htmx(is_htmx),
             user_role => user_role,
             entries => entry_data,
-            actors => actors,
+            actors => actor_options,
             filter_action => filter.action,
             filter_actor => filter.actor,
             pagination_qs => pagination_qs,
