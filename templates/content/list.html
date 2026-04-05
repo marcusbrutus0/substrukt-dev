@@ -45,7 +45,10 @@
         <td class="px-4 py-2.5 text-right space-x-2">
           <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/edit" class="text-accent hover:underline text-sm">{% if user_role == "viewer" %}View{% else %}Edit{% endif %}</a>
           {% if user_role != "viewer" %}
-          <button type="button" onclick="event.stopPropagation(); deleteEntry('{{ entry.id }}', this)" hx-boost="false" hx-disable class="text-danger hover:text-danger text-sm">Delete</button>
+          <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/delete" hx-boost="false" onsubmit="return confirm('Delete this entry?')" class="inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit" class="text-danger hover:text-danger text-sm">Delete</button>
+          </form>
           {% endif %}
         </td>
       </tr>
@@ -59,22 +62,4 @@
 </div>
 {% endif %}
 
-<script>
-var _deleting = false;
-function deleteEntry(id, btn) {
-  if (_deleting) return;
-  _deleting = true;
-  if (btn) btn.disabled = true;
-  if (!confirm('Delete this entry?')) {
-    _deleting = false;
-    if (btn) btn.disabled = false;
-    return;
-  }
-  fetch('/apps/{{ app.slug }}/content/{{ schema_slug }}/' + id, {
-    method: 'DELETE',
-    headers: { 'X-CSRF-Token': '{{ csrf_token }}' }
-  }).then(function() { window.location.reload(); })
-    .catch(function() { _deleting = false; if (btn) btn.disabled = false; });
-}
-</script>
 {% endblock %}

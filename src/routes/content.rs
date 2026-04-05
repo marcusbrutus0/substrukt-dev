@@ -40,6 +40,10 @@ pub fn routes() -> Router<AppState> {
             "/{schema_slug}/{entry_id}",
             axum::routing::post(update_entry).delete(delete_entry),
         )
+        .route(
+            "/{schema_slug}/{entry_id}/delete",
+            axum::routing::post(delete_entry_post),
+        )
         .route("/{schema_slug}/{entry_id}/history", get(entry_history))
         .route(
             "/{schema_slug}/{entry_id}/revert/{timestamp}",
@@ -698,6 +702,23 @@ async fn delete_entry(
     );
 
     axum::http::StatusCode::NO_CONTENT
+}
+
+async fn delete_entry_post(
+    State(state): State<AppState>,
+    session: Session,
+    app: AppContext,
+    Path((app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
+) -> impl IntoResponse {
+    let redirect_url = format!("/apps/{app_slug}/content/{schema_slug}");
+    delete_entry(
+        State(state),
+        session,
+        app,
+        Path((app_slug, schema_slug, entry_id)),
+    )
+    .await;
+    Redirect::to(&redirect_url).into_response()
 }
 
 async fn publish_entry(
