@@ -391,6 +391,7 @@ async fn edit_entry_page(
 }
 
 async fn create_entry(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
     app: AppContext,
@@ -448,6 +449,8 @@ async fn create_entry(
 
     // Validate
     if let Err(errors) = content::validate_content(&schema_file, &data) {
+        let csrf_token = auth::ensure_csrf_token(&session).await;
+        let user_role = auth::current_user_role(&session).await.unwrap_or_default();
         let ref_options =
             build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
         let form_html =
@@ -455,6 +458,9 @@ async fn create_entry(
         if let Ok(tmpl) = state.templates.acquire_env()
             && let Ok(template) = tmpl.get_template("content/edit.html")
             && let Ok(html) = template.render(minijinja::context! {
+                base_template => base_for_htmx(is_htmx),
+                csrf_token => csrf_token,
+                user_role => user_role,
                 app => app.template_context(),
                 nav_schemas => app.nav_schemas(&state.config),
                 schema_title => schema_file.meta.title,
@@ -505,6 +511,7 @@ async fn create_entry(
 }
 
 async fn update_entry(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
     app: AppContext,
@@ -556,6 +563,8 @@ async fn update_entry(
     warn_dangling_references(&data, &schema_file.schema, &state.cache, &app.app.slug);
 
     if let Err(errors) = content::validate_content(&schema_file, &data) {
+        let csrf_token = auth::ensure_csrf_token(&session).await;
+        let user_role = auth::current_user_role(&session).await.unwrap_or_default();
         let ref_options =
             build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
         let form_html =
@@ -563,6 +572,9 @@ async fn update_entry(
         if let Ok(tmpl) = state.templates.acquire_env()
             && let Ok(template) = tmpl.get_template("content/edit.html")
             && let Ok(html) = template.render(minijinja::context! {
+                base_template => base_for_htmx(is_htmx),
+                csrf_token => csrf_token,
+                user_role => user_role,
                 app => app.template_context(),
                 nav_schemas => app.nav_schemas(&state.config),
                 schema_title => schema_file.meta.title,

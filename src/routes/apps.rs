@@ -53,6 +53,7 @@ async fn list_apps(
     let user_id = auth::current_user_id(&session).await.unwrap_or(0);
     let user_role = auth::current_user_role(&session).await.unwrap_or_default();
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let flash = auth::take_flash(&session).await;
 
     let apps = if user_role == "admin" {
         models::list_apps(&state.pool)
@@ -93,6 +94,8 @@ async fn list_apps(
             csrf_token => csrf_token,
             user_role => user_role,
             apps => app_data,
+            flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
+            flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
         })
         .map_err(|e| format!("Render error: {e}"))?;
     Ok(Html(html))
@@ -156,7 +159,7 @@ async fn create_app(
             }
             state.audit.log(
                 &user_id.to_string(),
-                "app_created",
+                "app_create",
                 "app",
                 &app.slug,
                 Some(&serde_json::json!({"name": app.name}).to_string()),
@@ -353,7 +356,7 @@ async fn create_token(
         Ok(_) => {
             state.audit.log_with_app(
                 &user_id.to_string(),
-                "token_created",
+                "token_create",
                 "token",
                 name,
                 None,
@@ -380,7 +383,7 @@ async fn delete_token(
         .map_err(|e| format!("DB error: {e}"))?;
     state.audit.log_with_app(
         &user_id.to_string(),
-        "token_deleted",
+        "token_delete",
         "token",
         &token_id.to_string(),
         None,
@@ -615,7 +618,7 @@ async fn delete_app(
 
     state.audit.log(
         &user_id.to_string(),
-        "app_deleted",
+        "app_delete",
         "app",
         &app.app.slug,
         Some(&serde_json::json!({"name": app.app.name}).to_string()),

@@ -121,6 +121,7 @@ pub struct SchemaForm {
 }
 
 async fn create_schema(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
     app: AppContext,
@@ -133,7 +134,9 @@ async fn create_schema(
         Err(e) => {
             return render_schema_edit(
                 &state,
+                &session,
                 &app,
+                is_htmx,
                 true,
                 &form.schema_json,
                 &format!("Invalid JSON: {e}"),
@@ -144,9 +147,17 @@ async fn create_schema(
     };
 
     if let Err(e) = schema::validate_schema(&schema_value) {
-        return render_schema_edit(&state, &app, true, &form.schema_json, &format!("{e}"))
-            .await
-            .into_response();
+        return render_schema_edit(
+            &state,
+            &session,
+            &app,
+            is_htmx,
+            true,
+            &form.schema_json,
+            &format!("{e}"),
+        )
+        .await
+        .into_response();
     }
 
     let meta = schema_value
@@ -159,7 +170,9 @@ async fn create_schema(
         _ => {
             return render_schema_edit(
                 &state,
+                &session,
                 &app,
+                is_htmx,
                 true,
                 &form.schema_json,
                 "Schema must have a title and slug in x-substrukt",
@@ -172,7 +185,9 @@ async fn create_schema(
     if let Err(e) = schema::save_schema(&schemas_dir, &slug, &schema_value) {
         return render_schema_edit(
             &state,
+            &session,
             &app,
+            is_htmx,
             true,
             &form.schema_json,
             &format!("Save error: {e}"),
@@ -231,6 +246,7 @@ async fn edit_schema_page(
 }
 
 async fn update_schema(
+    HxRequest(is_htmx): HxRequest,
     State(state): State<AppState>,
     session: Session,
     app: AppContext,
@@ -244,7 +260,9 @@ async fn update_schema(
         Err(e) => {
             return render_schema_edit(
                 &state,
+                &session,
                 &app,
+                is_htmx,
                 false,
                 &form.schema_json,
                 &format!("Invalid JSON: {e}"),
@@ -255,15 +273,25 @@ async fn update_schema(
     };
 
     if let Err(e) = schema::validate_schema(&schema_value) {
-        return render_schema_edit(&state, &app, false, &form.schema_json, &format!("{e}"))
-            .await
-            .into_response();
+        return render_schema_edit(
+            &state,
+            &session,
+            &app,
+            is_htmx,
+            false,
+            &form.schema_json,
+            &format!("{e}"),
+        )
+        .await
+        .into_response();
     }
 
     if let Err(e) = schema::save_schema(&schemas_dir, &slug, &schema_value) {
         return render_schema_edit(
             &state,
+            &session,
             &app,
+            is_htmx,
             false,
             &form.schema_json,
             &format!("Save error: {e}"),
@@ -306,11 +334,15 @@ async fn delete_schema(
 
 async fn render_schema_edit(
     state: &AppState,
+    session: &Session,
     app: &AppContext,
+    is_htmx: bool,
     is_new: bool,
     schema_json: &str,
     error: &str,
 ) -> axum::response::Result<Html<String>> {
+    let csrf_token = auth::ensure_csrf_token(session).await;
+    let user_role = auth::current_user_role(session).await.unwrap_or_default();
     let tmpl = state
         .templates
         .acquire_env()
@@ -320,6 +352,9 @@ async fn render_schema_edit(
         .map_err(|e| format!("Template error: {e}"))?;
     let html = template
         .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            csrf_token => csrf_token,
+            user_role => user_role,
             app => app.template_context(),
             nav_schemas => app.nav_schemas(&state.config),
             is_new => is_new,

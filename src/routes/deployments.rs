@@ -230,7 +230,7 @@ async fn create_deployment(
         Ok(dep) => {
             state.audit.log_with_app(
                 &user_id.to_string(),
-                "deployment_created",
+                "deployment_create",
                 "deployment",
                 &dep.slug,
                 Some(&serde_json::json!({"name": dep.name}).to_string()),
@@ -457,7 +457,7 @@ async fn delete_deployment(
 
     state.audit.log_with_app(
         &user_id.to_string(),
-        "deployment_deleted",
+        "deployment_delete",
         "deployment",
         &dep.slug,
         Some(&serde_json::json!({"name": dep.name}).to_string()),
