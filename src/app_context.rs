@@ -9,7 +9,7 @@ use tower_sessions::Session;
 
 use crate::config::Config;
 use crate::db::models::{self, App};
-use crate::routes::render_error;
+use crate::routes::{render_error, render_error_with_nav};
 use crate::schema;
 use crate::state::AppState;
 
@@ -105,14 +105,34 @@ impl FromRequestParts<AppState> for AppContext {
 
         // Admins have access to all apps; others need explicit access
         if user_role != "admin" {
+            let current_username = crate::auth::current_username(&session)
+                .await
+                .unwrap_or_default();
+            let csrf_token = crate::auth::ensure_csrf_token(&session).await;
             let has_access = models::user_has_app_access(&state.pool, app.id, user_id)
                 .await
                 .map_err(|_| {
-                    let html = render_error(state, 500, "Internal error", is_htmx);
+                    let html = render_error_with_nav(
+                        state,
+                        500,
+                        "Internal error",
+                        is_htmx,
+                        &user_role,
+                        &current_username,
+                        &csrf_token,
+                    );
                     (StatusCode::INTERNAL_SERVER_ERROR, Html(html)).into_response()
                 })?;
             if !has_access {
-                let html = render_error(state, 403, "You do not have access to this app", is_htmx);
+                let html = render_error_with_nav(
+                    state,
+                    403,
+                    "You do not have access to this app",
+                    is_htmx,
+                    &user_role,
+                    &current_username,
+                    &csrf_token,
+                );
                 return Err((StatusCode::FORBIDDEN, Html(html)).into_response());
             }
         }

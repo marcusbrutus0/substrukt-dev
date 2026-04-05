@@ -97,7 +97,9 @@
 </head>
 <body class="bg-surface text-primary min-h-screen" hx-boost="true" hx-target="#main-content" hx-swap="innerHTML">
   <div class="flex min-h-screen">
-    {% include "_nav.html" %}
+    <nav id="sidebar-nav" class="w-56 bg-sidebar text-white p-4 flex flex-col gap-1 min-h-screen border-r border-border-light">
+      {% include "_nav.html" %}
+    </nav>
     <main id="main-content" class="flex-1 p-8">
       {% if flash_kind %}
       <div class="mb-4 p-4 rounded-md text-sm
@@ -227,9 +229,28 @@
         delete btn.dataset.originalText;
       });
     }
+    function highlightActiveNav() {
+      var path = window.location.pathname;
+      document.querySelectorAll('#sidebar-nav a').forEach(function(link) {
+        var href = link.getAttribute('href');
+        if (!href) return;
+        var isActive;
+        if (href === '/apps') {
+          isActive = (path === '/apps');
+        } else {
+          isActive = (path === href) || path.startsWith(href + '/');
+        }
+        if (isActive) {
+          link.classList.add('bg-sidebar-hover', 'text-white');
+        } else {
+          link.classList.remove('bg-sidebar-hover', 'text-white');
+        }
+      });
+    }
     initMarkdownEditors();
     initUploadZones();
     initSubmitSpinner();
+    highlightActiveNav();
     document.body.addEventListener('htmx:afterSwap', function() {
       initMarkdownEditors();
       initUploadZones();
@@ -240,6 +261,9 @@
         document.title = titleEl.textContent.trim();
         titleEl.remove();
       }
+    });
+    document.body.addEventListener('htmx:afterSettle', function() {
+      highlightActiveNav();
     });
     function toggleTheme() {
       var isDark = document.documentElement.classList.toggle('dark');

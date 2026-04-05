@@ -105,11 +105,38 @@ async fn not_found(
         return Redirect::to("/login").into_response();
     }
 
-    let html = render_error(&state, 404, "Page not found", is_htmx);
+    let user_role = crate::auth::current_user_role(&session)
+        .await
+        .unwrap_or_default();
+    let current_username = crate::auth::current_username(&session)
+        .await
+        .unwrap_or_default();
+    let csrf_token = crate::auth::ensure_csrf_token(&session).await;
+    let html = render_error_with_nav(
+        &state,
+        404,
+        "Page not found",
+        is_htmx,
+        &user_role,
+        &current_username,
+        &csrf_token,
+    );
     (axum::http::StatusCode::NOT_FOUND, Html(html)).into_response()
 }
 
 pub fn render_error(state: &AppState, status: u16, message: &str, is_htmx: bool) -> String {
+    render_error_with_nav(state, status, message, is_htmx, "", "", "")
+}
+
+pub fn render_error_with_nav(
+    state: &AppState,
+    status: u16,
+    message: &str,
+    is_htmx: bool,
+    user_role: &str,
+    current_username: &str,
+    csrf_token: &str,
+) -> String {
     let Ok(tmpl) = state.templates.acquire_env() else {
         return format!("<h1>{status}</h1><p>{message}</p>");
     };
@@ -118,6 +145,9 @@ pub fn render_error(state: &AppState, status: u16, message: &str, is_htmx: bool)
             base_template => base_for_htmx(is_htmx),
             status => status,
             message => message,
+            user_role => user_role,
+            current_username => current_username,
+            csrf_token => csrf_token,
         })
     {
         return html;
