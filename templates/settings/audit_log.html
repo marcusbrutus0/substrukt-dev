@@ -22,6 +22,10 @@
     <option value="invite_delete" {% if filter_action == "invite_delete" %}selected{% endif %}>invite_delete</option>
     <option value="import" {% if filter_action == "import" %}selected{% endif %}>import</option>
     <option value="export" {% if filter_action == "export" %}selected{% endif %}>export</option>
+    <option value="app_create" {% if filter_action == "app_create" %}selected{% endif %}>app_create</option>
+    <option value="app_delete" {% if filter_action == "app_delete" %}selected{% endif %}>app_delete</option>
+    <option value="deployment_create" {% if filter_action == "deployment_create" %}selected{% endif %}>deployment_create</option>
+    <option value="deployment_delete" {% if filter_action == "deployment_delete" %}selected{% endif %}>deployment_delete</option>
   </select>
   <select onchange="applyFilters()" id="filter-actor"
     class="px-3 py-2 border border-border rounded-md bg-input-bg text-sm">

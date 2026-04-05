@@ -400,20 +400,37 @@ fn patch_upload_types(schema: &Value) -> Value {
 }
 
 fn generate_entry_id(schema: &SchemaFile, data: &Value) -> String {
-    // Try to use the id_field from meta, or find first string field
+    // Try to use the id_field from meta, or find a suitable string field.
+    // Prefer well-known naming fields (title, name, label, etc.) over
+    // alphabetical iteration, which would pick "body" before "title".
     let id_field = schema.meta.id_field.clone().or_else(|| {
         schema
             .schema
             .get("properties")
             .and_then(|p| p.as_object())
             .and_then(|props| {
-                props.iter().find_map(|(key, val)| {
-                    if val.get("type").and_then(|t| t.as_str()) == Some("string")
+                let is_plain_string = |val: &Value| {
+                    val.get("type").and_then(|t| t.as_str()) == Some("string")
                         && !matches!(
                             val.get("format").and_then(|f| f.as_str()),
                             Some("upload") | Some("reference")
                         )
-                    {
+                };
+
+                // Check well-known title/name fields first, in priority order
+                const PREFERRED_FIELDS: &[&str] =
+                    &["title", "name", "label", "heading", "subject", "slug"];
+                for &field in PREFERRED_FIELDS {
+                    if let Some(val) = props.get(field) {
+                        if is_plain_string(val) {
+                            return Some(field.to_string());
+                        }
+                    }
+                }
+
+                // Fall back to first plain string field (alphabetical via BTreeMap)
+                props.iter().find_map(|(key, val)| {
+                    if is_plain_string(val) {
                         Some(key.clone())
                     } else {
                         None

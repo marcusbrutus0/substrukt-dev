@@ -11,3 +11,5 @@
 /.claude/summaries/
 .worktrees/
 /node_modules/
+.playwright-cli/
+.playwright/

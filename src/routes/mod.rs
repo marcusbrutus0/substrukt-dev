@@ -9,15 +9,16 @@ pub mod uploads;
 
 use axum::{
     Router,
-    extract::{Request, State},
+    extract::{OriginalUri, Request, State},
     middleware,
     middleware::Next,
     response::{Html, IntoResponse, Redirect, Response},
 };
 use axum_htmx::HxRequest;
 use tower_http::catch_panic::CatchPanicLayer;
+use tower_sessions::Session;
 
-use crate::auth::{require_auth, verify_csrf};
+use crate::auth::{current_user_id, require_auth, verify_csrf};
 use crate::metrics;
 use crate::state::AppState;
 use crate::templates::base_for_htmx;
@@ -88,11 +89,24 @@ fn handle_panic(_err: Box<dyn std::any::Any + Send + 'static>) -> axum::response
 }
 
 async fn not_found(
+    OriginalUri(uri): OriginalUri,
     HxRequest(is_htmx): HxRequest,
+    session: Session,
     State(state): State<AppState>,
-) -> (axum::http::StatusCode, Html<String>) {
+) -> Response {
+    // API routes get a plain 404 — no redirect, no HTML layout.
+    if uri.path().starts_with("/api/") {
+        return (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+    }
+
+    // If user is not authenticated, redirect to login instead of showing
+    // the full app layout with sidebar navigation.
+    if current_user_id(&session).await.is_none() {
+        return Redirect::to("/login").into_response();
+    }
+
     let html = render_error(&state, 404, "Page not found", is_htmx);
-    (axum::http::StatusCode::NOT_FOUND, Html(html))
+    (axum::http::StatusCode::NOT_FOUND, Html(html)).into_response()
 }
 
 pub fn render_error(state: &AppState, status: u16, message: &str, is_htmx: bool) -> String {

@@ -99,7 +99,7 @@
 <div class="flex gap-4">
   <a href="/apps/{{ app.slug }}/settings/data" class="text-accent hover:underline text-sm font-medium">Import / Export Data</a>
   {% if app.slug != "default" %}
-  <form method="post" action="/apps/{{ app.slug }}/delete" class="inline"
+  <form method="post" action="/apps/{{ app.slug }}/delete" class="inline" hx-boost="false"
     onsubmit="return confirm('Delete app \'{{ app.name }}\'? This will permanently remove all schemas, content, uploads, and deployments for this app. This cannot be undone.')">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <button type="submit" class="text-danger hover:underline text-sm font-medium">Delete App</button>

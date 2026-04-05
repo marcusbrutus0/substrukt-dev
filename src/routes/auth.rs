@@ -80,6 +80,7 @@ async fn login_submit(
                 minijinja::context! {
                     csrf_token => csrf_token,
                     error => "Invalid username or password",
+                    username => form.username,
                 },
             )
             .await;
