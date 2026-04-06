@@ -14,6 +14,7 @@ use axum::{
     middleware::Next,
     response::{Html, IntoResponse, Redirect, Response},
 };
+use axum::http::header;
 use axum_htmx::HxRequest;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_sessions::Session;
@@ -53,6 +54,8 @@ pub fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .nest("/api/v1", api_routes)
         .route("/healthz", axum::routing::get(healthz))
+        .route("/static/favicon.svg", axum::routing::get(serve_favicon))
+        .route("/static/wavefunk.svg", axum::routing::get(serve_wavefunk_logo))
         .route("/metrics", axum::routing::get(metrics::metrics_handler))
         .fallback(not_found)
         .layer(middleware::from_fn(metrics::track_metrics))
@@ -157,4 +160,18 @@ pub fn render_error_with_nav(
 
 async fn healthz() -> &'static str {
     "ok"
+}
+
+async fn serve_favicon() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+        include_str!("../../website/roundedicon.svg"),
+    )
+}
+
+async fn serve_wavefunk_logo() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+        include_str!("../../website/wavefunk.svg"),
+    )
 }

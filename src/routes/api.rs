@@ -124,6 +124,7 @@ pub fn api_app_routes() -> Router<AppState> {
         )
         .route("/uploads", post(upload_file))
         .route("/uploads/{hash}", get(get_upload))
+        .route("/uploads/{hash}/{filename}", get(get_upload_named))
         .route("/export", post(export_bundle))
         .route("/import", post(import_bundle))
         .route("/deployments", get(api_list_deployments))
@@ -903,6 +904,26 @@ async fn get_upload(
     token: BearerToken,
     app: ApiAppContext,
     Path((_app_slug, hash)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    get_upload_by_hash(state, token, app, hash, headers).await
+}
+
+async fn get_upload_named(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, hash, _filename)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    get_upload_by_hash(state, token, app, hash, headers).await
+}
+
+async fn get_upload_by_hash(
+    state: AppState,
+    token: BearerToken,
+    app: ApiAppContext,
+    hash: String,
     headers: HeaderMap,
 ) -> impl IntoResponse {
     if let Err(e) = require_token_app(&token, &app) {
