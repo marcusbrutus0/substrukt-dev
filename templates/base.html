@@ -86,6 +86,18 @@
     *, *::before, *::after {
       transition: background-color 0.15s, color 0.15s, border-color 0.15s;
     }
+    .field-error {
+      display: none;
+      color: var(--danger);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+    }
+    .was-validated :invalid {
+      border-color: var(--danger) !important;
+    }
+    .was-validated :invalid ~ .field-error {
+      display: block;
+    }
   </style>
   <script>
     (function() {
@@ -246,6 +258,14 @@
         });
       });
     }
+    function initFormValidation() {
+      document.querySelectorAll('form:not(.validation-init)').forEach(function(form) {
+        form.classList.add('validation-init');
+        form.addEventListener('submit', function() {
+          form.classList.add('was-validated');
+        });
+      });
+    }
     function initSubmitSpinner() {
       document.querySelectorAll('form[enctype="multipart/form-data"]:not(.spinner-init)').forEach(function(form) {
         form.classList.add('spinner-init');
@@ -297,11 +317,13 @@
     initMarkdownEditors();
     initUploadZones();
     initSubmitSpinner();
+    initFormValidation();
     highlightActiveNav();
     document.body.addEventListener('htmx:afterSwap', function() {
       initMarkdownEditors();
       initUploadZones();
       initSubmitSpinner();
+      initFormValidation();
       resetSubmitSpinners();
       var titleEl = document.getElementById('page-title');
       if (titleEl) {
