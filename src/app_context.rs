@@ -9,7 +9,7 @@ use tower_sessions::Session;
 
 use crate::config::Config;
 use crate::db::models::{self, App};
-use crate::routes::{render_error, render_error_with_nav};
+use crate::routes::render_error_with_nav;
 use crate::schema;
 use crate::state::AppState;
 
@@ -59,81 +59,55 @@ impl FromRequestParts<AppState> for AppContext {
             .await
             .unwrap_or(HxRequest(false));
 
+        // Extract session early so all error paths can include user nav context
+        let session = parts.extensions.get::<Session>().cloned();
+        let (user_role, current_username, csrf_token) = if let Some(ref s) = session {
+            let role = crate::auth::current_user_role(s).await.unwrap_or_default();
+            let username = crate::auth::current_username(s).await.unwrap_or_default();
+            let csrf = crate::auth::ensure_csrf_token(s).await;
+            (role, username, csrf)
+        } else {
+            (String::new(), String::new(), String::new())
+        };
+
+        let err_nav = |status: u16, msg: &str| {
+            let html =
+                render_error_with_nav(state, status, msg, is_htmx, &user_role, &current_username, &csrf_token);
+            (StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), Html(html))
+                .into_response()
+        };
+
         // Extract app_slug from path params
         let params: HashMap<String, String> =
             match Path::<HashMap<String, String>>::from_request_parts(parts, state).await {
                 Ok(Path(params)) => params,
-                Err(_) => {
-                    let html = render_error(state, 404, "Not found", is_htmx);
-                    return Err((StatusCode::NOT_FOUND, Html(html)).into_response());
-                }
+                Err(_) => return Err(err_nav(404, "Not found")),
             };
 
-        let slug = params.get("app_slug").ok_or_else(|| {
-            let html = render_error(state, 404, "Not found", is_htmx);
-            (StatusCode::NOT_FOUND, Html(html)).into_response()
-        })?;
+        let slug = params
+            .get("app_slug")
+            .ok_or_else(|| err_nav(404, "Not found"))?;
 
         // Look up app
         let app = models::find_app_by_slug(&state.pool, slug)
             .await
-            .map_err(|_| {
-                let html = render_error(state, 500, "Internal error", is_htmx);
-                (StatusCode::INTERNAL_SERVER_ERROR, Html(html)).into_response()
-            })?
-            .ok_or_else(|| {
-                let html = render_error(state, 404, "App not found", is_htmx);
-                (StatusCode::NOT_FOUND, Html(html)).into_response()
-            })?;
+            .map_err(|_| err_nav(500, "Internal error"))?
+            .ok_or_else(|| err_nav(404, "App not found"))?;
 
-        // Check access: get session from extensions (set by require_auth middleware)
-        let session = parts.extensions.get::<Session>().cloned().ok_or_else(|| {
-            let html = render_error(state, 500, "Session not available", is_htmx);
-            (StatusCode::INTERNAL_SERVER_ERROR, Html(html)).into_response()
-        })?;
+        // Require authenticated session
+        let session = session.ok_or_else(|| err_nav(500, "Session not available"))?;
 
         let user_id = crate::auth::current_user_id(&session)
             .await
-            .ok_or_else(|| {
-                let html = render_error(state, 403, "Not authenticated", is_htmx);
-                (StatusCode::FORBIDDEN, Html(html)).into_response()
-            })?;
-
-        let user_role = crate::auth::current_user_role(&session)
-            .await
-            .unwrap_or_default();
+            .ok_or_else(|| err_nav(403, "Not authenticated"))?;
 
         // Admins have access to all apps; others need explicit access
         if user_role != "admin" {
-            let current_username = crate::auth::current_username(&session)
-                .await
-                .unwrap_or_default();
-            let csrf_token = crate::auth::ensure_csrf_token(&session).await;
             let has_access = models::user_has_app_access(&state.pool, app.id, user_id)
                 .await
-                .map_err(|_| {
-                    let html = render_error_with_nav(
-                        state,
-                        500,
-                        "Internal error",
-                        is_htmx,
-                        &user_role,
-                        &current_username,
-                        &csrf_token,
-                    );
-                    (StatusCode::INTERNAL_SERVER_ERROR, Html(html)).into_response()
-                })?;
+                .map_err(|_| err_nav(500, "Internal error"))?;
             if !has_access {
-                let html = render_error_with_nav(
-                    state,
-                    403,
-                    "You do not have access to this app",
-                    is_htmx,
-                    &user_role,
-                    &current_username,
-                    &csrf_token,
-                );
-                return Err((StatusCode::FORBIDDEN, Html(html)).into_response());
+                return Err(err_nav(403, "You do not have access to this app"));
             }
         }
 
