@@ -249,7 +249,7 @@ fn render_form_fields_inner(
     for key in keys {
         let prop_schema = &properties[key];
         // Skip internal fields
-        if key == "_id" {
+        if key == "_id" || key == "_status" {
             continue;
         }
 
@@ -301,6 +301,11 @@ fn render_field(
 ) -> String {
     let req_attr = if required { " required" } else { "" };
     let req_star = if required { " *" } else { "" };
+    let req_msg = if required {
+        r#"<span class="field-error">This field is required.</span>"#
+    } else {
+        ""
+    };
 
     match (field_type, format) {
         ("string", Some("markdown")) => {
@@ -311,7 +316,7 @@ fn render_field(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   <textarea id="{name}" name="{name}" rows="12" data-markdown class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
-{hint_html}</div>
+{req_msg}{hint_html}</div>
 "#
             )
         }
@@ -323,7 +328,7 @@ fn render_field(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
-{hint_html}</div>
+{req_msg}{hint_html}</div>
 "#
             )
         }
@@ -399,7 +404,7 @@ fn render_field(
   <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
     {opts_html}
   </select>
-{hint_html}</div>
+{req_msg}{hint_html}</div>
 "#
             )
         }
@@ -424,7 +429,7 @@ fn render_field(
   <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
     {options}
   </select>
-{hint_html}</div>
+{req_msg}{hint_html}</div>
 "#
                 )
             } else if schema.get("x-control").and_then(|v| v.as_str()) == Some("textarea") {
@@ -436,7 +441,7 @@ fn render_field(
                     r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
-{hint_html}</div>
+{req_msg}{hint_html}</div>
 "#
                 )
             } else {
@@ -447,7 +452,7 @@ fn render_field(
                     r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>
-{hint_html}</div>
+{req_msg}{hint_html}</div>
 "#
                 )
             }
@@ -474,7 +479,7 @@ fn render_field(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   <input type="number" id="{name}" name="{name}" value="{val}"{step}{constraint_attrs} class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
-{hint_html}</div>
+{req_msg}{hint_html}</div>
 "#
             )
         }
@@ -573,7 +578,7 @@ fn render_field(
                 r#"<div class="mb-4">
   <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-border rounded-md"{req_attr}>
-</div>
+{req_msg}</div>
 "#
             )
         }
