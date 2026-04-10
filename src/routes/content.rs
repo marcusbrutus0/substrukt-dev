@@ -718,6 +718,7 @@ async fn delete_entry(
         Some(app.app.id),
     );
 
+    auth::set_flash(&session, "success", "Entry deleted").await;
     axum::http::StatusCode::NO_CONTENT
 }
 
