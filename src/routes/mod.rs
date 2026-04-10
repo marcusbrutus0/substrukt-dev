@@ -50,7 +50,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/apps/{app_slug}", app_content)
         .nest("/settings", settings_routes)
         .route("/", axum::routing::get(|| async { Redirect::to("/apps") }))
-        .layer(middleware::from_fn(verify_csrf))
+        .layer(middleware::from_fn_with_state(state.clone(), verify_csrf))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .nest("/api/v1", api_routes)
         .route("/healthz", axum::routing::get(healthz))

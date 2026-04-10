@@ -157,7 +157,11 @@ pub async fn verify_csrf_token(session: &Session, submitted: &str) -> bool {
 /// Middleware: verify CSRF token on mutating requests (POST/PUT/DELETE).
 /// Checks X-CSRF-Token header first, then _csrf form field for urlencoded bodies.
 /// Multipart forms are passed through — handlers must verify _csrf from parsed fields.
-pub async fn verify_csrf(request: Request, next: Next) -> Response {
+pub async fn verify_csrf(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
     if matches!(
         *request.method(),
         Method::GET | Method::HEAD | Method::OPTIONS
@@ -179,7 +183,7 @@ pub async fn verify_csrf(request: Request, next: Next) -> Response {
         if verify_csrf_token(&session, token).await {
             return next.run(request).await;
         }
-        return (axum::http::StatusCode::FORBIDDEN, "Invalid CSRF token").into_response();
+        return csrf_error_response(&state);
     }
 
     let content_type = request
@@ -212,7 +216,7 @@ pub async fn verify_csrf(request: Request, next: Next) -> Response {
             return next.run(request).await;
         }
 
-        return (axum::http::StatusCode::FORBIDDEN, "Invalid CSRF token").into_response();
+        return csrf_error_response(&state);
     }
 
     // Multipart: handler must verify _csrf from parsed fields
@@ -221,6 +225,17 @@ pub async fn verify_csrf(request: Request, next: Next) -> Response {
     }
 
     next.run(request).await
+}
+
+fn csrf_error_response(state: &AppState) -> Response {
+    use axum::response::Html;
+    let html = crate::routes::render_error(
+        state,
+        403,
+        "Your session may have expired. Please go back and try again.",
+        false,
+    );
+    (axum::http::StatusCode::FORBIDDEN, Html(html)).into_response()
 }
 
 /// Middleware: redirect to /setup if no users exist, or to /login if not authenticated.

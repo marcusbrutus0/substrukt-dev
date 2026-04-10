@@ -412,6 +412,7 @@ async fn delete_invitation(
         &id.to_string(),
         None,
     );
+    auth::set_flash(&session, "success", "Invitation revoked").await;
     Ok(Redirect::to("/settings/users").into_response())
 }
 

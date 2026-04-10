@@ -77,13 +77,13 @@
   {% if has_prev %}
   <a href="/settings/audit-log?{{ pagination_qs }}page={{ page - 1 }}" class="text-sm text-accent hover:underline">← Previous</a>
   {% else %}
-  <span class="text-sm text-muted">← Previous</span>
+  <span class="text-sm text-muted opacity-50 cursor-not-allowed select-none">← Previous</span>
   {% endif %}
   <span class="text-sm text-muted">Page {{ page }}</span>
   {% if has_next %}
   <a href="/settings/audit-log?{{ pagination_qs }}page={{ page + 1 }}" class="text-sm text-accent hover:underline">Next →</a>
   {% else %}
-  <span class="text-sm text-muted">Next →</span>
+  <span class="text-sm text-muted opacity-50 cursor-not-allowed select-none">Next →</span>
   {% endif %}
 </div>
 {% else %}
