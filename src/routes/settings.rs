@@ -3,6 +3,7 @@ use std::sync::atomic::Ordering;
 use axum::{
     Form, Router,
     extract::State,
+    http::HeaderMap,
     response::{Html, IntoResponse, Redirect},
     routing::get,
 };
@@ -102,6 +103,7 @@ pub struct InviteForm {
 
 async fn invite_user(
     HxRequest(is_htmx): HxRequest,
+    headers: HeaderMap,
     State(state): State<AppState>,
     session: Session,
     Form(form): Form<InviteForm>,
@@ -164,7 +166,12 @@ async fn invite_user(
         Some(&serde_json::json!({"email": form.email}).to_string()),
     );
 
-    let invite_url = format!("/signup?token={raw_token}");
+    let host = headers
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let scheme = if state.config.secure_cookies { "https" } else { "http" };
+    let invite_url = format!("{scheme}://{host}/signup?token={raw_token}");
 
     let invitations = models::list_pending_invitations(&state.pool)
         .await

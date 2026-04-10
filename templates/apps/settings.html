@@ -48,9 +48,11 @@
       </label>
       {% endfor %}
     </div>
+    {% if users %}
     <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
       Save Access
     </button>
+    {% endif %}
   </form>
 </div>
 
@@ -102,7 +104,7 @@
   <form method="post" action="/apps/{{ app.slug }}/delete" class="inline" hx-boost="false"
     onsubmit="return confirm('Delete app \'{{ app.name }}\'? This will permanently remove all schemas, content, uploads, and deployments for this app. This cannot be undone.')">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit" class="text-danger hover:underline text-sm font-medium">Delete App</button>
+    <button type="submit" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-md text-sm font-medium">Delete App</button>
   </form>
 </div>
 {% endif %}

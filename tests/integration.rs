@@ -2096,8 +2096,19 @@ fn extract_invite_url(html: &str) -> Option<String> {
                 .replace("&#x2f;", "/")
                 .replace("&#x3d;", "=")
                 .replace("&amp;", "&");
-            if url.starts_with("/signup?token=") {
-                return Some(url.to_string());
+            // The URL may be absolute (http://host/signup?token=...) or relative (/signup?token=...)
+            // Strip the scheme+host prefix if present, returning just the path portion.
+            let path = if let Some(rest) = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")) {
+                if let Some(slash) = rest.find('/') {
+                    &rest[slash..]
+                } else {
+                    &url
+                }
+            } else {
+                &url
+            };
+            if path.starts_with("/signup?token=") {
+                return Some(path.to_string());
             }
         }
     }

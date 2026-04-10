@@ -80,7 +80,7 @@
     <script>(function(){var el=document.currentScript.previousElementSibling.querySelector('.theme-icon');el.textContent=document.documentElement.classList.contains('dark')?'\u2600':'\u263E'})()</script>
     <h1 class="text-2xl font-bold mb-6 text-center font-mono tracking-tight">Substrukt</h1>
     {% if error %}
-    <div class="bg-danger-soft text-danger p-3 rounded mb-4 text-sm">{{ error }}</div>
+    <div class="bg-danger-soft text-danger p-3 rounded mb-4 text-sm" role="alert">{{ error }}</div>
     {% endif %}
     <form method="post" action="/login">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">

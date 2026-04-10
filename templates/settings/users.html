@@ -88,7 +88,7 @@
           <form method="post" action="/settings/users/invitations/{{ inv.id }}/delete" class="inline">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <button type="submit" class="text-danger hover:text-danger text-sm"
-              onclick="return confirm('Cancel this invitation?')">Cancel</button>
+              onclick="return confirm('Revoke this invitation?')">Revoke</button>
           </form>
         </td>
       </tr>
