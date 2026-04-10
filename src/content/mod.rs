@@ -451,6 +451,25 @@ fn generate_entry_id(schema: &SchemaFile, data: &Value) -> String {
     Uuid::new_v4().to_string()
 }
 
+/// Render a markdown string to sanitized HTML using pulldown-cmark with GFM extensions.
+/// Raw HTML in the markdown input is stripped (not passed through) as a security measure.
+pub fn render_markdown(input: &str) -> String {
+    use pulldown_cmark::{Event, Options, Parser, html};
+
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+
+    let parser = Parser::new_ext(input, options);
+    // Strip raw HTML events to prevent XSS in rendered output
+    let parser = parser.filter(|event| !matches!(event, Event::Html(_) | Event::InlineHtml(_)));
+
+    let mut html_output = String::new();
+    html::push_html(&mut html_output, parser);
+    html_output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -828,5 +847,58 @@ mod tests {
             entry.data.get("title").and_then(|v| v.as_str()),
             Some("Old")
         );
+    }
+
+    #[test]
+    fn render_markdown_basic() {
+        let html = render_markdown("# Hello\n\nThis is **bold** and a [link](https://example.com).");
+        assert!(html.contains("<h1>Hello</h1>"));
+        assert!(html.contains("<strong>bold</strong>"));
+        assert!(html.contains("<a href=\"https://example.com\">link</a>"));
+    }
+
+    #[test]
+    fn render_markdown_empty_string() {
+        assert_eq!(render_markdown(""), "");
+    }
+
+    #[test]
+    fn render_markdown_gfm_table() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let html = render_markdown(md);
+        assert!(html.contains("<table>"));
+        assert!(html.contains("<td>1</td>"));
+    }
+
+    #[test]
+    fn render_markdown_gfm_strikethrough() {
+        let html = render_markdown("~~deleted~~");
+        assert!(html.contains("<del>deleted</del>"));
+    }
+
+    #[test]
+    fn render_markdown_gfm_tasklist() {
+        let html = render_markdown("- [x] done\n- [ ] todo");
+        assert!(html.contains("type=\"checkbox\""));
+        assert!(html.contains("checked"));
+    }
+
+    #[test]
+    fn render_markdown_strips_raw_html() {
+        let html = render_markdown("Hello <script>alert('xss')</script> world");
+        assert!(!html.contains("<script>"));
+        assert!(!html.contains("</script>"));
+        assert!(html.contains("Hello"));
+        assert!(html.contains("world"));
+    }
+
+    #[test]
+    fn render_markdown_strips_inline_html_tags() {
+        let html = render_markdown("Hello <b>bold</b> world");
+        assert!(!html.contains("<b>"));
+        assert!(!html.contains("</b>"));
+        // The text content is preserved (without the tags)
+        assert!(html.contains("Hello"));
+        assert!(html.contains("world"));
     }
 }
