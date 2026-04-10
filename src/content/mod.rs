@@ -503,11 +503,11 @@ fn render_markdown_fields_inner(data: &mut Value, schema: &Value, depth: usize) 
                 }
             }
             (Some("array"), _) => {
-                if let Some(items_schema) = prop_schema.get("items") {
-                    if let Some(Value::Array(arr)) = obj.get_mut(key) {
-                        for item in arr.iter_mut() {
-                            render_markdown_fields_inner(item, items_schema, depth + 1);
-                        }
+                if let Some(items_schema) = prop_schema.get("items")
+                    && let Some(Value::Array(arr)) = obj.get_mut(key)
+                {
+                    for item in arr.iter_mut() {
+                        render_markdown_fields_inner(item, items_schema, depth + 1);
                     }
                 }
             }
@@ -897,7 +897,8 @@ mod tests {
 
     #[test]
     fn render_markdown_basic() {
-        let html = render_markdown("# Hello\n\nThis is **bold** and a [link](https://example.com).");
+        let html =
+            render_markdown("# Hello\n\nThis is **bold** and a [link](https://example.com).");
         assert!(html.contains("<h1>Hello</h1>"));
         assert!(html.contains("<strong>bold</strong>"));
         assert!(html.contains("<a href=\"https://example.com\">link</a>"));
@@ -968,7 +969,12 @@ mod tests {
         render_markdown_fields(&mut data, &schema);
 
         // Markdown field is rendered
-        assert!(data["body"].as_str().unwrap().contains("<strong>bold</strong>"));
+        assert!(
+            data["body"]
+                .as_str()
+                .unwrap()
+                .contains("<strong>bold</strong>")
+        );
         // Other fields are untouched
         assert_eq!(data["title"], "Hello");
         assert_eq!(data["count"], 42);
@@ -994,7 +1000,12 @@ mod tests {
             }
         });
         render_markdown_fields(&mut data, &schema);
-        assert!(data["meta"]["description"].as_str().unwrap().contains("<h1>Heading</h1>"));
+        assert!(
+            data["meta"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("<h1>Heading</h1>")
+        );
     }
 
     #[test]
@@ -1020,8 +1031,18 @@ mod tests {
             ]
         });
         render_markdown_fields(&mut data, &schema);
-        assert!(data["sections"][0]["body"].as_str().unwrap().contains("<strong>first</strong>"));
-        assert!(data["sections"][1]["body"].as_str().unwrap().contains("<em>second</em>"));
+        assert!(
+            data["sections"][0]["body"]
+                .as_str()
+                .unwrap()
+                .contains("<strong>first</strong>")
+        );
+        assert!(
+            data["sections"][1]["body"]
+                .as_str()
+                .unwrap()
+                .contains("<em>second</em>")
+        );
     }
 
     #[test]
@@ -1052,7 +1073,12 @@ mod tests {
         });
         render_markdown_fields(&mut data, &schema);
         assert_eq!(data["notes"], "**not rendered**");
-        assert!(data["body"].as_str().unwrap().contains("<strong>rendered</strong>"));
+        assert!(
+            data["body"]
+                .as_str()
+                .unwrap()
+                .contains("<strong>rendered</strong>")
+        );
     }
 
     #[test]

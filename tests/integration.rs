@@ -6831,7 +6831,9 @@ async fn api_render_html_get_entry() {
 
     // GET without render param returns raw markdown
     let resp = api
-        .get(s.url(&format!("/api/v1/apps/default/content/articles/{entry_id}?status=all")))
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/articles/{entry_id}?status=all"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -6842,7 +6844,9 @@ async fn api_render_html_get_entry() {
 
     // GET with render=html returns rendered HTML
     let resp = api
-        .get(s.url(&format!("/api/v1/apps/default/content/articles/{entry_id}?status=all&render=html")))
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/articles/{entry_id}?status=all&render=html"
+        )))
         .bearer_auth(&token)
         .send()
         .await
@@ -6850,8 +6854,14 @@ async fn api_render_html_get_entry() {
     assert_eq!(resp.status(), StatusCode::OK);
     let entry: serde_json::Value = resp.json().await.unwrap();
     let body_html = entry["body"].as_str().unwrap();
-    assert!(body_html.contains("<h1>Hello</h1>"), "expected h1, got: {body_html}");
-    assert!(body_html.contains("<strong>bold</strong>"), "expected strong, got: {body_html}");
+    assert!(
+        body_html.contains("<h1>Hello</h1>"),
+        "expected h1, got: {body_html}"
+    );
+    assert!(
+        body_html.contains("<strong>bold</strong>"),
+        "expected strong, got: {body_html}"
+    );
     // Title is a plain string (no format: markdown), should be untouched
     assert_eq!(entry["title"], "Test Post");
 }
@@ -6898,7 +6908,10 @@ async fn api_render_html_list_entries() {
         let body = e["body"].as_str().unwrap_or("");
         body.contains("<strong>") || body.contains("<em>")
     });
-    assert!(all_rendered, "all entries should have rendered markdown bodies");
+    assert!(
+        all_rendered,
+        "all entries should have rendered markdown bodies"
+    );
 }
 
 #[tokio::test]
@@ -6921,7 +6934,11 @@ async fn api_render_html_get_single() {
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "upsert failed: {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "upsert failed: {}",
+        resp.status()
+    );
 
     // GET without render returns raw markdown
     let resp = api
@@ -6944,7 +6961,10 @@ async fn api_render_html_get_single() {
     assert_eq!(resp.status(), StatusCode::OK);
     let entry: serde_json::Value = resp.json().await.unwrap();
     let content_html = entry["content"].as_str().unwrap();
-    assert!(content_html.contains("<strong>awesome</strong>"), "expected strong, got: {content_html}");
+    assert!(
+        content_html.contains("<strong>awesome</strong>"),
+        "expected strong, got: {content_html}"
+    );
     assert_eq!(entry["heading"], "About Us");
 }
 
@@ -6974,7 +6994,9 @@ async fn api_render_html_no_markdown_fields_unchanged() {
 
     // GET with render=html should return data unchanged (no markdown format fields)
     let resp = api
-        .get(s.url(&format!("/api/v1/apps/default/content/blog-posts/{entry_id}?status=all&render=html")))
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/blog-posts/{entry_id}?status=all&render=html"
+        )))
         .bearer_auth(&token)
         .send()
         .await
