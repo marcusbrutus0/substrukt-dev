@@ -40,7 +40,15 @@
           {% endif %}
         </td>
         {% for col in entry.columns %}
-        <td class="px-4 py-2.5 text-sm">{{ col }}</td>
+        <td class="px-4 py-2.5 text-sm">
+          {%- if col == "true" -%}
+          <span class="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">Yes</span>
+          {%- elif col == "false" -%}
+          <span class="px-2 py-0.5 rounded text-xs font-medium bg-card-alt text-muted">No</span>
+          {%- else -%}
+          {{ col }}
+          {%- endif -%}
+        </td>
         {% endfor %}
         <td class="px-4 py-2.5 text-right space-x-2">
           <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/edit" class="text-accent hover:underline text-sm">{% if user_role == "viewer" %}View{% else %}Edit{% endif %}</a>

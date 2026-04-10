@@ -286,9 +286,11 @@
           isActive = (path === href) || path.startsWith(href + '/');
         }
         if (isActive) {
-          link.classList.add('bg-sidebar-hover', 'text-white');
+          link.classList.add('bg-sidebar-hover', 'text-white', 'border-l-2', 'border-accent', 'font-medium');
+          link.style.paddingLeft = '10px';
         } else {
-          link.classList.remove('bg-sidebar-hover', 'text-white');
+          link.classList.remove('bg-sidebar-hover', 'text-white', 'border-l-2', 'border-accent', 'font-medium');
+          link.style.paddingLeft = '';
         }
       });
     }

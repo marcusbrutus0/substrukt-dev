@@ -55,7 +55,12 @@ async fn login_submit(
     if !state.login_limiter.check(&ip) {
         return (
             axum::http::StatusCode::TOO_MANY_REQUESTS,
-            "Too many login attempts. Please try again later.",
+            Html(super::render_error(
+                &state,
+                429,
+                "Too many login attempts. Please try again later.",
+                false,
+            )),
         )
             .into_response();
     }
@@ -247,7 +252,12 @@ async fn signup_submit(
     if !state.login_limiter.check(&ip) {
         return (
             axum::http::StatusCode::TOO_MANY_REQUESTS,
-            "Too many attempts. Please try again later.",
+            Html(super::render_error(
+                &state,
+                429,
+                "Too many attempts. Please try again later.",
+                false,
+            )),
         )
             .into_response();
     }

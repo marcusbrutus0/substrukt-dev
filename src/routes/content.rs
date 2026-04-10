@@ -98,7 +98,13 @@ async fn list_entries(
                         .data
                         .get(key)
                         .map(|v| match v {
-                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::String(s) => {
+                                if s.len() > 100 {
+                                    format!("{}…", &s[..s.floor_char_boundary(100)])
+                                } else {
+                                    s.clone()
+                                }
+                            }
                             serde_json::Value::Bool(b) => b.to_string(),
                             serde_json::Value::Number(n) => n.to_string(),
                             _ => v.to_string(),

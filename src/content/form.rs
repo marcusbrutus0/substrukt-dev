@@ -242,7 +242,12 @@ fn render_form_fields_inner(
         .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
 
-    for (key, prop_schema) in properties {
+    // Collect keys, ensuring "title" comes first
+    let mut keys: Vec<&String> = properties.keys().collect();
+    keys.sort_by_key(|k| if k.as_str() == "title" { 0 } else { 1 });
+
+    for key in keys {
+        let prop_schema = &properties[key];
         // Skip internal fields
         if key == "_id" {
             continue;
