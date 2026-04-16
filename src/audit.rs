@@ -632,6 +632,8 @@ impl AuditLogger {
         action_filter: Option<&str>,
         actor_filter: Option<&str>,
         app_filter: Option<&str>,
+        date_from: Option<&str>,
+        date_to: Option<&str>,
         page: u32,
     ) -> eyre::Result<(Vec<AuditLogEntry>, bool)> {
         let page = page.max(1);
@@ -644,6 +646,13 @@ impl AuditLogger {
         }
         if actor_filter.is_some() {
             conditions.push("actor = ?".to_string());
+        }
+        if date_from.is_some() {
+            conditions.push("timestamp >= ?".to_string());
+        }
+        if date_to.is_some() {
+            // Add a day so "to" date is inclusive
+            conditions.push("timestamp < ?".to_string());
         }
         // app_filter: None = no filter, Some("global") = app_id IS NULL, Some("<id>") = app_id = <id>
         let app_filter_id: Option<i64> = match app_filter {
@@ -690,6 +699,16 @@ impl AuditLogger {
         }
         if let Some(actor) = actor_filter {
             q = q.bind(actor);
+        }
+        if let Some(from) = date_from {
+            q = q.bind(from);
+        }
+        if let Some(to) = date_to {
+            // Add a day to make the date inclusive
+            let to_next = chrono::NaiveDate::parse_from_str(to, "%Y-%m-%d")
+                .map(|d| (d + chrono::Duration::days(1)).to_string())
+                .unwrap_or_else(|_| to.to_string());
+            q = q.bind(to_next);
         }
         if let Some(id) = app_filter_id {
             q = q.bind(id);
@@ -1592,7 +1611,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (entries, has_next) = logger.list_audit_log(None, None, None, 1).await.unwrap();
+        let (entries, has_next) = logger.list_audit_log(None, None, None, None, None, 1).await.unwrap();
         assert_eq!(entries.len(), 2);
         assert!(!has_next);
         assert_eq!(entries[0].action, "login");
@@ -1621,7 +1640,7 @@ mod tests {
             .unwrap();
 
         let (entries, _) = logger
-            .list_audit_log(Some("login"), None, None, 1)
+            .list_audit_log(Some("login"), None, None, None, None, 1)
             .await
             .unwrap();
         assert_eq!(entries.len(), 1);
@@ -1643,7 +1662,7 @@ mod tests {
             .unwrap();
 
         let (entries, _) = logger
-            .list_audit_log(None, Some("user1"), None, 1)
+            .list_audit_log(None, Some("user1"), None, None, None, 1)
             .await
             .unwrap();
         assert_eq!(entries.len(), 1);
@@ -1663,11 +1682,11 @@ mod tests {
             logger.execute_raw(&query).await.unwrap();
         }
 
-        let (page1, has_next1) = logger.list_audit_log(None, None, None, 1).await.unwrap();
+        let (page1, has_next1) = logger.list_audit_log(None, None, None, None, None, 1).await.unwrap();
         assert_eq!(page1.len(), 100);
         assert!(has_next1);
 
-        let (page2, has_next2) = logger.list_audit_log(None, None, None, 2).await.unwrap();
+        let (page2, has_next2) = logger.list_audit_log(None, None, None, None, None, 2).await.unwrap();
         assert_eq!(page2.len(), 5);
         assert!(!has_next2);
     }
@@ -1926,12 +1945,12 @@ mod tests {
             .unwrap();
 
         // No filter: returns all
-        let (entries, _) = logger.list_audit_log(None, None, None, 1).await.unwrap();
+        let (entries, _) = logger.list_audit_log(None, None, None, None, None, 1).await.unwrap();
         assert_eq!(entries.len(), 3);
 
         // Filter by app_id = 1
         let (entries, _) = logger
-            .list_audit_log(None, None, Some("1"), 1)
+            .list_audit_log(None, None, Some("1"), None, None, 1)
             .await
             .unwrap();
         assert_eq!(entries.len(), 1);
@@ -1940,7 +1959,7 @@ mod tests {
 
         // Filter by app_id = 2
         let (entries, _) = logger
-            .list_audit_log(None, None, Some("2"), 1)
+            .list_audit_log(None, None, Some("2"), None, None, 1)
             .await
             .unwrap();
         assert_eq!(entries.len(), 1);
@@ -1949,7 +1968,7 @@ mod tests {
 
         // Filter by global (no app_id)
         let (entries, _) = logger
-            .list_audit_log(None, None, Some("global"), 1)
+            .list_audit_log(None, None, Some("global"), None, None, 1)
             .await
             .unwrap();
         assert_eq!(entries.len(), 1);

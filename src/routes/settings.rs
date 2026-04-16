@@ -519,6 +519,10 @@ pub struct AuditLogFilter {
     #[serde(default)]
     actor: String,
     #[serde(default)]
+    date_from: String,
+    #[serde(default)]
+    date_to: String,
+    #[serde(default)]
     page: String,
 }
 
@@ -550,10 +554,20 @@ async fn audit_log_page(
     } else {
         Some(filter.actor.as_str())
     };
+    let date_from = if filter.date_from.is_empty() {
+        None
+    } else {
+        Some(filter.date_from.as_str())
+    };
+    let date_to = if filter.date_to.is_empty() {
+        None
+    } else {
+        Some(filter.date_to.as_str())
+    };
 
     let (entries, has_next) = state
         .audit
-        .list_audit_log(action_filter, actor_filter, None, page)
+        .list_audit_log(action_filter, actor_filter, None, date_from, date_to, page)
         .await
         .map_err(|e| format!("DB error: {e}"))?;
 
@@ -618,6 +632,12 @@ async fn audit_log_page(
     if !filter.actor.is_empty() {
         pagination_params.push(format!("actor={}", filter.actor));
     }
+    if !filter.date_from.is_empty() {
+        pagination_params.push(format!("date_from={}", filter.date_from));
+    }
+    if !filter.date_to.is_empty() {
+        pagination_params.push(format!("date_to={}", filter.date_to));
+    }
     let pagination_qs = if pagination_params.is_empty() {
         String::new()
     } else {
@@ -644,6 +664,8 @@ async fn audit_log_page(
             actors => actor_options,
             filter_action => filter.action,
             filter_actor => filter.actor,
+            filter_date_from => filter.date_from,
+            filter_date_to => filter.date_to,
             pagination_qs => pagination_qs,
             page => page,
             has_next => has_next,

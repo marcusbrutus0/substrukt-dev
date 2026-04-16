@@ -17,10 +17,14 @@ use crate::state::{AppState, ContentCache};
 use crate::templates::base_for_htmx;
 use crate::uploads;
 
+const PAGE_SIZE: usize = 50;
+
 #[derive(serde::Deserialize, Default)]
 pub struct ListParams {
     #[serde(default)]
     pub q: String,
+    #[serde(default)]
+    pub page: Option<u32>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -96,6 +100,16 @@ async fn list_entries(
     };
     let filtered = entries.len();
 
+    let page = params.page.unwrap_or(1).max(1) as usize;
+    let total_pages = (filtered + PAGE_SIZE - 1) / PAGE_SIZE.max(1);
+    let entries: Vec<_> = entries
+        .into_iter()
+        .skip((page - 1) * PAGE_SIZE)
+        .take(PAGE_SIZE)
+        .collect();
+    let has_prev = page > 1;
+    let has_next = page < total_pages;
+
     let columns = get_display_columns(&schema_file.schema);
 
     let entry_data: Vec<minijinja::Value> = entries
@@ -159,6 +173,9 @@ async fn list_entries(
             q => q,
             total => total,
             filtered => filtered,
+            page => page,
+            has_prev => has_prev,
+            has_next => has_next,
             flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
             flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
         })

@@ -521,10 +521,17 @@ fn render_field(
             if let Some(items) = existing_items {
                 for (i, item) in items.iter().enumerate() {
                     let item_name = format!("{name}[{i}]");
+                    let preview = array_item_preview(item, &items_schema);
+                    let preview_html = if preview.is_empty() {
+                        String::new()
+                    } else {
+                        format!(r#"<span class="text-xs text-muted truncate max-w-xs">{}</span>"#, escape_html_attr(&preview))
+                    };
                     items_html.push_str(&format!(
                         r#"<div class="array-item border border-border-light p-3 rounded mb-2" data-index="{i}">
-  <div class="flex justify-end mb-1">
-    <button type="button" onclick="this.closest('.array-item').remove()" class="text-danger text-sm hover:text-danger">Remove</button>
+  <div class="flex items-center justify-between mb-1">
+    {preview_html}
+    <button type="button" onclick="this.closest('.array-item').remove()" class="text-danger text-sm hover:text-danger shrink-0">Remove</button>
   </div>
   {}
 </div>"#,
@@ -583,6 +590,51 @@ fn render_field(
             )
         }
     }
+}
+
+/// Extract a short preview string from an array item for display next to the Remove button.
+fn array_item_preview(item: &Value, items_schema: &Value) -> String {
+    // For simple string items, show the value directly
+    if let Some(s) = item.as_str() {
+        let truncated = if s.len() > 60 {
+            format!("{}…", &s[..s.floor_char_boundary(60)])
+        } else {
+            s.to_string()
+        };
+        return truncated;
+    }
+    // For object items, show first 1-2 string property values
+    if let Some(obj) = item.as_object() {
+        let props = items_schema
+            .get("properties")
+            .and_then(|p| p.as_object());
+        let keys: Vec<&String> = if let Some(p) = props {
+            p.keys().collect()
+        } else {
+            obj.keys().collect()
+        };
+        let mut parts = Vec::new();
+        for key in keys {
+            if key.starts_with('_') {
+                continue;
+            }
+            if let Some(Value::String(s)) = obj.get(key) {
+                if !s.is_empty() {
+                    let truncated = if s.len() > 40 {
+                        format!("{}…", &s[..s.floor_char_boundary(40)])
+                    } else {
+                        s.clone()
+                    };
+                    parts.push(truncated);
+                    if parts.len() >= 2 {
+                        break;
+                    }
+                }
+            }
+        }
+        return parts.join(" · ");
+    }
+    String::new()
 }
 
 /// Parse submitted form data into a JSON Value based on the schema.

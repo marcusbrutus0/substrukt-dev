@@ -15,18 +15,18 @@
     class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent text-sm">
 </div>
 {% if q %}
-<p class="text-sm text-muted mb-4">Showing {{ filtered }} of {{ total }} entries</p>
+<p class="text-sm text-muted mb-4">Showing {{ filtered }} of {{ total }} entries{% if filtered != total %} matching "{{ q }}"{% endif %}</p>
 {% endif %}
 
 {% if entries %}
 <div class="bg-card border border-border-light rounded-lg overflow-hidden">
-  <table class="w-full">
+  <table id="content-table" class="w-full">
     <thead class="bg-card-alt">
       <tr>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">ID</th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Status</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted cursor-pointer hover:text-primary select-none" onclick="sortTable(0)">ID <span class="sort-arrow text-[10px]"></span></th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted cursor-pointer hover:text-primary select-none" onclick="sortTable(1)">Status <span class="sort-arrow text-[10px]"></span></th>
         {% for col in columns %}
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">{{ col }}</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted cursor-pointer hover:text-primary select-none" onclick="sortTable({{ loop.index0 + 2 }})">{{ col }} <span class="sort-arrow text-[10px]"></span></th>
         {% endfor %}
         <th class="px-4 py-2.5"></th>
       </tr>
@@ -67,10 +67,51 @@
     </tbody>
   </table>
 </div>
+{% if has_prev or has_next %}
+<div class="flex items-center justify-center gap-4 mt-4">
+  {% if has_prev %}
+  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}?{% if q %}q={{ q }}&{% endif %}page={{ page - 1 }}" class="text-sm text-accent hover:underline">← Previous</a>
+  {% else %}
+  <span class="text-sm text-muted opacity-50 select-none">← Previous</span>
+  {% endif %}
+  <span class="text-sm text-muted">Page {{ page }}</span>
+  {% if has_next %}
+  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}?{% if q %}q={{ q }}&{% endif %}page={{ page + 1 }}" class="text-sm text-accent hover:underline">Next →</a>
+  {% else %}
+  <span class="text-sm text-muted opacity-50 select-none">Next →</span>
+  {% endif %}
+</div>
+{% endif %}
 {% else %}
 <div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
   {% if q %}No entries match your search.{% else %}No entries yet. <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/new" class="text-accent hover:underline">Create your first entry</a>.{% endif %}
 </div>
 {% endif %}
 
+<script>
+var currentSort = { col: -1, asc: true };
+function sortTable(colIdx) {
+  var table = document.getElementById('content-table');
+  if (!table) return;
+  var tbody = table.querySelector('tbody');
+  var rows = Array.from(tbody.querySelectorAll('tr'));
+  if (currentSort.col === colIdx) {
+    currentSort.asc = !currentSort.asc;
+  } else {
+    currentSort.col = colIdx;
+    currentSort.asc = true;
+  }
+  rows.sort(function(a, b) {
+    var aText = a.cells[colIdx].textContent.trim().toLowerCase();
+    var bText = b.cells[colIdx].textContent.trim().toLowerCase();
+    if (aText < bText) return currentSort.asc ? -1 : 1;
+    if (aText > bText) return currentSort.asc ? 1 : -1;
+    return 0;
+  });
+  rows.forEach(function(row) { tbody.appendChild(row); });
+  table.querySelectorAll('.sort-arrow').forEach(function(el, i) {
+    el.textContent = i === colIdx ? (currentSort.asc ? '▲' : '▼') : '';
+  });
+}
+</script>
 {% endblock %}

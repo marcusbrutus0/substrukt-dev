@@ -3,7 +3,7 @@
 {% block content %}
 <h1 class="text-2xl font-bold tracking-tight mb-6">Audit Log</h1>
 
-<div class="flex gap-3 mb-6">
+<div class="flex flex-wrap gap-3 mb-6">
   <select onchange="applyFilters()" id="filter-action"
     class="px-3 py-2 border border-border rounded-md bg-input-bg text-sm">
     <option value="">All Actions</option>
@@ -34,6 +34,15 @@
     <option value="{{ a.value }}" {% if filter_actor == a.value %}selected{% endif %}>{{ a.label }}</option>
     {% endfor %}
   </select>
+  <input type="date" id="filter-date-from" value="{{ filter_date_from }}" onchange="applyFilters()"
+    class="px-3 py-2 border border-border rounded-md bg-input-bg text-sm" placeholder="From">
+  <input type="date" id="filter-date-to" value="{{ filter_date_to }}" onchange="applyFilters()"
+    class="px-3 py-2 border border-border rounded-md bg-input-bg text-sm" placeholder="To">
+  <div class="flex gap-1">
+    <button type="button" onclick="setDatePreset(0)" class="px-2 py-1 text-xs border border-border rounded hover:bg-card-alt">Today</button>
+    <button type="button" onclick="setDatePreset(7)" class="px-2 py-1 text-xs border border-border rounded hover:bg-card-alt">7d</button>
+    <button type="button" onclick="setDatePreset(30)" class="px-2 py-1 text-xs border border-border rounded hover:bg-card-alt">30d</button>
+  </div>
 </div>
 
 {% if entries %}
@@ -96,11 +105,23 @@
 function applyFilters() {
   var action = document.getElementById('filter-action').value;
   var actor = document.getElementById('filter-actor').value;
+  var dateFrom = document.getElementById('filter-date-from').value;
+  var dateTo = document.getElementById('filter-date-to').value;
   var params = new URLSearchParams();
   if (action) params.set('action', action);
   if (actor) params.set('actor', actor);
+  if (dateFrom) params.set('date_from', dateFrom);
+  if (dateTo) params.set('date_to', dateTo);
   var qs = params.toString();
   window.location.href = '/settings/audit-log' + (qs ? '?' + qs : '');
+}
+function setDatePreset(days) {
+  var to = new Date();
+  var from = new Date();
+  from.setDate(from.getDate() - days);
+  document.getElementById('filter-date-from').value = from.toISOString().split('T')[0];
+  document.getElementById('filter-date-to').value = to.toISOString().split('T')[0];
+  applyFilters();
 }
 </script>
 {% endblock %}
