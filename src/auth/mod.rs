@@ -56,11 +56,12 @@ pub fn require_role(
     extensions: &axum::http::Extensions,
     min_role: &str,
 ) -> axum::response::Result<allowthem_core::UserId> {
-    let user = extensions
-        .get::<allowthem_core::User>()
-        .ok_or(axum::response::ErrorResponse::from(
-            Redirect::to("/login").into_response(),
-        ))?;
+    let user =
+        extensions
+            .get::<allowthem_core::User>()
+            .ok_or(axum::response::ErrorResponse::from(
+                Redirect::to("/login").into_response(),
+            ))?;
     let role = extensions
         .get::<CurrentUserRole>()
         .map(|r| r.0.as_str())
@@ -148,11 +149,7 @@ pub async fn verify_csrf_token(session: &Session, submitted: &str) -> bool {
 /// Middleware: verify CSRF token on mutating requests (POST/PUT/DELETE).
 /// Checks X-CSRF-Token header first, then _csrf form field for urlencoded bodies.
 /// Multipart forms are passed through — handlers must verify _csrf from parsed fields.
-pub async fn verify_csrf(
-    State(state): State<AppState>,
-    request: Request,
-    next: Next,
-) -> Response {
+pub async fn verify_csrf(State(state): State<AppState>, request: Request, next: Next) -> Response {
     if matches!(
         *request.method(),
         Method::GET | Method::HEAD | Method::OPTIONS

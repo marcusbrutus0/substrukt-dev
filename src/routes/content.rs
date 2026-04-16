@@ -307,7 +307,11 @@ async fn new_entry_page(
     Path((_app_slug, schema_slug)): Path<(String, String)>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "editor") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = &role.0;

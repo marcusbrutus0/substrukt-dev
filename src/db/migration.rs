@@ -10,11 +10,10 @@ pub async fn migrate_users_to_allowthem(
     let mut id_map = std::collections::HashMap::new();
 
     // Check if old users table exists
-    let table_exists: Option<String> = sqlx::query_scalar(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='users'",
-    )
-    .fetch_optional(pool)
-    .await?;
+    let table_exists: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+            .fetch_optional(pool)
+            .await?;
 
     if table_exists.is_none() {
         tracing::info!("No old users table found, skipping migration");
@@ -63,9 +62,7 @@ pub async fn migrate_users_to_allowthem(
             .db()
             .create_user_with_hash(email, &old_user.password_hash, Some(username))
             .await
-            .map_err(|e| {
-                eyre::eyre!("Failed to migrate user {}: {e}", old_user.username)
-            })?;
+            .map_err(|e| eyre::eyre!("Failed to migrate user {}: {e}", old_user.username))?;
 
         // Assign role
         let role_name = allowthem_core::RoleName::new(&old_user.role);
@@ -91,11 +88,10 @@ pub async fn finalize_schema(
     id_map: &std::collections::HashMap<i64, String>,
 ) -> eyre::Result<()> {
     // Check if migration already done (old users table gone)
-    let old_users_exist: Option<String> = sqlx::query_scalar(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='users'",
-    )
-    .fetch_optional(pool)
-    .await?;
+    let old_users_exist: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+            .fetch_optional(pool)
+            .await?;
 
     if old_users_exist.is_none() {
         return Ok(()); // Already migrated

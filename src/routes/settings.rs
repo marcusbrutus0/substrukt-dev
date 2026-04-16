@@ -45,10 +45,19 @@ async fn users_page(
     session: Session,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
 
-    let invitations = state.ath.db().list_pending_invitations().await.unwrap_or_default();
+    let invitations = state
+        .ath
+        .db()
+        .list_pending_invitations()
+        .await
+        .unwrap_or_default();
     let users = state.ath.db().list_users().await.unwrap_or_default();
 
     let csrf_token = auth::ensure_csrf_token(&session).await;
@@ -115,7 +124,11 @@ async fn invite_user(
     Form(form): Form<InviteForm>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
     let user_role = role.0.clone();
@@ -123,14 +136,30 @@ async fn invite_user(
 
     // Basic email validation
     if !form.email.contains('@') || form.email.len() < 3 {
-        return render_users_with_error(&state, &session, is_htmx, "Invalid email address", &user_role, &current_username).await;
+        return render_users_with_error(
+            &state,
+            &session,
+            is_htmx,
+            "Invalid email address",
+            &user_role,
+            &current_username,
+        )
+        .await;
     }
 
     // Check if email already has an account
     let email = match allowthem_core::Email::new(form.email.clone()) {
         Ok(e) => e,
         Err(_) => {
-            return render_users_with_error(&state, &session, is_htmx, "Invalid email address", &user_role, &current_username).await;
+            return render_users_with_error(
+                &state,
+                &session,
+                is_htmx,
+                "Invalid email address",
+                &user_role,
+                &current_username,
+            )
+            .await;
         }
     };
     if state.ath.db().get_user_by_email(&email).await.is_ok() {
@@ -147,7 +176,10 @@ async fn invite_user(
 
     // Check if there's already a pending invitation for this email
     if let Ok(pending) = state.ath.db().list_pending_invitations().await {
-        if pending.iter().any(|inv| inv.email.as_ref().map(|e| e.as_str()) == Some(form.email.trim())) {
+        if pending
+            .iter()
+            .any(|inv| inv.email.as_ref().map(|e| e.as_str()) == Some(form.email.trim()))
+        {
             return render_users_with_error(
                 &state,
                 &session,
@@ -163,17 +195,27 @@ async fn invite_user(
     // Validate role
     let role_str = match form.role.as_str() {
         "admin" | "editor" | "viewer" => &form.role,
-        _ => return render_users_with_error(&state, &session, is_htmx, "Invalid role", &user_role, &current_username).await,
+        _ => {
+            return render_users_with_error(
+                &state,
+                &session,
+                is_htmx,
+                "Invalid role",
+                &user_role,
+                &current_username,
+            )
+            .await;
+        }
     };
 
     // Create invitation via allowthem
     let expires_at = chrono::Utc::now() + chrono::Duration::days(7);
-    let (raw_token, invitation) = match state.ath.db().create_invitation(
-        Some(&email),
-        Some(role_str),
-        Some(user.id),
-        expires_at,
-    ).await {
+    let (raw_token, invitation) = match state
+        .ath
+        .db()
+        .create_invitation(Some(&email), Some(role_str), Some(user.id), expires_at)
+        .await
+    {
         Ok(inv) => inv,
         Err(e) => {
             return render_users_with_error(
@@ -183,7 +225,8 @@ async fn invite_user(
                 &format!("Failed to create invitation: {e}"),
                 &user_role,
                 &current_username,
-            ).await;
+            )
+            .await;
         }
     };
 
@@ -199,11 +242,20 @@ async fn invite_user(
         .get("host")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("localhost");
-    let scheme = if state.config.secure_cookies { "https" } else { "http" };
+    let scheme = if state.config.secure_cookies {
+        "https"
+    } else {
+        "http"
+    };
     let invite_url = format!("{scheme}://{host}/signup?token={raw_token}");
 
     // Re-fetch lists for display
-    let invitations = state.ath.db().list_pending_invitations().await.unwrap_or_default();
+    let invitations = state
+        .ath
+        .db()
+        .list_pending_invitations()
+        .await
+        .unwrap_or_default();
     let users = state.ath.db().list_users().await.unwrap_or_default();
 
     let inv_data: Vec<minijinja::Value> = invitations
@@ -260,7 +312,12 @@ async fn render_users_with_error(
     user_role: &str,
     current_username: &str,
 ) -> axum::response::Result<axum::response::Response> {
-    let invitations = state.ath.db().list_pending_invitations().await.unwrap_or_default();
+    let invitations = state
+        .ath
+        .db()
+        .list_pending_invitations()
+        .await
+        .unwrap_or_default();
     let users = state.ath.db().list_users().await.unwrap_or_default();
 
     let inv_data: Vec<minijinja::Value> = invitations
@@ -403,20 +460,26 @@ async fn change_password(
     }
 
     // Update password via allowthem
-    if let Err(e) = state.ath.db().update_user_password(user.id, &form.new_password).await {
+    if let Err(e) = state
+        .ath
+        .db()
+        .update_user_password(user.id, &form.new_password)
+        .await
+    {
         tracing::error!("Password update failed: {e}");
-        auth::set_flash(&session, "error", &format!("Failed to update password: {e}")).await;
+        auth::set_flash(
+            &session,
+            "error",
+            &format!("Failed to update password: {e}"),
+        )
+        .await;
         return Ok(axum::response::Redirect::to("/settings/profile"));
     }
 
     let user_id_str = user.id.to_string();
-    state.audit.log(
-        &user_id_str,
-        "password_changed",
-        "user",
-        &user_id_str,
-        None,
-    );
+    state
+        .audit
+        .log(&user_id_str, "password_changed", "user", &user_id_str, None);
 
     auth::set_flash(&session, "success", "Password updated successfully").await;
     Ok(axum::response::Redirect::to("/settings/profile"))
@@ -430,7 +493,11 @@ async fn delete_invitation(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
 
@@ -438,13 +505,9 @@ async fn delete_invitation(
         let inv_id = allowthem_core::InvitationId::from_uuid(uuid);
         let _ = state.ath.db().delete_invitation(inv_id).await;
     }
-    state.audit.log(
-        &user_id_str,
-        "invite_delete",
-        "invitation",
-        &id,
-        None,
-    );
+    state
+        .audit
+        .log(&user_id_str, "invite_delete", "invitation", &id, None);
     auth::set_flash(&session, "success", "Invitation revoked").await;
     Ok(Redirect::to("/settings/users").into_response())
 }
@@ -468,7 +531,11 @@ async fn audit_log_page(
     axum::extract::Query(filter): axum::extract::Query<AuditLogFilter>,
 ) -> axum::response::Result<Html<String>> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
 
     let page: u32 = filter.page.parse().unwrap_or(1).max(1);
@@ -596,7 +663,11 @@ async fn backups_page(
     session: Session,
 ) -> axum::response::Result<Html<String>> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
 
     let config = state
@@ -755,7 +826,11 @@ async fn update_backup_config(
     Form(form): Form<BackupConfigForm>,
 ) -> axum::response::Result<Redirect> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
 
@@ -804,7 +879,11 @@ async fn trigger_backup(
     session: Session,
 ) -> axum::response::Result<Redirect> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
 

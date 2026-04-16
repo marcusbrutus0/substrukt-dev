@@ -40,7 +40,10 @@ impl TestServer {
         let pool = db::init_pool(&config.db_path).await.unwrap();
 
         // Recreate app_access with TEXT user_id for allowthem UUIDs
-        sqlx::query("DROP TABLE IF EXISTS app_access").execute(&pool).await.unwrap();
+        sqlx::query("DROP TABLE IF EXISTS app_access")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("CREATE TABLE app_access (app_id INTEGER NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (app_id, user_id))").execute(&pool).await.unwrap();
         // Create app_tokens table
         sqlx::query("CREATE TABLE IF NOT EXISTS app_tokens (api_token_id TEXT NOT NULL, app_id INTEGER NOT NULL, token_hash TEXT NOT NULL, PRIMARY KEY (api_token_id, app_id))").execute(&pool).await.unwrap();
@@ -65,8 +68,9 @@ impl TestServer {
             ath.db().create_role(&rn, None).await.unwrap();
         }
 
-        let auth_client: std::sync::Arc<dyn allowthem_core::AuthClient> =
-            std::sync::Arc::new(allowthem_core::EmbeddedAuthClient::new(ath.clone(), "/login"));
+        let auth_client: std::sync::Arc<dyn allowthem_core::AuthClient> = std::sync::Arc::new(
+            allowthem_core::EmbeddedAuthClient::new(ath.clone(), "/login"),
+        );
 
         let reloader = templates::create_reloader();
         let content_cache = DashMap::new();
@@ -754,7 +758,11 @@ async fn token_create_and_list() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let token = s.create_api_token("test-token").await;
-    assert!(token.len() >= 32, "Token should be at least 32 chars, got {}", token.len());
+    assert!(
+        token.len() >= 32,
+        "Token should be at least 32 chars, got {}",
+        token.len()
+    );
 
     let resp = s
         .client
@@ -2136,7 +2144,10 @@ fn extract_invite_url(html: &str) -> Option<String> {
                 .replace("&amp;", "&");
             // The URL may be absolute (http://host/signup?token=...) or relative (/signup?token=...)
             // Strip the scheme+host prefix if present, returning just the path portion.
-            let path = if let Some(rest) = url.strip_prefix("http://").or_else(|| url.strip_prefix("https://")) {
+            let path = if let Some(rest) = url
+                .strip_prefix("http://")
+                .or_else(|| url.strip_prefix("https://"))
+            {
                 if let Some(slash) = rest.find('/') {
                     &rest[slash..]
                 } else {

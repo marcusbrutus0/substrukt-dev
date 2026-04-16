@@ -208,7 +208,13 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     // Bootstrap roles (idempotent)
     for role_name in ["admin", "editor", "viewer"] {
         let rn = allowthem_core::RoleName::new(role_name);
-        if ath.db().get_role_by_name(&rn).await.unwrap_or(None).is_none() {
+        if ath
+            .db()
+            .get_role_by_name(&rn)
+            .await
+            .unwrap_or(None)
+            .is_none()
+        {
             ath.db()
                 .create_role(&rn, None)
                 .await
@@ -223,8 +229,9 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     // Check if any users exist (for setup redirect) — after migration so migrated users count
     let has_users = !ath.db().list_users().await.unwrap_or_default().is_empty();
 
-    let auth_client: Arc<dyn allowthem_core::AuthClient> =
-        Arc::new(allowthem_core::EmbeddedAuthClient::new(ath.clone(), "/login"));
+    let auth_client: Arc<dyn allowthem_core::AuthClient> = Arc::new(
+        allowthem_core::EmbeddedAuthClient::new(ath.clone(), "/login"),
+    );
 
     // Migrate old single-app layout to multi-app
     substrukt::migrate_single_app_layout(&config.data_dir)?;

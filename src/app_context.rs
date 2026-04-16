@@ -78,7 +78,13 @@ impl FromRequestParts<AppState> for AppContext {
 
         let err_nav = |status: u16, msg: &str| {
             let html = render_error_with_nav(
-                state, status, msg, is_htmx, &role, &current_username, &csrf_token,
+                state,
+                status,
+                msg,
+                is_htmx,
+                &role,
+                &current_username,
+                &csrf_token,
             );
             (
                 StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -107,10 +113,9 @@ impl FromRequestParts<AppState> for AppContext {
 
         // Admins have access to all apps; others need explicit access
         if role != "admin" {
-            let has_access =
-                models::user_has_app_access(&state.pool, app.id, &user.id.to_string())
-                    .await
-                    .map_err(|_| err_nav(500, "Internal error"))?;
+            let has_access = models::user_has_app_access(&state.pool, app.id, &user.id.to_string())
+                .await
+                .map_err(|_| err_nav(500, "Internal error"))?;
             if !has_access {
                 return Err(err_nav(403, "You do not have access to this app"));
             }

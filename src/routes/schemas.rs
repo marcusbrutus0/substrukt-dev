@@ -91,7 +91,11 @@ async fn new_schema_page(
     app: AppContext,
 ) -> axum::response::Result<Html<String>> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = &role.0;
@@ -148,7 +152,11 @@ async fn create_schema(
     Form(form): Form<SchemaForm>,
 ) -> impl IntoResponse {
     if !auth::has_min_role(&role.0, "admin") {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
     let user_id_str = user.id.to_string();
     let user_role = role.0.clone();
@@ -255,7 +263,11 @@ async fn edit_schema_page(
     Path((_app_slug, slug)): Path<(String, String)>,
 ) -> axum::response::Result<impl IntoResponse> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = &role.0;
@@ -303,7 +315,11 @@ async fn update_schema(
     Form(form): Form<SchemaForm>,
 ) -> impl IntoResponse {
     if !auth::has_min_role(&role.0, "admin") {
-        return (axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into_response();
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into_response();
     }
     let user_id_str = user.id.to_string();
     let user_role = role.0.clone();

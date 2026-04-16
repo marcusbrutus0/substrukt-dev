@@ -120,13 +120,12 @@ pub async fn user_has_app_access(
     app_id: i64,
     user_id: &str,
 ) -> sqlx::Result<bool> {
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM app_access WHERE app_id = ? AND user_id = ?",
-    )
-    .bind(app_id)
-    .bind(user_id)
-    .fetch_one(pool)
-    .await?;
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM app_access WHERE app_id = ? AND user_id = ?")
+            .bind(app_id)
+            .bind(user_id)
+            .fetch_one(pool)
+            .await?;
     Ok(count > 0)
 }
 
@@ -148,14 +147,12 @@ pub async fn create_app_token(
     app_id: i64,
     token_hash: &str,
 ) -> sqlx::Result<()> {
-    sqlx::query(
-        "INSERT INTO app_tokens (api_token_id, app_id, token_hash) VALUES (?, ?, ?)",
-    )
-    .bind(api_token_id)
-    .bind(app_id)
-    .bind(token_hash)
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO app_tokens (api_token_id, app_id, token_hash) VALUES (?, ?, ?)")
+        .bind(api_token_id)
+        .bind(app_id)
+        .bind(token_hash)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -163,22 +160,20 @@ pub async fn find_app_for_token_hash(
     pool: &SqlitePool,
     token_hash: &str,
 ) -> sqlx::Result<Option<(String, i64)>> {
-    let row: Option<(String, i64)> = sqlx::query_as(
-        "SELECT api_token_id, app_id FROM app_tokens WHERE token_hash = ?",
-    )
-    .bind(token_hash)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(String, i64)> =
+        sqlx::query_as("SELECT api_token_id, app_id FROM app_tokens WHERE token_hash = ?")
+            .bind(token_hash)
+            .fetch_optional(pool)
+            .await?;
     Ok(row)
 }
 
 pub async fn list_app_tokens(pool: &SqlitePool, app_id: i64) -> sqlx::Result<Vec<String>> {
-    let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT api_token_id FROM app_tokens WHERE app_id = ?",
-    )
-    .bind(app_id)
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<String> =
+        sqlx::query_scalar("SELECT api_token_id FROM app_tokens WHERE app_id = ?")
+            .bind(app_id)
+            .fetch_all(pool)
+            .await?;
     Ok(rows)
 }
 

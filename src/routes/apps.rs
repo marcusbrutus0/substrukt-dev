@@ -114,7 +114,11 @@ async fn new_app_form(
     session: Session,
 ) -> axum::response::Result<Html<String>> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = &role.0;
@@ -152,7 +156,11 @@ async fn create_app(
     Form(form): Form<CreateAppForm>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
     let slug = form.slug.trim().to_lowercase();
@@ -204,7 +212,11 @@ async fn app_settings(
     app: AppContext,
 ) -> axum::response::Result<Html<String>> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = &role.0;
@@ -246,12 +258,8 @@ async fn app_settings(
     for tid in &token_ids {
         // Find matching token info
         let info = all_tokens.iter().find(|t| t.id.to_string() == *tid);
-        let name = info
-            .map(|t| t.name.clone())
-            .unwrap_or_else(|| tid.clone());
-        let created_at = info
-            .map(|t| t.created_at.to_string())
-            .unwrap_or_default();
+        let name = info.map(|t| t.name.clone()).unwrap_or_else(|| tid.clone());
+        let created_at = info.map(|t| t.created_at.to_string()).unwrap_or_default();
         token_data.push(minijinja::context! {
             id => tid,
             name => name,
@@ -297,7 +305,11 @@ async fn update_app_name(
     Form(form): Form<UpdateNameForm>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
     let name = form.name.trim();
@@ -334,7 +346,11 @@ async fn update_access(
     Form(form): Form<AccessForm>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
 
@@ -360,9 +376,7 @@ async fn update_access(
                 "app_access_granted",
                 "app",
                 &app.app.slug,
-                Some(
-                    &serde_json::json!({"user_id": uid_str, "username": uname}).to_string(),
-                ),
+                Some(&serde_json::json!({"user_id": uid_str, "username": uname}).to_string()),
                 Some(app.app.id),
             );
         } else if !should_have && currently_has {
@@ -377,9 +391,7 @@ async fn update_access(
                 "app_access_revoked",
                 "app",
                 &app.app.slug,
-                Some(
-                    &serde_json::json!({"user_id": uid_str, "username": uname}).to_string(),
-                ),
+                Some(&serde_json::json!({"user_id": uid_str, "username": uname}).to_string()),
                 Some(app.app.id),
             );
         }
@@ -403,7 +415,11 @@ async fn create_token(
     Form(form): Form<CreateTokenForm>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "editor") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
     let name = form.name.trim();
@@ -413,24 +429,14 @@ async fn create_token(
     }
 
     // Create token via allowthem
-    match state
-        .ath
-        .db()
-        .create_api_token(user.id, name, None)
-        .await
-    {
+    match state.ath.db().create_api_token(user.id, name, None).await {
         Ok((raw_token, info)) => {
             // Hash the raw token for app_tokens lookup
             use sha2::{Digest, Sha256};
             let token_hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
             let token_id_str = info.id.to_string();
-            if let Err(e) = models::create_app_token(
-                &state.pool,
-                &token_id_str,
-                app.app.id,
-                &token_hash,
-            )
-            .await
+            if let Err(e) =
+                models::create_app_token(&state.pool, &token_id_str, app.app.id, &token_hash).await
             {
                 tracing::error!("Failed to create app_token mapping: {e}");
             }
@@ -460,7 +466,11 @@ async fn delete_token(
     axum::extract::Path((_app_slug, token_id)): axum::extract::Path<(String, String)>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "editor") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
 
@@ -493,7 +503,11 @@ async fn data_page(
     app: AppContext,
 ) -> axum::response::Result<Html<String>> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = &role.0;
@@ -538,7 +552,11 @@ async fn import_data(
     mut multipart: axum::extract::Multipart,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
     let app_dir = state.config.app_dir(&app.app.slug);
@@ -589,14 +607,9 @@ async fn import_data(
     match crate::sync::import_bundle_from_bytes(&app_dir, &state.pool, app.app.id, &data).await {
         Ok(warnings) => {
             crate::cache::rebuild(&state.cache, &state.etag_cache, &state.config.data_dir);
-            state.audit.log_with_app(
-                &user_id_str,
-                "import",
-                "bundle",
-                "",
-                None,
-                Some(app.app.id),
-            );
+            state
+                .audit
+                .log_with_app(&user_id_str, "import", "bundle", "", None, Some(app.app.id));
 
             let (status, message) = if warnings.is_empty() {
                 (
@@ -645,7 +658,11 @@ async fn export_data(
     Form(_form): Form<std::collections::HashMap<String, String>>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
     let app_dir = state.config.app_dir(&app.app.slug);
@@ -705,7 +722,11 @@ async fn delete_app(
     app: AppContext,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
 

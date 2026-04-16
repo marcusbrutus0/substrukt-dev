@@ -1,7 +1,7 @@
 use axum::{
+    Form,
     extract::State,
     response::{Html, IntoResponse, Redirect, Response},
-    Form,
 };
 use tower_sessions::Session;
 
@@ -147,10 +147,8 @@ async fn login_submit(
     // Set cookie and redirect
     let cookie = state.ath.session_cookie(&token);
     let mut resp = Redirect::to("/apps").into_response();
-    resp.headers_mut().insert(
-        axum::http::header::SET_COOKIE,
-        cookie.parse().unwrap(),
-    );
+    resp.headers_mut()
+        .insert(axum::http::header::SET_COOKIE, cookie.parse().unwrap());
     resp
 }
 
@@ -187,10 +185,7 @@ async fn logout(
 }
 
 async fn setup_page(session: Session, State(state): State<AppState>) -> Response {
-    if state
-        .has_users
-        .load(std::sync::atomic::Ordering::Relaxed)
-    {
+    if state.has_users.load(std::sync::atomic::Ordering::Relaxed) {
         return Redirect::to("/login").into_response();
     }
     let csrf_token = ensure_csrf_token(&session).await;
@@ -207,10 +202,7 @@ async fn setup_submit(
     State(state): State<AppState>,
     Form(form): Form<SetupForm>,
 ) -> Response {
-    if state
-        .has_users
-        .load(std::sync::atomic::Ordering::Relaxed)
-    {
+    if state.has_users.load(std::sync::atomic::Ordering::Relaxed) {
         return Redirect::to("/login").into_response();
     }
 
@@ -313,10 +305,8 @@ async fn setup_submit(
 
     let cookie = state.ath.session_cookie(&token);
     let mut resp = Redirect::to("/apps").into_response();
-    resp.headers_mut().insert(
-        axum::http::header::SET_COOKIE,
-        cookie.parse().unwrap(),
-    );
+    resp.headers_mut()
+        .insert(axum::http::header::SET_COOKIE, cookie.parse().unwrap());
     resp
 }
 
@@ -380,19 +370,47 @@ async fn signup_submit(
 
     // Validate form fields
     if form.username.trim().is_empty() {
-        return render_signup_error(&state, &session, &form.token, &invitation, "Username is required.").await;
+        return render_signup_error(
+            &state,
+            &session,
+            &form.token,
+            &invitation,
+            "Username is required.",
+        )
+        .await;
     }
     if form.password.len() < 8 {
-        return render_signup_error(&state, &session, &form.token, &invitation, "Password must be at least 8 characters.").await;
+        return render_signup_error(
+            &state,
+            &session,
+            &form.token,
+            &invitation,
+            "Password must be at least 8 characters.",
+        )
+        .await;
     }
     if form.password != form.confirm_password {
-        return render_signup_error(&state, &session, &form.token, &invitation, "Passwords do not match.").await;
+        return render_signup_error(
+            &state,
+            &session,
+            &form.token,
+            &invitation,
+            "Passwords do not match.",
+        )
+        .await;
     }
 
     // Check username uniqueness
     let username = allowthem_core::Username::new(form.username.clone());
     if state.ath.db().get_user_by_username(&username).await.is_ok() {
-        return render_signup_error(&state, &session, &form.token, &invitation, "Username is already taken.").await;
+        return render_signup_error(
+            &state,
+            &session,
+            &form.token,
+            &invitation,
+            "Username is already taken.",
+        )
+        .await;
     }
 
     // Determine email: use invitation email if provided, otherwise derive from username
@@ -414,7 +432,12 @@ async fn signup_submit(
     };
 
     // Create user
-    let user = match state.ath.db().create_user(email, &form.password, Some(username)).await {
+    let user = match state
+        .ath
+        .db()
+        .create_user(email, &form.password, Some(username))
+        .await
+    {
         Ok(u) => u,
         Err(e) => {
             return render_signup_error(
@@ -448,13 +471,19 @@ async fn signup_submit(
         }
     }
 
-    state.has_users.store(true, std::sync::atomic::Ordering::Relaxed);
+    state
+        .has_users
+        .store(true, std::sync::atomic::Ordering::Relaxed);
 
     // Create session
     let token = allowthem_core::generate_token();
     let token_hash = allowthem_core::hash_token(&token);
     let expires = chrono::Utc::now() + state.ath.session_config().ttl;
-    let _ = state.ath.db().create_session(user.id, token_hash, None, None, expires).await;
+    let _ = state
+        .ath
+        .db()
+        .create_session(user.id, token_hash, None, None, expires)
+        .await;
 
     let _ = state
         .ath
@@ -472,10 +501,8 @@ async fn signup_submit(
     // Set cookie and redirect
     let cookie = state.ath.session_cookie(&token);
     let mut resp = Redirect::to("/apps").into_response();
-    resp.headers_mut().insert(
-        axum::http::header::SET_COOKIE,
-        cookie.parse().unwrap(),
-    );
+    resp.headers_mut()
+        .insert(axum::http::header::SET_COOKIE, cookie.parse().unwrap());
     resp
 }
 
@@ -511,9 +538,10 @@ fn render_template(state: &AppState, template: &str, ctx: minijinja::Value) -> H
         return Html("<h1>500</h1><p>Template error</p>".to_string());
     };
     match env.get_template(template) {
-        Ok(tmpl) => Html(tmpl.render(ctx).unwrap_or_else(|e| {
-            format!("<h1>500</h1><p>Render error: {e}</p>")
-        })),
+        Ok(tmpl) => Html(
+            tmpl.render(ctx)
+                .unwrap_or_else(|e| format!("<h1>500</h1><p>Render error: {e}</p>")),
+        ),
         Err(e) => Html(format!("<h1>500</h1><p>Template not found: {e}</p>")),
     }
 }

@@ -98,7 +98,9 @@ impl AuditLogger {
     #[cfg(test)]
     pub async fn execute_raw(&self, query: &str) -> eyre::Result<()> {
         let query = query.to_string();
-        sqlx::query(sqlx::AssertSqlSafe(query)).execute(self.pool.as_ref()).await?;
+        sqlx::query(sqlx::AssertSqlSafe(query))
+            .execute(self.pool.as_ref())
+            .await?;
         Ok(())
     }
 

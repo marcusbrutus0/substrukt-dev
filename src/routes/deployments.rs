@@ -51,7 +51,11 @@ async fn list_deployments(
     app: AppContext,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "editor") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = &role.0;
@@ -159,7 +163,11 @@ async fn new_deployment_form(
     app: AppContext,
 ) -> axum::response::Result<Html<String>> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = &role.0;
@@ -200,7 +208,11 @@ async fn create_deployment(
     Form(form): Form<DeploymentForm>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
     let user_role = role.0.clone();
@@ -230,14 +242,28 @@ async fn create_deployment(
 
     if let Err(e) = validate_deployment_slug(slug) {
         return render_form_with_error(
-            &state, &app, &session, is_htmx, &e, None, &user_role, &current_username,
+            &state,
+            &app,
+            &session,
+            is_htmx,
+            &e,
+            None,
+            &user_role,
+            &current_username,
         )
         .await;
     }
 
     if let Err(e) = validate_webhook_url(webhook_url, state.config.allow_private_webhooks) {
         return render_form_with_error(
-            &state, &app, &session, is_htmx, &e, None, &user_role, &current_username,
+            &state,
+            &app,
+            &session,
+            is_htmx,
+            &e,
+            None,
+            &user_role,
+            &current_username,
         )
         .await;
     }
@@ -293,7 +319,14 @@ async fn create_deployment(
                 e.to_string()
             };
             render_form_with_error(
-                &state, &app, &session, is_htmx, &msg, None, &user_role, &current_username,
+                &state,
+                &app,
+                &session,
+                is_htmx,
+                &msg,
+                None,
+                &user_role,
+                &current_username,
             )
             .await
         }
@@ -310,7 +343,11 @@ async fn edit_deployment_form(
     Path((_app_slug, slug)): Path<(String, String)>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
     let user_role = &role.0;
@@ -378,7 +415,11 @@ async fn update_deployment(
     Form(form): Form<DeploymentForm>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
     let user_role = role.0.clone();
@@ -422,14 +463,28 @@ async fn update_deployment(
 
     if let Err(e) = validate_deployment_slug(new_slug) {
         return render_form_with_error(
-            &state, &app, &session, is_htmx, &e, Some(&dep), &user_role, &current_username,
+            &state,
+            &app,
+            &session,
+            is_htmx,
+            &e,
+            Some(&dep),
+            &user_role,
+            &current_username,
         )
         .await;
     }
 
     if let Err(e) = validate_webhook_url(webhook_url, state.config.allow_private_webhooks) {
         return render_form_with_error(
-            &state, &app, &session, is_htmx, &e, Some(&dep), &user_role, &current_username,
+            &state,
+            &app,
+            &session,
+            is_htmx,
+            &e,
+            Some(&dep),
+            &user_role,
+            &current_username,
         )
         .await;
     }
@@ -471,7 +526,14 @@ async fn update_deployment(
             e.to_string()
         };
         return render_form_with_error(
-            &state, &app, &session, is_htmx, &msg, Some(&dep), &user_role, &current_username,
+            &state,
+            &app,
+            &session,
+            is_htmx,
+            &msg,
+            Some(&dep),
+            &user_role,
+            &current_username,
         )
         .await;
     }
@@ -509,7 +571,11 @@ async fn delete_deployment(
     Path((_app_slug, slug)): Path<(String, String)>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "admin") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
 
@@ -561,7 +627,11 @@ async fn fire_deployment(
     Path((_app_slug, slug)): Path<(String, String)>,
 ) -> axum::response::Result<axum::response::Response> {
     if !auth::has_min_role(&role.0, "editor") {
-        return Err((axum::http::StatusCode::FORBIDDEN, "Insufficient permissions").into());
+        return Err((
+            axum::http::StatusCode::FORBIDDEN,
+            "Insufficient permissions",
+        )
+            .into());
     }
     let user_id_str = user.id.to_string();
 
