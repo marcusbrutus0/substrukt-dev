@@ -8,6 +8,8 @@ use axum::{
 };
 use tower_sessions::Session;
 
+use crate::state::AppState;
+
 /// Return a redirect response that works correctly with htmx.
 /// If the request came from htmx (has HX-Request header), returns a 200 with
 /// HX-Redirect header so htmx performs a full page navigation instead of
@@ -30,67 +32,40 @@ fn htmx_aware_redirect(request: &Request, location: &str) -> Response {
     }
 }
 
-use crate::db::models;
-use crate::state::AppState;
-
-const USER_ID_KEY: &str = "user_id";
-const USER_ROLE_KEY: &str = "user_role";
-const USERNAME_KEY: &str = "username";
 const FLASH_KEY: &str = "_flash";
 const CSRF_KEY: &str = "_csrf";
 
-pub async fn login_user(
-    session: &Session,
-    user_id: i64,
-    role: &str,
-    username: &str,
-) -> eyre::Result<()> {
-    session
-        .insert(USER_ID_KEY, user_id)
-        .await
-        .map_err(|e| eyre::eyre!("Session insert error: {e}"))?;
-    session
-        .insert(USER_ROLE_KEY, role)
-        .await
-        .map_err(|e| eyre::eyre!("Session insert error: {e}"))?;
-    session
-        .insert(USERNAME_KEY, username)
-        .await
-        .map_err(|e| eyre::eyre!("Session insert error: {e}"))?;
-    Ok(())
+/// Get the current authenticated user from request extensions.
+pub fn current_user(request: &Request) -> Option<&allowthem_core::User> {
+    request.extensions().get::<allowthem_core::User>()
 }
 
-pub async fn logout_user(session: &Session) -> eyre::Result<()> {
-    session
-        .flush()
-        .await
-        .map_err(|e| eyre::eyre!("Session flush error: {e}"))?;
-    Ok(())
+/// Get cached user role from request extensions.
+pub fn current_user_role_from_ext(extensions: &axum::http::Extensions) -> Option<String> {
+    extensions.get::<CurrentUserRole>().map(|r| r.0.clone())
 }
 
-pub async fn current_user_id(session: &Session) -> Option<i64> {
-    session.get::<i64>(USER_ID_KEY).await.ok().flatten()
-}
-
-pub async fn current_user_role(session: &Session) -> Option<String> {
-    session.get::<String>(USER_ROLE_KEY).await.ok().flatten()
-}
-
-pub async fn current_username(session: &Session) -> Option<String> {
-    session.get::<String>(USERNAME_KEY).await.ok().flatten()
-}
+/// Newtype to store the user's primary role in request extensions.
+#[derive(Clone)]
+pub struct CurrentUserRole(pub String);
 
 /// Check that the current user has at least the given role level.
 /// Role hierarchy: admin > editor > viewer.
-/// Returns the user_id on success, or a 403 response on failure.
-pub async fn require_role(session: &Session, min_role: &str) -> axum::response::Result<i64> {
-    let user_id = current_user_id(session)
-        .await
+/// Returns the user's UUID on success, or a 403 response on failure.
+pub fn require_role(
+    extensions: &axum::http::Extensions,
+    min_role: &str,
+) -> axum::response::Result<allowthem_core::UserId> {
+    let user = extensions
+        .get::<allowthem_core::User>()
         .ok_or(axum::response::ErrorResponse::from(
             Redirect::to("/login").into_response(),
         ))?;
+    let role = extensions
+        .get::<CurrentUserRole>()
+        .map(|r| r.0.as_str())
+        .unwrap_or("");
 
-    let user_role = current_user_role(session).await.unwrap_or_default();
     let role_level = |r: &str| -> u8 {
         match r {
             "admin" => 3,
@@ -100,8 +75,8 @@ pub async fn require_role(session: &Session, min_role: &str) -> axum::response::
         }
     };
 
-    if role_level(&user_role) >= role_level(min_role) {
-        Ok(user_id)
+    if role_level(role) >= role_level(min_role) {
+        Ok(user.id)
     } else {
         Err(axum::response::ErrorResponse::from(
             (
@@ -112,6 +87,8 @@ pub async fn require_role(session: &Session, min_role: &str) -> axum::response::
         ))
     }
 }
+
+// --- Flash / CSRF (unchanged, still use tower-sessions) ---
 
 /// Store a flash message in the session. It will be consumed on next page load.
 pub async fn set_flash(session: &Session, kind: &str, message: &str) {
@@ -238,9 +215,13 @@ fn csrf_error_response(state: &AppState) -> Response {
     (axum::http::StatusCode::FORBIDDEN, Html(html)).into_response()
 }
 
-/// Middleware: redirect to /setup if no users exist, or to /login if not authenticated.
-/// Session is extracted from request extensions (set by the session layer below this).
-pub async fn require_auth(State(state): State<AppState>, request: Request, next: Next) -> Response {
+/// Middleware: validate allowthem session cookie. Redirect to /setup or /login if needed.
+/// On success, inserts `allowthem_core::User` and `CurrentUserRole` into request extensions.
+pub async fn require_auth(
+    State(state): State<AppState>,
+    mut request: Request,
+    next: Next,
+) -> Response {
     let path = request.uri().path().to_string();
 
     // Allow public paths
@@ -252,24 +233,53 @@ pub async fn require_auth(State(state): State<AppState>, request: Request, next:
         return next.run(request).await;
     }
 
-    // Check if any users exist
-    let user_count = models::user_count(&state.pool).await.unwrap_or(0);
-    if user_count == 0 {
+    // Redirect to setup if no users exist
+    if !state.has_users.load(std::sync::atomic::Ordering::Relaxed) {
         return htmx_aware_redirect(&request, "/setup");
     }
 
-    // Check session - get from request extensions
-    let session = request.extensions().get::<Session>().cloned();
-    match session {
-        Some(session) => {
-            if current_user_id(&session).await.is_none() {
-                return htmx_aware_redirect(&request, "/login");
-            }
-        }
-        None => {
-            return htmx_aware_redirect(&request, "/login");
+    // Parse allowthem session cookie
+    let cookie_header = request
+        .headers()
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok());
+
+    let token = cookie_header.and_then(|h| state.ath.parse_session_cookie(h));
+
+    let token = match token {
+        Some(t) => t,
+        None => return htmx_aware_redirect(&request, "/login"),
+    };
+
+    // Validate session
+    let user = match state.auth_client.validate_session(&token).await {
+        Ok(Some(u)) => u,
+        _ => return htmx_aware_redirect(&request, "/login"),
+    };
+
+    // Resolve primary role
+    let role = resolve_user_role(&state, &user.id).await;
+
+    request.extensions_mut().insert(CurrentUserRole(role));
+    request.extensions_mut().insert(user);
+    next.run(request).await
+}
+
+/// Determine the user's highest role. Checks admin > editor > viewer.
+pub(crate) async fn resolve_user_role(
+    state: &AppState,
+    user_id: &allowthem_core::UserId,
+) -> String {
+    for role_name in ["admin", "editor", "viewer"] {
+        let rn = allowthem_core::RoleName::new(role_name);
+        if state
+            .auth_client
+            .check_role(user_id, &rn)
+            .await
+            .unwrap_or(false)
+        {
+            return role_name.to_string();
         }
     }
-
-    next.run(request).await
+    String::new()
 }
