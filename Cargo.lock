@@ -3449,6 +3449,7 @@ name = "substrukt"
 version = "0.12.0"
 dependencies = [
  "allowthem-core",
+ "argon2",
  "axum",
  "axum-htmx",
  "chrono",
