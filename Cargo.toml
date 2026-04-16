@@ -27,7 +27,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 walkdir = "2"
 sqlx = { version = "0.9.0-alpha.1", features = ["runtime-tokio", "sqlite", "migrate", "uuid", "chrono", "derive", "sqlx-toml"] }
 jsonschema = "0.28"
-argon2 = "0.5" # TODO: remove when Task 7 drops old auth code from models.rs
 tower-sessions = "0.14"
 allowthem-core = { path = "../allowthem/crates/core" }
 tar = "0.4"

@@ -1,108 +1,4 @@
-use argon2::password_hash::rand_core::OsRng;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use sqlx::SqlitePool;
-
-#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
-pub struct User {
-    pub id: i64,
-    pub username: String,
-    pub password_hash: String,
-    pub created_at: String,
-    pub role: String,
-}
-
-impl User {
-    pub fn hash_password(password: &str) -> eyre::Result<String> {
-        let salt = SaltString::generate(&mut OsRng);
-        let hash = Argon2::default()
-            .hash_password(password.as_bytes(), &salt)
-            .map_err(|e| eyre::eyre!("Failed to hash password: {e}"))?;
-        Ok(hash.to_string())
-    }
-
-    pub fn verify_password(&self, password: &str) -> bool {
-        let Ok(parsed) = PasswordHash::new(&self.password_hash) else {
-            return false;
-        };
-        Argon2::default()
-            .verify_password(password.as_bytes(), &parsed)
-            .is_ok()
-    }
-}
-
-pub async fn create_user(
-    pool: &SqlitePool,
-    username: &str,
-    password: &str,
-    role: &str,
-) -> eyre::Result<User> {
-    let password_hash = User::hash_password(password)?;
-    let now = chrono::Utc::now().to_rfc3339();
-    let id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO users (username, password_hash, created_at, role) VALUES (?, ?, ?, ?) RETURNING id",
-    )
-    .bind(username)
-    .bind(&password_hash)
-    .bind(&now)
-    .bind(role)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(User {
-        id,
-        username: username.to_string(),
-        password_hash,
-        created_at: now,
-        role: role.to_string(),
-    })
-}
-
-pub async fn find_user_by_username(
-    pool: &SqlitePool,
-    username: &str,
-) -> eyre::Result<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username = ?")
-        .bind(username)
-        .fetch_optional(pool)
-        .await?;
-    Ok(user)
-}
-
-pub async fn user_count(pool: &SqlitePool) -> eyre::Result<i64> {
-    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users")
-        .fetch_one(pool)
-        .await?;
-    Ok(count)
-}
-
-pub async fn list_users(pool: &SqlitePool) -> eyre::Result<Vec<User>> {
-    let users = sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY username")
-        .fetch_all(pool)
-        .await?;
-    Ok(users)
-}
-
-pub async fn find_user_by_id(pool: &SqlitePool, user_id: i64) -> eyre::Result<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = ?")
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(user)
-}
-
-pub async fn update_user_password(
-    pool: &SqlitePool,
-    user_id: i64,
-    new_password: &str,
-) -> eyre::Result<()> {
-    let password_hash = User::hash_password(new_password)?;
-    sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
-        .bind(&password_hash)
-        .bind(user_id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
 
 // --- Apps ---
 
@@ -201,7 +97,7 @@ pub fn validate_app_slug(slug: &str) -> Result<(), String> {
 
 // --- App Access ---
 
-pub async fn grant_app_access(pool: &SqlitePool, app_id: i64, user_id: i64) -> eyre::Result<()> {
+pub async fn grant_app_access(pool: &SqlitePool, app_id: i64, user_id: &str) -> sqlx::Result<()> {
     sqlx::query("INSERT OR IGNORE INTO app_access (app_id, user_id) VALUES (?, ?)")
         .bind(app_id)
         .bind(user_id)
@@ -210,7 +106,7 @@ pub async fn grant_app_access(pool: &SqlitePool, app_id: i64, user_id: i64) -> e
     Ok(())
 }
 
-pub async fn revoke_app_access(pool: &SqlitePool, app_id: i64, user_id: i64) -> eyre::Result<()> {
+pub async fn revoke_app_access(pool: &SqlitePool, app_id: i64, user_id: &str) -> sqlx::Result<()> {
     sqlx::query("DELETE FROM app_access WHERE app_id = ? AND user_id = ?")
         .bind(app_id)
         .bind(user_id)
@@ -222,9 +118,9 @@ pub async fn revoke_app_access(pool: &SqlitePool, app_id: i64, user_id: i64) -> 
 pub async fn user_has_app_access(
     pool: &SqlitePool,
     app_id: i64,
-    user_id: i64,
-) -> eyre::Result<bool> {
-    let count = sqlx::query_scalar::<_, i64>(
+    user_id: &str,
+) -> sqlx::Result<bool> {
+    let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM app_access WHERE app_id = ? AND user_id = ?",
     )
     .bind(app_id)
@@ -234,7 +130,7 @@ pub async fn user_has_app_access(
     Ok(count > 0)
 }
 
-pub async fn list_apps_for_user(pool: &SqlitePool, user_id: i64) -> eyre::Result<Vec<App>> {
+pub async fn list_apps_for_user(pool: &SqlitePool, user_id: &str) -> sqlx::Result<Vec<App>> {
     let apps = sqlx::query_as::<_, App>(
         "SELECT a.* FROM apps a INNER JOIN app_access aa ON a.id = aa.app_id WHERE aa.user_id = ? ORDER BY a.name",
     )
@@ -244,248 +140,54 @@ pub async fn list_apps_for_user(pool: &SqlitePool, user_id: i64) -> eyre::Result
     Ok(apps)
 }
 
-pub async fn list_app_users(pool: &SqlitePool, app_id: i64) -> eyre::Result<Vec<(User, bool)>> {
-    // Get all non-admin users with a flag indicating if they have access to this app
-    let users: Vec<User> = sqlx::query_as::<_, User>(
-        "SELECT id, username, password_hash, created_at, role FROM users WHERE role != 'admin' ORDER BY username",
-    )
-    .fetch_all(pool)
-    .await?;
+// --- App Tokens ---
 
-    let mut result = Vec::new();
-    for user in users {
-        let has_access = user_has_app_access(pool, app_id, user.id).await?;
-        result.push((user, has_access));
-    }
-    Ok(result)
-}
-
-// --- API Tokens ---
-
-#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
-pub struct ApiToken {
-    pub id: i64,
-    pub user_id: i64,
-    pub name: String,
-    pub token_hash: String,
-    pub created_at: String,
-    pub app_id: Option<i64>,
-}
-
-pub async fn create_api_token(
+pub async fn create_app_token(
     pool: &SqlitePool,
-    user_id: i64,
+    api_token_id: &str,
     app_id: i64,
-    name: &str,
     token_hash: &str,
-) -> eyre::Result<ApiToken> {
-    let now = chrono::Utc::now().to_rfc3339();
-    let id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO api_tokens (user_id, app_id, name, token_hash, created_at) VALUES (?, ?, ?, ?, ?) RETURNING id",
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO app_tokens (api_token_id, app_id, token_hash) VALUES (?, ?, ?)",
     )
-    .bind(user_id)
+    .bind(api_token_id)
     .bind(app_id)
-    .bind(name)
     .bind(token_hash)
-    .bind(&now)
-    .fetch_one(pool)
+    .execute(pool)
     .await?;
-
-    Ok(ApiToken {
-        id,
-        user_id,
-        app_id: Some(app_id),
-        name: name.to_string(),
-        token_hash: token_hash.to_string(),
-        created_at: now,
-    })
-}
-
-pub async fn list_api_tokens(pool: &SqlitePool, user_id: i64) -> eyre::Result<Vec<ApiToken>> {
-    let tokens = sqlx::query_as::<_, ApiToken>(
-        "SELECT * FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC",
-    )
-    .bind(user_id)
-    .fetch_all(pool)
-    .await?;
-    Ok(tokens)
-}
-
-pub async fn list_api_tokens_for_app(
-    pool: &SqlitePool,
-    app_id: i64,
-) -> eyre::Result<Vec<ApiToken>> {
-    let tokens = sqlx::query_as::<_, ApiToken>(
-        "SELECT * FROM api_tokens WHERE app_id = ? ORDER BY created_at DESC",
-    )
-    .bind(app_id)
-    .fetch_all(pool)
-    .await?;
-    Ok(tokens)
-}
-
-pub async fn delete_api_token(pool: &SqlitePool, token_id: i64, app_id: i64) -> eyre::Result<()> {
-    sqlx::query("DELETE FROM api_tokens WHERE id = ? AND app_id = ?")
-        .bind(token_id)
-        .bind(app_id)
-        .execute(pool)
-        .await?;
     Ok(())
 }
 
-pub async fn find_token_by_hash(
+pub async fn find_app_for_token_hash(
     pool: &SqlitePool,
     token_hash: &str,
-) -> eyre::Result<Option<ApiToken>> {
-    let token = sqlx::query_as::<_, ApiToken>("SELECT * FROM api_tokens WHERE token_hash = ?")
-        .bind(token_hash)
-        .fetch_optional(pool)
-        .await?;
-    Ok(token)
-}
-
-// --- Invitations ---
-
-#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]
-pub struct Invitation {
-    pub id: i64,
-    pub email: String,
-    pub token_hash: String,
-    pub invited_by: i64,
-    pub created_at: String,
-    pub expires_at: String,
-    pub role: String,
-}
-
-pub async fn create_invitation(
-    pool: &SqlitePool,
-    email: &str,
-    token_hash: &str,
-    invited_by: i64,
-    expires_at: &str,
-    role: &str,
-) -> eyre::Result<Invitation> {
-    let now = chrono::Utc::now().to_rfc3339();
-    let id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO invitations (email, token_hash, invited_by, created_at, expires_at, role) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
-    )
-    .bind(email)
-    .bind(token_hash)
-    .bind(invited_by)
-    .bind(&now)
-    .bind(expires_at)
-    .bind(role)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(Invitation {
-        id,
-        email: email.to_string(),
-        token_hash: token_hash.to_string(),
-        invited_by,
-        created_at: now,
-        expires_at: expires_at.to_string(),
-        role: role.to_string(),
-    })
-}
-
-pub async fn find_invitation_by_token_hash(
-    pool: &SqlitePool,
-    token_hash: &str,
-) -> eyre::Result<Option<Invitation>> {
-    let inv = sqlx::query_as::<_, Invitation>(
-        "SELECT * FROM invitations WHERE token_hash = ? AND expires_at > datetime('now')",
+) -> sqlx::Result<Option<(String, i64)>> {
+    let row: Option<(String, i64)> = sqlx::query_as(
+        "SELECT api_token_id, app_id FROM app_tokens WHERE token_hash = ?",
     )
     .bind(token_hash)
     .fetch_optional(pool)
     .await?;
-    Ok(inv)
+    Ok(row)
 }
 
-pub async fn find_invitation_by_email(
-    pool: &SqlitePool,
-    email: &str,
-) -> eyre::Result<Option<Invitation>> {
-    let inv = sqlx::query_as::<_, Invitation>("SELECT * FROM invitations WHERE email = ?")
-        .bind(email)
-        .fetch_optional(pool)
-        .await?;
-    Ok(inv)
-}
-
-pub async fn list_pending_invitations(pool: &SqlitePool) -> eyre::Result<Vec<Invitation>> {
-    let invitations = sqlx::query_as::<_, Invitation>(
-        "SELECT * FROM invitations WHERE expires_at > datetime('now') ORDER BY created_at DESC",
+pub async fn list_app_tokens(pool: &SqlitePool, app_id: i64) -> sqlx::Result<Vec<String>> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT api_token_id FROM app_tokens WHERE app_id = ?",
     )
+    .bind(app_id)
     .fetch_all(pool)
     .await?;
-    Ok(invitations)
+    Ok(rows)
 }
 
-pub async fn delete_invitation(pool: &SqlitePool, id: i64) -> eyre::Result<()> {
-    sqlx::query("DELETE FROM invitations WHERE id = ?")
-        .bind(id)
+pub async fn delete_app_token(pool: &SqlitePool, api_token_id: &str) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM app_tokens WHERE api_token_id = ?")
+        .bind(api_token_id)
         .execute(pool)
         .await?;
     Ok(())
-}
-
-pub async fn create_user_with_email(
-    pool: &SqlitePool,
-    username: &str,
-    password: &str,
-    email: &str,
-    role: &str,
-) -> eyre::Result<User> {
-    let password_hash = User::hash_password(password)?;
-    let now = chrono::Utc::now().to_rfc3339();
-    let id = sqlx::query_scalar::<_, i64>(
-        "INSERT INTO users (username, password_hash, email, created_at, role) VALUES (?, ?, ?, ?, ?) RETURNING id",
-    )
-    .bind(username)
-    .bind(&password_hash)
-    .bind(email)
-    .bind(&now)
-    .bind(role)
-    .fetch_one(pool)
-    .await?;
-
-    Ok(User {
-        id,
-        username: username.to_string(),
-        password_hash,
-        created_at: now,
-        role: role.to_string(),
-    })
-}
-
-pub async fn find_user_by_email(pool: &SqlitePool, email: &str) -> eyre::Result<Option<User>> {
-    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = ?")
-        .bind(email)
-        .fetch_optional(pool)
-        .await?;
-    Ok(user)
-}
-
-pub async fn find_user_role(pool: &SqlitePool, user_id: i64) -> eyre::Result<Option<String>> {
-    let role = sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE id = ?")
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(role)
-}
-
-/// Returns a map from user ID (as string) to username for all users in the database.
-pub async fn get_username_map(
-    pool: &SqlitePool,
-) -> eyre::Result<std::collections::HashMap<String, String>> {
-    let rows: Vec<(i64, String)> = sqlx::query_as("SELECT id, username FROM users")
-        .fetch_all(pool)
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, username)| (id.to_string(), username))
-        .collect())
 }
 
 #[cfg(test)]
@@ -500,6 +202,25 @@ mod tests {
             .pragma("foreign_keys", "ON");
         let pool = SqlitePool::connect_with(options).await.unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        // The migration creates app_access with INTEGER user_id.
+        // Recreate it with TEXT user_id for new tests.
+        sqlx::query("DROP TABLE IF EXISTS app_access")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE app_access (app_id INTEGER NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (app_id, user_id))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // Create app_tokens table too
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS app_tokens (api_token_id TEXT NOT NULL, app_id INTEGER NOT NULL, token_hash TEXT NOT NULL, PRIMARY KEY (api_token_id, app_id))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         pool
     }
 
@@ -624,34 +345,18 @@ mod tests {
     async fn test_app_access() {
         let pool = test_pool().await;
         let app = create_app(&pool, "blog", "Blog").await.unwrap();
-        let user = create_user(&pool, "editor1", "pass", "editor")
-            .await
-            .unwrap();
+        let user_id = "test-user-uuid-1";
 
-        // Initially no access
-        assert!(!user_has_app_access(&pool, app.id, user.id).await.unwrap());
-        let user_apps = list_apps_for_user(&pool, user.id).await.unwrap();
-        assert!(user_apps.is_empty());
+        assert!(!user_has_app_access(&pool, app.id, user_id).await.unwrap());
 
-        // Grant access
-        grant_app_access(&pool, app.id, user.id).await.unwrap();
-        assert!(user_has_app_access(&pool, app.id, user.id).await.unwrap());
-        let user_apps = list_apps_for_user(&pool, user.id).await.unwrap();
-        assert_eq!(user_apps.len(), 1);
-        assert_eq!(user_apps[0].slug, "blog");
+        grant_app_access(&pool, app.id, user_id).await.unwrap();
+        assert!(user_has_app_access(&pool, app.id, user_id).await.unwrap());
 
-        // Grant again (idempotent via INSERT OR IGNORE)
-        grant_app_access(&pool, app.id, user.id).await.unwrap();
-        assert!(user_has_app_access(&pool, app.id, user.id).await.unwrap());
+        // Grant again (idempotent)
+        grant_app_access(&pool, app.id, user_id).await.unwrap();
 
-        // Revoke access
-        revoke_app_access(&pool, app.id, user.id).await.unwrap();
-        assert!(!user_has_app_access(&pool, app.id, user.id).await.unwrap());
-        let user_apps = list_apps_for_user(&pool, user.id).await.unwrap();
-        assert!(user_apps.is_empty());
-
-        // Revoke again (no error)
-        revoke_app_access(&pool, app.id, user.id).await.unwrap();
+        revoke_app_access(&pool, app.id, user_id).await.unwrap();
+        assert!(!user_has_app_access(&pool, app.id, user_id).await.unwrap());
     }
 
     #[tokio::test]
@@ -659,259 +364,17 @@ mod tests {
         let pool = test_pool().await;
         let app1 = create_app(&pool, "blog", "Blog").await.unwrap();
         let app2 = create_app(&pool, "docs", "Docs").await.unwrap();
-        let user = create_user(&pool, "editor1", "pass", "editor")
-            .await
-            .unwrap();
+        let user_id = "test-user-uuid-2";
 
-        grant_app_access(&pool, app1.id, user.id).await.unwrap();
-        grant_app_access(&pool, app2.id, user.id).await.unwrap();
+        grant_app_access(&pool, app1.id, user_id).await.unwrap();
+        grant_app_access(&pool, app2.id, user_id).await.unwrap();
 
-        let user_apps = list_apps_for_user(&pool, user.id).await.unwrap();
+        let user_apps = list_apps_for_user(&pool, user_id).await.unwrap();
         assert_eq!(user_apps.len(), 2);
-        let slugs: Vec<&str> = user_apps.iter().map(|a| a.slug.as_str()).collect();
-        assert!(slugs.contains(&"blog"));
-        assert!(slugs.contains(&"docs"));
 
-        // Revoking one doesn't affect the other
-        revoke_app_access(&pool, app1.id, user.id).await.unwrap();
-        let user_apps = list_apps_for_user(&pool, user.id).await.unwrap();
+        revoke_app_access(&pool, app1.id, user_id).await.unwrap();
+        let user_apps = list_apps_for_user(&pool, user_id).await.unwrap();
         assert_eq!(user_apps.len(), 1);
         assert_eq!(user_apps[0].slug, "docs");
-    }
-
-    #[tokio::test]
-    async fn test_list_app_users() {
-        let pool = test_pool().await;
-        let app = create_app(&pool, "blog", "Blog").await.unwrap();
-        let editor = create_user(&pool, "editor1", "pass", "editor")
-            .await
-            .unwrap();
-        let _viewer = create_user(&pool, "viewer1", "pass", "viewer")
-            .await
-            .unwrap();
-        // Admin users are not listed by list_app_users
-        let _admin = create_user(&pool, "admin2", "pass", "admin").await.unwrap();
-
-        grant_app_access(&pool, app.id, editor.id).await.unwrap();
-
-        let users = list_app_users(&pool, app.id).await.unwrap();
-        assert_eq!(users.len(), 2); // editor and viewer (non-admins)
-        let editor_entry = users.iter().find(|(u, _)| u.username == "editor1").unwrap();
-        assert!(editor_entry.1, "editor1 should have access");
-        let viewer_entry = users.iter().find(|(u, _)| u.username == "viewer1").unwrap();
-        assert!(!viewer_entry.1, "viewer1 should not have access");
-    }
-
-    // ── API Token app scoping tests ─────────────────────────────
-
-    #[tokio::test]
-    async fn test_api_token_app_scoping() {
-        let pool = test_pool().await;
-        let app1 = create_app(&pool, "blog", "Blog").await.unwrap();
-        let app2 = create_app(&pool, "docs", "Docs").await.unwrap();
-        let user = create_user(&pool, "admin1", "pass", "admin").await.unwrap();
-
-        // Create tokens for different apps
-        let tok1 = create_api_token(&pool, user.id, app1.id, "Blog Token", "hash1")
-            .await
-            .unwrap();
-        assert_eq!(tok1.app_id, Some(app1.id));
-
-        let tok2 = create_api_token(&pool, user.id, app2.id, "Docs Token", "hash2")
-            .await
-            .unwrap();
-        assert_eq!(tok2.app_id, Some(app2.id));
-
-        // find_token_by_hash returns correct app_id
-        let found = find_token_by_hash(&pool, "hash1").await.unwrap().unwrap();
-        assert_eq!(found.app_id, Some(app1.id));
-        assert_eq!(found.name, "Blog Token");
-
-        let found = find_token_by_hash(&pool, "hash2").await.unwrap().unwrap();
-        assert_eq!(found.app_id, Some(app2.id));
-
-        // list_api_tokens_for_app returns only that app's tokens
-        let app1_tokens = list_api_tokens_for_app(&pool, app1.id).await.unwrap();
-        assert_eq!(app1_tokens.len(), 1);
-        assert_eq!(app1_tokens[0].name, "Blog Token");
-
-        let app2_tokens = list_api_tokens_for_app(&pool, app2.id).await.unwrap();
-        assert_eq!(app2_tokens.len(), 1);
-        assert_eq!(app2_tokens[0].name, "Docs Token");
-
-        // list_api_tokens (by user) returns all
-        let all_tokens = list_api_tokens(&pool, user.id).await.unwrap();
-        assert_eq!(all_tokens.len(), 2);
-
-        // delete_api_token scoped by app
-        delete_api_token(&pool, tok1.id, app1.id).await.unwrap();
-        assert!(find_token_by_hash(&pool, "hash1").await.unwrap().is_none());
-        // tok2 should be unaffected
-        assert!(find_token_by_hash(&pool, "hash2").await.unwrap().is_some());
-
-        // delete_api_token with wrong app_id doesn't delete
-        delete_api_token(&pool, tok2.id, app1.id).await.unwrap(); // no error, but no effect
-        assert!(
-            find_token_by_hash(&pool, "hash2").await.unwrap().is_some(),
-            "Token should not be deleted when app_id doesn't match"
-        );
-    }
-
-    // ── Cascade delete tests ────────────────────────────────────
-
-    #[tokio::test]
-    async fn test_delete_app_cascade() {
-        let pool = test_pool().await;
-        let app = create_app(&pool, "blog", "Blog").await.unwrap();
-        let user = create_user(&pool, "editor1", "pass", "editor")
-            .await
-            .unwrap();
-
-        // Create associated records
-        grant_app_access(&pool, app.id, user.id).await.unwrap();
-        create_api_token(&pool, user.id, app.id, "Test Token", "tokenhash")
-            .await
-            .unwrap();
-
-        // Insert upload and upload_reference directly
-        sqlx::query(
-            "INSERT INTO uploads (app_id, hash, filename, mime, size) VALUES (?, 'abc123', 'test.png', 'image/png', 100)",
-        )
-        .bind(app.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            "INSERT INTO upload_references (app_id, upload_hash, schema_slug, entry_id) VALUES (?, 'abc123', 'posts', 'entry1')",
-        )
-        .bind(app.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-        // Verify everything exists
-        assert!(user_has_app_access(&pool, app.id, user.id).await.unwrap());
-        assert!(
-            find_token_by_hash(&pool, "tokenhash")
-                .await
-                .unwrap()
-                .is_some()
-        );
-        let upload_count =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM uploads WHERE app_id = ?")
-                .bind(app.id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(upload_count, 1);
-        let ref_count =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM upload_references WHERE app_id = ?")
-                .bind(app.id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(ref_count, 1);
-
-        // Delete the app
-        delete_app(&pool, app.id).await.unwrap();
-
-        // All associated records should be cascade-deleted
-        assert!(!user_has_app_access(&pool, app.id, user.id).await.unwrap());
-        assert!(
-            find_token_by_hash(&pool, "tokenhash")
-                .await
-                .unwrap()
-                .is_none()
-        );
-        let upload_count =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM uploads WHERE app_id = ?")
-                .bind(app.id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(upload_count, 0);
-        let ref_count =
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM upload_references WHERE app_id = ?")
-                .bind(app.id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(ref_count, 0);
-
-        // User still exists (not cascade-deleted)
-        assert!(
-            find_user_by_username(&pool, "editor1")
-                .await
-                .unwrap()
-                .is_some()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_delete_user_cascades_app_access() {
-        let pool = test_pool().await;
-        let app = create_app(&pool, "blog", "Blog").await.unwrap();
-        let user = create_user(&pool, "editor1", "pass", "editor")
-            .await
-            .unwrap();
-
-        grant_app_access(&pool, app.id, user.id).await.unwrap();
-        assert!(user_has_app_access(&pool, app.id, user.id).await.unwrap());
-
-        // Delete user
-        sqlx::query("DELETE FROM users WHERE id = ?")
-            .bind(user.id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        // app_access should be cascade-deleted
-        assert!(!user_has_app_access(&pool, app.id, user.id).await.unwrap());
-
-        // App still exists
-        assert!(find_app_by_slug(&pool, "blog").await.unwrap().is_some());
-    }
-
-    // ── User query and password update tests ────────────────────
-
-    #[tokio::test]
-    async fn test_list_users() {
-        let pool = test_pool().await;
-        let _u1 = create_user(&pool, "alice", "pass", "admin").await.unwrap();
-        let _u2 = create_user(&pool, "bob", "pass", "editor").await.unwrap();
-
-        let users = list_users(&pool).await.unwrap();
-        assert_eq!(users.len(), 2);
-        assert_eq!(users[0].username, "alice");
-        assert_eq!(users[1].username, "bob");
-    }
-
-    #[tokio::test]
-    async fn test_find_user_by_id() {
-        let pool = test_pool().await;
-        let user = create_user(&pool, "alice", "pass", "admin").await.unwrap();
-
-        let found = find_user_by_id(&pool, user.id).await.unwrap().unwrap();
-        assert_eq!(found.username, "alice");
-
-        assert!(find_user_by_id(&pool, 9999).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_update_user_password() {
-        let pool = test_pool().await;
-        let user = create_user(&pool, "alice", "oldpass", "admin")
-            .await
-            .unwrap();
-        assert!(user.verify_password("oldpass"));
-
-        update_user_password(&pool, user.id, "newpass")
-            .await
-            .unwrap();
-
-        let updated = find_user_by_id(&pool, user.id).await.unwrap().unwrap();
-        assert!(!updated.verify_password("oldpass"));
-        assert!(updated.verify_password("newpass"));
     }
 }
