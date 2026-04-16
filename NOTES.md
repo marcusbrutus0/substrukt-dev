@@ -23,13 +23,16 @@ These specific version combos are required due to trait compatibility:
 
 ```toml
 axum = "0.8"                    # uses axum-core 0.5
-tower-sessions = "0.14"         # uses tower-sessions-core 0.14 (axum-core 0.5)
-tower-sessions-sqlx-store = "0.15"  # uses tower-sessions-core 0.14
+tower-sessions = "0.14"         # MemoryStore for flash/CSRF only (no sqlx-store)
+sqlx = "0.9.0-alpha.1"         # shared pool with allowthem-core
+allowthem-core = { path = "../allowthem/crates/core" }  # auth system
 rand = "0.9"                    # 0.8's `gen()` is reserved keyword in edition 2024
-argon2 = "0.5"                  # uses rand_core 0.6 internally
 ```
 
-For argon2 OsRng: `use argon2::password_hash::rand_core::OsRng` (NOT `rand::rngs::OsRng`)
+- **allowthem integration**: Auth handled by allowthem-core (path dep at ../allowthem/crates/core). Shared SQLite pool (both on sqlx 0.9.0-alpha.1). allowthem's `allowthem_`-prefixed tables live in substrukt's database. `AllowThemBuilder::with_pool(pool)` shares the pool. Cross-references (app_access.user_id, app_tokens.api_token_id) are TEXT UUIDs. tower-sessions kept for flash messages and CSRF only (MemoryStore, no sqlx-store).
+- **Role checking**: Roles are in allowthem (admin, editor, viewer). Checked via `auth_client.check_role()`. Role hierarchy (admin > editor > viewer) enforced in `auth::require_role()`, `auth::has_min_role()`, and `auth::token::require_api_role()`.
+- **Data migration**: One-time Rust migration runs at startup (`db::migration`). Reads old `users` table (if present), creates users in allowthem with existing Argon2 hashes via `create_user_with_hash()`. Remaps `app_access.user_id` from INTEGER to TEXT UUID. Creates `app_tokens` table. Drops old auth tables. Idempotent.
+- **sqlx 0.9 SqlSafeStr**: Dynamic SQL queries need `sqlx::AssertSqlSafe()` wrapper. All use bind parameters for user data — safe despite dynamic construction.
 
 ## Lessons Learned
 
