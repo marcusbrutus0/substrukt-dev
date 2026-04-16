@@ -371,7 +371,7 @@ fn render_field(
                 build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
             format!(
                 r#"<div class="mb-4">
-  <label class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
   {current_html}
   <div class="upload-zone border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-accent transition-colors relative" data-upload-zone>
     <div class="upload-zone-prompt text-muted text-sm">Drag a file here or click to browse</div>
@@ -490,9 +490,9 @@ fn render_field(
                 build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
             format!(
                 r#"<div class="mb-4">
-  <label class="flex items-center gap-2">
+  <label for="{name}" class="flex items-center gap-2">
     <input type="hidden" name="{name}" value="false">
-    <input type="checkbox" name="{name}" value="true" class="rounded border-border text-accent focus:ring-accent"{checked_attr}>
+    <input type="checkbox" id="{name}" name="{name}" value="true" class="rounded border-border text-accent focus:ring-accent"{checked_attr}>
     <span class="text-sm font-medium text-secondary">{label}</span>
   </label>
 {hint_html}</div>

@@ -18,6 +18,7 @@
         <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Storage</th>
         <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Kind</th>
         <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Fields</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Entries</th>
         <th class="px-4 py-2.5"></th>
       </tr>
     </thead>
@@ -31,6 +32,17 @@
         <td class="px-4 py-2.5 text-muted text-sm">{{ schema.storage }}</td>
         <td class="px-4 py-2.5 text-muted text-sm">{{ schema.kind }}</td>
         <td class="px-4 py-2.5 text-muted text-sm">{{ schema.field_count }}</td>
+        <td class="px-4 py-2.5 text-sm">
+          {% if schema.is_single %}
+            {% if schema.entry_count > 0 %}
+            <span class="text-success">Exists</span>
+            {% else %}
+            <span class="text-muted">Empty</span>
+            {% endif %}
+          {% else %}
+          <a href="/apps/{{ app.slug }}/content/{{ schema.slug }}" class="text-accent hover:underline">{{ schema.entry_count }}</a>
+          {% endif %}
+        </td>
         {% if user_role == "admin" %}
         <td class="px-4 py-2.5 text-right">
           <a href="/apps/{{ app.slug }}/schemas/{{ schema.slug }}/edit" class="text-muted hover:text-accent text-sm">Edit</a>

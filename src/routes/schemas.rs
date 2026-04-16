@@ -38,15 +38,21 @@ async fn list_schemas(
     let schemas =
         schema::list_schemas(&schemas_dir).map_err(|e| format!("Failed to list schemas: {e}"))?;
 
+    let content_dir = state.config.app_content_dir(&app.app.slug);
     let schema_data: Vec<minijinja::Value> = schemas
         .iter()
         .map(|s| {
+            let entry_count = crate::content::list_entries(&content_dir, s)
+                .map(|e| e.len())
+                .unwrap_or(0);
             minijinja::context! {
                 title => s.meta.title,
                 slug => s.meta.slug,
                 storage => s.meta.storage.to_string(),
                 kind => s.meta.kind.to_string(),
                 field_count => schema::property_count(&s.schema),
+                entry_count => entry_count,
+                is_single => s.meta.kind == crate::schema::models::Kind::Single,
             }
         })
         .collect();
