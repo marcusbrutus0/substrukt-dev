@@ -320,12 +320,183 @@ async fn setup_submit(
     resp
 }
 
-// Signup stubs — Task 6 implements these fully
-async fn signup_page() -> impl IntoResponse {
-    "signup placeholder"
+#[derive(serde::Deserialize)]
+struct SignupQuery {
+    token: Option<String>,
 }
-async fn signup_submit() -> impl IntoResponse {
-    "signup placeholder"
+
+#[derive(serde::Deserialize)]
+struct SignupForm {
+    token: String,
+    username: String,
+    password: String,
+    confirm_password: String,
+}
+
+async fn signup_page(
+    session: Session,
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<SignupQuery>,
+) -> Response {
+    let raw_token = match query.token {
+        Some(t) => t,
+        None => return render_error_page(&state, "Invalid signup link."),
+    };
+
+    let invitation = match state.ath.db().validate_invitation(&raw_token).await {
+        Ok(Some(inv)) => inv,
+        _ => return render_error_page(&state, "This invitation link is invalid or has expired."),
+    };
+
+    let csrf_token = ensure_csrf_token(&session).await;
+    let email = invitation.email.as_ref().map(|e| e.as_str()).unwrap_or("");
+    render_template(
+        &state,
+        "signup.html",
+        minijinja::context! {
+            csrf_token => csrf_token,
+            token => raw_token,
+            email => email,
+        },
+    )
+    .into_response()
+}
+
+async fn signup_submit(
+    session: Session,
+    State(state): State<AppState>,
+    Form(form): Form<SignupForm>,
+) -> Response {
+    let ip = "direct".to_string();
+    if !state.login_limiter.check(&ip) {
+        return render_error_page(&state, "Too many attempts. Please try again later.");
+    }
+
+    // Validate invitation
+    let invitation = match state.ath.db().validate_invitation(&form.token).await {
+        Ok(Some(inv)) => inv,
+        _ => return render_error_page(&state, "This invitation link is invalid or has expired."),
+    };
+
+    // Validate form fields
+    if form.username.trim().is_empty() {
+        return render_signup_error(&state, &session, &form.token, &invitation, "Username is required.").await;
+    }
+    if form.password.len() < 8 {
+        return render_signup_error(&state, &session, &form.token, &invitation, "Password must be at least 8 characters.").await;
+    }
+    if form.password != form.confirm_password {
+        return render_signup_error(&state, &session, &form.token, &invitation, "Passwords do not match.").await;
+    }
+
+    // Check username uniqueness
+    let username = allowthem_core::Username::new(form.username.clone());
+    if state.ath.db().get_user_by_username(&username).await.is_ok() {
+        return render_signup_error(&state, &session, &form.token, &invitation, "Username is already taken.").await;
+    }
+
+    // Determine email: use invitation email if provided, otherwise derive from username
+    let email = match invitation.email.clone() {
+        Some(e) => e,
+        None => match allowthem_core::Email::new(format!("{}@signup.local", form.username)) {
+            Ok(e) => e,
+            Err(_) => {
+                return render_signup_error(
+                    &state,
+                    &session,
+                    &form.token,
+                    &invitation,
+                    "Invalid username — cannot derive email.",
+                )
+                .await;
+            }
+        },
+    };
+
+    // Create user
+    let user = match state.ath.db().create_user(email, &form.password, Some(username)).await {
+        Ok(u) => u,
+        Err(e) => {
+            return render_signup_error(
+                &state,
+                &session,
+                &form.token,
+                &invitation,
+                &format!("Failed to create account: {e}"),
+            )
+            .await;
+        }
+    };
+
+    // Consume invitation (best-effort — race is unlikely, but we don't fail on it)
+    let _ = state.ath.db().consume_invitation(invitation.id).await;
+
+    // Assign role from invitation metadata (default: editor)
+    let role_str = invitation.metadata.as_deref().unwrap_or("editor");
+    let role_name = allowthem_core::RoleName::new(role_str);
+    if let Ok(Some(role)) = state.ath.db().get_role_by_name(&role_name).await {
+        let _ = state.ath.db().assign_role(&user.id, &role.id).await;
+    }
+
+    // TODO: Task 7 will update grant_app_access to accept &str user_id
+    // Auto-grant access to all apps for non-admins will be wired then
+
+    state.has_users.store(true, std::sync::atomic::Ordering::Relaxed);
+
+    // Create session
+    let token = allowthem_core::generate_token();
+    let token_hash = allowthem_core::hash_token(&token);
+    let expires = chrono::Utc::now() + state.ath.session_config().ttl;
+    let _ = state.ath.db().create_session(user.id, token_hash, None, None, expires).await;
+
+    let _ = state
+        .ath
+        .db()
+        .log_audit(
+            allowthem_core::AuditEvent::Register,
+            Some(&user.id),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await;
+
+    // Set cookie and redirect
+    let cookie = state.ath.session_cookie(&token);
+    let mut resp = Redirect::to("/apps").into_response();
+    resp.headers_mut().insert(
+        axum::http::header::SET_COOKIE,
+        cookie.parse().unwrap(),
+    );
+    resp
+}
+
+async fn render_signup_error(
+    state: &AppState,
+    session: &Session,
+    token: &str,
+    invitation: &allowthem_core::Invitation,
+    error: &str,
+) -> Response {
+    let csrf_token = ensure_csrf_token(session).await;
+    let email = invitation.email.as_ref().map(|e| e.as_str()).unwrap_or("");
+    render_template(
+        state,
+        "signup.html",
+        minijinja::context! {
+            csrf_token => csrf_token,
+            token => token,
+            email => email,
+            error => error,
+        },
+    )
+    .into_response()
+}
+
+fn render_error_page(state: &AppState, message: &str) -> Response {
+    let html = crate::routes::render_error(state, 400, message, false);
+    (axum::http::StatusCode::BAD_REQUEST, Html(html)).into_response()
 }
 
 fn render_template(state: &AppState, template: &str, ctx: minijinja::Value) -> Html<String> {
