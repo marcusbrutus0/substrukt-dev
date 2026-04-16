@@ -204,7 +204,11 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
         }
     }
 
-    // Check if any users exist (for setup redirect)
+    // One-time data migration: move old users into allowthem
+    let id_map = db::migration::migrate_users_to_allowthem(&pool, &ath).await?;
+    db::migration::finalize_schema(&pool, &id_map).await?;
+
+    // Check if any users exist (for setup redirect) — after migration so migrated users count
     let has_users = !ath.db().list_users().await.unwrap_or_default().is_empty();
 
     let auth_client: Arc<dyn allowthem_core::AuthClient> =
