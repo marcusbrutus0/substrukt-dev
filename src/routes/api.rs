@@ -353,7 +353,9 @@ async fn list_entries(
         Ok(entries) => {
             let filters = extract_filters_from_query(raw_query.as_deref().unwrap_or(""));
             let use_envelope = params.limit.is_some() || params.offset.is_some();
-            let limit = params.limit.map(|l| if l == 0 { 20 } else { l.min(MAX_API_LIMIT) });
+            let limit = params
+                .limit
+                .map(|l| if l == 0 { 20 } else { l.min(MAX_API_LIMIT) });
 
             let query_params = content::QueryParams {
                 status: if params.status.is_empty() {
