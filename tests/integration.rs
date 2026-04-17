@@ -7822,9 +7822,13 @@ async fn api_unique_constraint_rejects_duplicate() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert!(body["errors"].as_array().unwrap().iter().any(|e| {
-        e["rule"].as_str() == Some("unique")
-    }));
+    assert!(
+        body["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| { e["rule"].as_str() == Some("unique") })
+    );
 }
 
 #[tokio::test]
@@ -7850,7 +7854,11 @@ async fn api_unique_constraint_case_insensitive() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "case-insensitive match should reject");
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "case-insensitive match should reject"
+    );
 }
 
 #[tokio::test]
@@ -7882,7 +7890,11 @@ async fn api_unique_constraint_update_self_allowed() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "updating self with same unique value should pass");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "updating self with same unique value should pass"
+    );
 }
 
 #[tokio::test]
@@ -7901,7 +7913,11 @@ async fn api_required_if_published_draft_ok() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::CREATED, "draft without summary should succeed");
+    assert_eq!(
+        resp.status(),
+        StatusCode::CREATED,
+        "draft without summary should succeed"
+    );
 }
 
 #[tokio::test]
@@ -7926,11 +7942,13 @@ async fn api_required_if_published_create_published_rejected() {
         "published without summary should be rejected"
     );
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert!(body["errors"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|e| e["rule"].as_str() == Some("required_if_published")));
+    assert!(
+        body["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["rule"].as_str() == Some("required_if_published"))
+    );
 }
 
 #[tokio::test]
@@ -7998,7 +8016,11 @@ async fn api_required_if_published_publish_with_field_ok() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "publishing with summary should succeed");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "publishing with summary should succeed"
+    );
 }
 
 #[tokio::test]
@@ -8046,11 +8068,13 @@ async fn api_cross_field_after_invalid() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert!(body["errors"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|e| e["rule"].as_str() == Some("after")));
+    assert!(
+        body["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["rule"].as_str() == Some("after"))
+    );
 }
 
 #[tokio::test]
@@ -8102,6 +8126,408 @@ async fn api_validation_error_structured_format() {
     assert!(!errors.is_empty());
     let first = &errors[0];
     assert!(first.get("path").is_some(), "error should have path field");
-    assert!(first.get("message").is_some(), "error should have message field");
+    assert!(
+        first.get("message").is_some(),
+        "error should have message field"
+    );
     assert!(first.get("rule").is_some(), "error should have rule field");
+}
+
+// ── Version history API tests (sk-01) ─────────────────────
+
+const VERSIONED_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Versioned", "slug": "versioned", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "title": "Title"},
+        "body": {"type": "string", "title": "Body"}
+    },
+    "required": ["title"]
+}"#;
+
+#[tokio::test]
+async fn api_versions_empty_history() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("ver-empty").await;
+    s.create_schema(VERSIONED_SCHEMA).await;
+
+    let api = Client::builder().cookie_store(false).build().unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/apps/default/content/versioned"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "First Post"}))
+        .send()
+        .await
+        .unwrap();
+    let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = api
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let versions: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert!(versions.is_empty(), "newly created entry should have no history");
+}
+
+#[tokio::test]
+async fn api_versions_after_update() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("ver-update").await;
+    s.create_schema(VERSIONED_SCHEMA).await;
+
+    let api = Client::builder().cookie_store(false).build().unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/apps/default/content/versioned"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Original"}))
+        .send()
+        .await
+        .unwrap();
+    let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    api.put(s.url(&format!(
+        "/api/v1/apps/default/content/versioned/{id}"
+    )))
+    .bearer_auth(&token)
+    .json(&serde_json::json!({"title": "Updated"}))
+    .send()
+    .await
+    .unwrap();
+
+    let resp = api
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let versions: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(versions.len(), 1, "one update should create one version");
+    assert!(versions[0]["timestamp"].is_u64());
+    assert!(versions[0]["date"].is_string());
+    assert_eq!(versions[0]["source"].as_str(), Some("api"));
+    assert_eq!(versions[0]["username"].as_str(), Some("api"));
+}
+
+#[tokio::test]
+async fn api_get_specific_version() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("ver-get").await;
+    s.create_schema(VERSIONED_SCHEMA).await;
+
+    let api = Client::builder().cookie_store(false).build().unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/apps/default/content/versioned"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Original", "body": "First body"}))
+        .send()
+        .await
+        .unwrap();
+    let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    api.put(s.url(&format!(
+        "/api/v1/apps/default/content/versioned/{id}"
+    )))
+    .bearer_auth(&token)
+    .json(&serde_json::json!({"title": "Updated", "body": "New body"}))
+    .send()
+    .await
+    .unwrap();
+
+    let resp = api
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let versions: Vec<serde_json::Value> = resp.json().await.unwrap();
+    let ts = versions[0]["timestamp"].as_u64().unwrap();
+
+    let resp = api
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions/{ts}"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let data: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(data["title"], "Original", "version should contain original data");
+    assert_eq!(data["body"], "First body");
+}
+
+#[tokio::test]
+async fn api_get_version_not_found() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("ver-404").await;
+    s.create_schema(VERSIONED_SCHEMA).await;
+
+    let api = Client::builder().cookie_store(false).build().unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/apps/default/content/versioned"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Test"}))
+        .send()
+        .await
+        .unwrap();
+    let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = api
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions/99999"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn api_revert_restores_data_and_snapshots_current() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("ver-revert").await;
+    s.create_schema(VERSIONED_SCHEMA).await;
+
+    let api = Client::builder().cookie_store(false).build().unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/apps/default/content/versioned"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Version 1", "body": "Body 1"}))
+        .send()
+        .await
+        .unwrap();
+    let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    api.put(s.url(&format!(
+        "/api/v1/apps/default/content/versioned/{id}"
+    )))
+    .bearer_auth(&token)
+    .json(&serde_json::json!({"title": "Version 2", "body": "Body 2"}))
+    .send()
+    .await
+    .unwrap();
+
+    let resp = api
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let versions: Vec<serde_json::Value> = resp.json().await.unwrap();
+    let ts = versions[0]["timestamp"].as_u64().unwrap();
+
+    let resp = api
+        .post(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions/{ts}/revert"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "reverted");
+
+    let resp = api
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}?status=all"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let current: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(current["title"], "Version 1", "should be reverted to original");
+    assert_eq!(current["body"], "Body 1");
+
+    let resp = api
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let versions_after: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert_eq!(
+        versions_after.len(),
+        2,
+        "revert should snapshot current before reverting, so 2 versions now"
+    );
+    assert_eq!(
+        versions_after[0]["source"].as_str(),
+        Some("revert"),
+        "newest version should have revert source"
+    );
+}
+
+#[tokio::test]
+async fn api_revert_nonexistent_version() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("ver-revert-404").await;
+    s.create_schema(VERSIONED_SCHEMA).await;
+
+    let api = Client::builder().cookie_store(false).build().unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/apps/default/content/versioned"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Test"}))
+        .send()
+        .await
+        .unwrap();
+    let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = api
+        .post(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions/99999/revert"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn api_revert_requires_auth() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("ver-auth").await;
+    s.create_schema(VERSIONED_SCHEMA).await;
+
+    let api = Client::builder().cookie_store(false).build().unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/apps/default/content/versioned"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Test"}))
+        .send()
+        .await
+        .unwrap();
+    let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    api.put(s.url(&format!(
+        "/api/v1/apps/default/content/versioned/{id}"
+    )))
+    .bearer_auth(&token)
+    .json(&serde_json::json!({"title": "Updated"}))
+    .send()
+    .await
+    .unwrap();
+
+    let resp = api
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let versions: Vec<serde_json::Value> = resp.json().await.unwrap();
+    let ts = versions[0]["timestamp"].as_u64().unwrap();
+
+    // Revert without auth should fail
+    let resp = api
+        .post(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions/{ts}/revert"
+        )))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "revert without auth should be rejected");
+}
+
+#[tokio::test]
+async fn api_delete_entry_clears_history() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("ver-delete").await;
+    s.create_schema(VERSIONED_SCHEMA).await;
+
+    let api = Client::builder().cookie_store(false).build().unwrap();
+
+    let resp = api
+        .post(s.url("/api/v1/apps/default/content/versioned"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Will be deleted"}))
+        .send()
+        .await
+        .unwrap();
+    let id = resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    api.put(s.url(&format!(
+        "/api/v1/apps/default/content/versioned/{id}"
+    )))
+    .bearer_auth(&token)
+    .json(&serde_json::json!({"title": "Updated before delete"}))
+    .send()
+    .await
+    .unwrap();
+
+    api.delete(s.url(&format!(
+        "/api/v1/apps/default/content/versioned/{id}"
+    )))
+    .bearer_auth(&token)
+    .send()
+    .await
+    .unwrap();
+
+    let resp = api
+        .get(s.url(&format!(
+            "/api/v1/apps/default/content/versioned/{id}/versions"
+        )))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let versions: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert!(versions.is_empty(), "history should be cleared after delete");
 }

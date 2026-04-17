@@ -2143,10 +2143,7 @@ mod tests {
     #[test]
     fn validate_unique_no_duplicate() {
         let cache = dashmap::DashMap::new();
-        cache.insert(
-            "default/test/existing".into(),
-            json!({"title": "Existing"}),
-        );
+        cache.insert("default/test/existing".into(), json!({"title": "Existing"}));
         let schema = schema_with_unique("test");
         let data = json!({"title": "Different"});
         let ctx = ValidationContext {
@@ -2163,10 +2160,7 @@ mod tests {
     #[test]
     fn validate_unique_duplicate_rejected() {
         let cache = dashmap::DashMap::new();
-        cache.insert(
-            "default/test/existing".into(),
-            json!({"title": "Hello"}),
-        );
+        cache.insert("default/test/existing".into(), json!({"title": "Hello"}));
         let schema = schema_with_unique("test");
         let data = json!({"title": "Hello"});
         let ctx = ValidationContext {
@@ -2185,10 +2179,7 @@ mod tests {
     #[test]
     fn validate_unique_case_insensitive() {
         let cache = dashmap::DashMap::new();
-        cache.insert(
-            "default/test/existing".into(),
-            json!({"title": "Hello"}),
-        );
+        cache.insert("default/test/existing".into(), json!({"title": "Hello"}));
         let schema = schema_with_unique("test");
         let data = json!({"title": "hello"});
         let ctx = ValidationContext {
@@ -2206,10 +2197,7 @@ mod tests {
     #[test]
     fn validate_unique_self_excluded() {
         let cache = dashmap::DashMap::new();
-        cache.insert(
-            "default/test/my-entry".into(),
-            json!({"title": "Hello"}),
-        );
+        cache.insert("default/test/my-entry".into(), json!({"title": "Hello"}));
         let schema = schema_with_unique("test");
         let data = json!({"title": "Hello"});
         let ctx = ValidationContext {
@@ -2248,7 +2236,10 @@ mod tests {
         let data = json!({"other": "something"});
         let ctx = empty_ctx(&cache);
         let result = validate_content(&schema, &data, &ctx);
-        assert!(result.is_ok(), "missing unique field should not trigger uniqueness check");
+        assert!(
+            result.is_ok(),
+            "missing unique field should not trigger uniqueness check"
+        );
     }
 
     #[test]
@@ -2297,7 +2288,10 @@ mod tests {
             schema_slug: "test",
         };
         let result = validate_content(&schema, &data, &ctx);
-        assert!(result.is_ok(), "draft without required-if-published field should pass");
+        assert!(
+            result.is_ok(),
+            "draft without required-if-published field should pass"
+        );
     }
 
     #[test]
@@ -2402,7 +2396,11 @@ mod tests {
         }];
         let data = json!({"start": "2024-06-15", "end": "2024-06-15"});
         let errors = evaluate_cross_field_rules(&data, &rules);
-        assert_eq!(errors.len(), 1, "equal values should fail 'after' rule (strictly greater)");
+        assert_eq!(
+            errors.len(),
+            1,
+            "equal values should fail 'after' rule (strictly greater)"
+        );
     }
 
     #[test]
@@ -2525,7 +2523,10 @@ mod tests {
         }];
         let data = json!({"url": ""});
         let errors = evaluate_cross_field_rules(&data, &rules);
-        assert!(errors.is_empty(), "empty string condition should not trigger");
+        assert!(
+            errors.is_empty(),
+            "empty string condition should not trigger"
+        );
     }
 
     #[test]
@@ -2537,7 +2538,11 @@ mod tests {
         }];
         let data = json!({"active": false});
         let errors = evaluate_cross_field_rules(&data, &rules);
-        assert_eq!(errors.len(), 1, "boolean false is non-null/non-empty, should trigger");
+        assert_eq!(
+            errors.len(),
+            1,
+            "boolean false is non-null/non-empty, should trigger"
+        );
     }
 
     #[test]
@@ -2625,7 +2630,10 @@ mod tests {
         let data = json!({"title": "Hello"});
         let ctx = empty_ctx(&cache);
         let result = validate_content(&schema, &data, &ctx);
-        assert!(result.is_ok(), "schema without validate key should work fine");
+        assert!(
+            result.is_ok(),
+            "schema without validate key should work fine"
+        );
     }
 
     #[test]

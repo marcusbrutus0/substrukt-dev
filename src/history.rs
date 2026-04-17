@@ -328,3 +328,308 @@ fn prune_versions(dir: &Path, max_versions: usize) -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    fn test_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "title": { "type": "string", "title": "Title" },
+                "body": { "type": "string", "title": "Body" }
+            }
+        })
+    }
+
+    #[test]
+    fn diff_entries_identical_returns_empty() {
+        let data = json!({"title": "Hello", "body": "World"});
+        let schema = test_schema();
+        let diffs = diff_entries(&data, &data, &schema);
+        assert!(diffs.is_empty());
+    }
+
+    #[test]
+    fn diff_entries_changed_field() {
+        let old = json!({"title": "Old Title", "body": "Same"});
+        let new = json!({"title": "New Title", "body": "Same"});
+        let schema = test_schema();
+        let diffs = diff_entries(&old, &new, &schema);
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].path, "title");
+        assert_eq!(diffs[0].label, "Title");
+        assert!(matches!(&diffs[0].kind, DiffKind::Changed { old, new }
+            if old == &json!("Old Title") && new == &json!("New Title")));
+    }
+
+    #[test]
+    fn diff_entries_added_field() {
+        let old = json!({"title": "Hello"});
+        let new = json!({"title": "Hello", "body": "Added"});
+        let schema = test_schema();
+        let diffs = diff_entries(&old, &new, &schema);
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].path, "body");
+        assert!(matches!(&diffs[0].kind, DiffKind::Added { value } if value == &json!("Added")));
+    }
+
+    #[test]
+    fn diff_entries_removed_field() {
+        let old = json!({"title": "Hello", "body": "Will be removed"});
+        let new = json!({"title": "Hello"});
+        let schema = test_schema();
+        let diffs = diff_entries(&old, &new, &schema);
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].path, "body");
+        assert!(matches!(&diffs[0].kind, DiffKind::Removed { .. }));
+    }
+
+    #[test]
+    fn diff_entries_skips_underscore_fields() {
+        let old = json!({"_status": "draft", "_id": "a", "title": "Hello"});
+        let new = json!({"_status": "published", "_id": "a", "title": "Hello"});
+        let schema = test_schema();
+        let diffs = diff_entries(&old, &new, &schema);
+        assert!(diffs.is_empty(), "_status and _id changes should be excluded");
+    }
+
+    #[test]
+    fn diff_entries_nested_object() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "meta": {
+                    "type": "object",
+                    "title": "Meta",
+                    "properties": {
+                        "author": { "type": "string", "title": "Author" }
+                    }
+                }
+            }
+        });
+        let old = json!({"meta": {"author": "Alice"}});
+        let new = json!({"meta": {"author": "Bob"}});
+        let diffs = diff_entries(&old, &new, &schema);
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].path, "meta.author");
+        assert_eq!(diffs[0].label, "Author");
+    }
+
+    #[test]
+    fn diff_entries_array_changed() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "tags": { "type": "array", "title": "Tags" }
+            }
+        });
+        let old = json!({"tags": ["a", "b"]});
+        let new = json!({"tags": ["a", "c"]});
+        let diffs = diff_entries(&old, &new, &schema);
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].path, "tags");
+        assert!(matches!(&diffs[0].kind, DiffKind::Changed { .. }));
+    }
+
+    #[test]
+    fn diff_entries_schema_drift_old_has_extra_field() {
+        let old = json!({"title": "Hello", "legacy_field": "old"});
+        let new = json!({"title": "Hello"});
+        let schema = test_schema();
+        let diffs = diff_entries(&old, &new, &schema);
+        assert!(diffs.iter().any(|d| d.path == "legacy_field"
+            && matches!(&d.kind, DiffKind::Removed { .. })));
+    }
+
+    #[test]
+    fn diff_entries_schema_drift_new_has_extra_field() {
+        let old = json!({"title": "Hello"});
+        let new = json!({"title": "Hello", "new_field": "value"});
+        let schema = test_schema();
+        let diffs = diff_entries(&old, &new, &schema);
+        assert!(diffs.iter().any(|d| d.path == "new_field"
+            && matches!(&d.kind, DiffKind::Added { .. })));
+    }
+
+    #[test]
+    fn diff_entries_depth_limit() {
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "val": { "type": "string", "title": "Val" }
+            }
+        });
+        for _ in 0..40 {
+            schema = json!({
+                "type": "object",
+                "properties": {
+                    "nested": schema
+                }
+            });
+        }
+        let old = json!({"nested": {}});
+        let new = json!({"nested": {}});
+        let diffs = diff_entries(&old, &new, &schema);
+        assert!(diffs.is_empty(), "should not panic at deep nesting");
+    }
+
+    #[test]
+    fn snapshot_with_metadata_writes_sidecar() {
+        let tmp = TempDir::new().unwrap();
+        let data = json!({"title": "Hello"});
+        let meta = SnapshotMeta {
+            user_id: "user-123".into(),
+            username: "alice".into(),
+            source: SnapshotSource::AdminUi,
+        };
+        snapshot_entry(tmp.path(), "posts", "entry-1", &data, 10, Some(&meta)).unwrap();
+
+        let versions = list_versions(tmp.path(), "posts", "entry-1").unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].user_id.as_deref(), Some("user-123"));
+        assert_eq!(versions[0].username.as_deref(), Some("alice"));
+        assert_eq!(versions[0].source.as_deref(), Some("admin_ui"));
+    }
+
+    #[test]
+    fn snapshot_without_metadata_returns_none_fields() {
+        let tmp = TempDir::new().unwrap();
+        let data = json!({"title": "Hello"});
+        snapshot_entry(tmp.path(), "posts", "entry-1", &data, 10, None).unwrap();
+
+        let versions = list_versions(tmp.path(), "posts", "entry-1").unwrap();
+        assert_eq!(versions.len(), 1);
+        assert!(versions[0].user_id.is_none());
+        assert!(versions[0].username.is_none());
+        assert!(versions[0].source.is_none());
+    }
+
+    #[test]
+    fn prune_removes_sidecar_alongside_data() {
+        let tmp = TempDir::new().unwrap();
+        let data = json!({"title": "Hello"});
+        let meta = SnapshotMeta {
+            user_id: "u".into(),
+            username: "a".into(),
+            source: SnapshotSource::Api,
+        };
+        for _ in 0..5 {
+            snapshot_entry(tmp.path(), "posts", "e", &data, 100, Some(&meta)).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let versions_before = list_versions(tmp.path(), "posts", "e").unwrap();
+        assert_eq!(versions_before.len(), 5);
+
+        let dir = tmp.path().join("_history").join("posts").join("e");
+        let meta_count_before = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".meta.json")
+            })
+            .count();
+        assert_eq!(meta_count_before, 5, "should have 5 meta sidecars");
+
+        snapshot_entry(tmp.path(), "posts", "e", &data, 3, Some(&meta)).unwrap();
+
+        let versions_after = list_versions(tmp.path(), "posts", "e").unwrap();
+        assert_eq!(versions_after.len(), 3, "should be pruned to 3");
+
+        let meta_count_after = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".meta.json")
+            })
+            .count();
+        assert_eq!(meta_count_after, 3, "sidecar files should also be pruned");
+    }
+
+    #[test]
+    fn list_versions_empty_dir() {
+        let tmp = TempDir::new().unwrap();
+        let versions = list_versions(tmp.path(), "posts", "nonexistent").unwrap();
+        assert!(versions.is_empty());
+    }
+
+    #[test]
+    fn get_version_nonexistent_returns_none() {
+        let tmp = TempDir::new().unwrap();
+        let result = get_version(tmp.path(), "posts", "entry-1", 99999).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn snapshot_and_get_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let data = json!({"title": "Hello", "body": "World"});
+        snapshot_entry(tmp.path(), "posts", "e1", &data, 10, None).unwrap();
+
+        let versions = list_versions(tmp.path(), "posts", "e1").unwrap();
+        assert_eq!(versions.len(), 1);
+
+        let restored = get_version(tmp.path(), "posts", "e1", versions[0].timestamp)
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored, data);
+    }
+
+    #[test]
+    fn snapshot_max_versions_zero_skips() {
+        let tmp = TempDir::new().unwrap();
+        let data = json!({"title": "Hello"});
+        snapshot_entry(tmp.path(), "posts", "e1", &data, 0, None).unwrap();
+
+        let versions = list_versions(tmp.path(), "posts", "e1").unwrap();
+        assert!(versions.is_empty(), "max_versions=0 should skip snapshot");
+    }
+
+    #[test]
+    fn delete_history_removes_all() {
+        let tmp = TempDir::new().unwrap();
+        let data = json!({"title": "Hello"});
+        let meta = SnapshotMeta {
+            user_id: "u".into(),
+            username: "a".into(),
+            source: SnapshotSource::AdminUi,
+        };
+        snapshot_entry(tmp.path(), "posts", "e1", &data, 10, Some(&meta)).unwrap();
+        snapshot_entry(tmp.path(), "posts", "e1", &data, 10, Some(&meta)).unwrap();
+
+        let dir = tmp.path().join("_history").join("posts").join("e1");
+        assert!(dir.exists());
+
+        delete_history(tmp.path(), "posts", "e1");
+        assert!(!dir.exists(), "delete_history should remove entire directory");
+    }
+
+    #[test]
+    fn snapshot_source_serializes_correctly() {
+        let meta = SnapshotMeta {
+            user_id: "u".into(),
+            username: "a".into(),
+            source: SnapshotSource::Revert,
+        };
+        let json = serde_json::to_value(&meta).unwrap();
+        assert_eq!(json["source"], "revert");
+
+        let meta2 = SnapshotMeta {
+            user_id: "u".into(),
+            username: "a".into(),
+            source: SnapshotSource::AdminUi,
+        };
+        let json2 = serde_json::to_value(&meta2).unwrap();
+        assert_eq!(json2["source"], "admin_ui");
+    }
+}
