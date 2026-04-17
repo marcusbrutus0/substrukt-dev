@@ -8,15 +8,27 @@
   {% endif %}
 </div>
 
-<div class="mb-4">
+<div class="mb-4 flex gap-3">
   <input type="text" name="q" value="{{ q }}" placeholder="Search entries..."
     hx-get="/apps/{{ app.slug }}/content/{{ schema_slug }}" hx-trigger="input changed delay:300ms"
     hx-target="#main-content" hx-push-url="true"
-    class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent text-sm">
+    hx-include="[name='status']"
+    class="flex-1 px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent text-sm">
+  <select name="status" hx-get="/apps/{{ app.slug }}/content/{{ schema_slug }}" hx-trigger="change" hx-target="#main-content" hx-push-url="true" hx-include="[name='q']"
+    class="px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent text-sm">
+    <option value="all"{% if status_filter == "all" %} selected{% endif %}>All</option>
+    <option value="published"{% if status_filter == "published" %} selected{% endif %}>Published</option>
+    <option value="draft"{% if status_filter == "draft" %} selected{% endif %}>Draft</option>
+  </select>
 </div>
-{% if q %}
-<p class="text-sm text-muted mb-4">Showing {{ filtered }} of {{ total }} entries{% if filtered != total %} matching "{{ q }}"{% endif %}</p>
+{% if q or status_filter != "all" %}
+<p class="text-sm text-muted mb-4">Showing {{ filtered }} of {{ total }} entries{% if q %} matching "{{ q }}"{% endif %}{% if status_filter != "all" %} ({{ status_filter }}){% endif %}</p>
 {% endif %}
+
+{% set base_url = "/apps/" ~ app.slug ~ "/content/" ~ schema_slug %}
+{% set filter_params = "" %}
+{% if q %}{% set filter_params = filter_params ~ "q=" ~ q ~ "&" %}{% endif %}
+{% if status_filter != "all" %}{% set filter_params = filter_params ~ "status=" ~ status_filter ~ "&" %}{% endif %}
 
 {% if entries %}
 <div class="bg-card border border-border-light rounded-lg overflow-hidden">
@@ -47,10 +59,22 @@
         {% if user_role != "viewer" %}
         <th class="px-4 py-2.5 w-8"><input type="checkbox" id="select-all" onchange="toggleAll(this)" class="rounded border-border"></th>
         {% endif %}
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted cursor-pointer hover:text-primary select-none" onclick="sortTable({% if user_role != 'viewer' %}1{% else %}0{% endif %})">ID <span class="sort-arrow text-[10px]"></span></th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted cursor-pointer hover:text-primary select-none" onclick="sortTable({% if user_role != 'viewer' %}2{% else %}1{% endif %})">Status <span class="sort-arrow text-[10px]"></span></th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">
+          <a href="{{ base_url }}?{{ filter_params }}sort=_id&order={% if sort_field == '_id' and sort_order == 'asc' %}desc{% else %}asc{% endif %}" class="hover:text-primary select-none">
+            ID {% if sort_field == "_id" or sort_field == "" %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
+          </a>
+        </th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">
+          <a href="{{ base_url }}?{{ filter_params }}sort=_status&order={% if sort_field == '_status' and sort_order == 'asc' %}desc{% else %}asc{% endif %}" class="hover:text-primary select-none">
+            Status {% if sort_field == "_status" %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
+          </a>
+        </th>
         {% for col in columns %}
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted cursor-pointer hover:text-primary select-none" onclick="sortTable({{ loop.index0 + (2 if user_role == 'viewer' else 3) }})">{{ col }} <span class="sort-arrow text-[10px]"></span></th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">
+          <a href="{{ base_url }}?{{ filter_params }}sort={{ column_keys[loop.index0] }}&order={% if sort_field == column_keys[loop.index0] and sort_order == 'asc' %}desc{% else %}asc{% endif %}" class="hover:text-primary select-none">
+            {{ col }} {% if sort_field == column_keys[loop.index0] %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
+          </a>
+        </th>
         {% endfor %}
         <th class="px-4 py-2.5"></th>
       </tr>
@@ -95,15 +119,17 @@
   </table>
 </div>
 {% if has_prev or has_next %}
+{% set sort_params = "" %}
+{% if sort_field %}{% set sort_params = sort_params ~ "sort=" ~ sort_field ~ "&order=" ~ sort_order ~ "&" %}{% endif %}
 <div class="flex items-center justify-center gap-4 mt-4">
   {% if has_prev %}
-  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}?{% if q %}q={{ q }}&{% endif %}page={{ page - 1 }}" class="text-sm text-accent hover:underline">← Previous</a>
+  <a href="{{ base_url }}?{{ filter_params }}{{ sort_params }}page={{ page - 1 }}" class="text-sm text-accent hover:underline">← Previous</a>
   {% else %}
   <span class="text-sm text-muted opacity-50 select-none">← Previous</span>
   {% endif %}
   <span class="text-sm text-muted">Page {{ page }}</span>
   {% if has_next %}
-  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}?{% if q %}q={{ q }}&{% endif %}page={{ page + 1 }}" class="text-sm text-accent hover:underline">Next →</a>
+  <a href="{{ base_url }}?{{ filter_params }}{{ sort_params }}page={{ page + 1 }}" class="text-sm text-accent hover:underline">Next →</a>
   {% else %}
   <span class="text-sm text-muted opacity-50 select-none">Next →</span>
   {% endif %}
@@ -116,30 +142,6 @@
 {% endif %}
 
 <script>
-var currentSort = { col: -1, asc: true };
-function sortTable(colIdx) {
-  var table = document.getElementById('content-table');
-  if (!table) return;
-  var tbody = table.querySelector('tbody');
-  var rows = Array.from(tbody.querySelectorAll('tr'));
-  if (currentSort.col === colIdx) {
-    currentSort.asc = !currentSort.asc;
-  } else {
-    currentSort.col = colIdx;
-    currentSort.asc = true;
-  }
-  rows.sort(function(a, b) {
-    var aText = a.cells[colIdx].textContent.trim().toLowerCase();
-    var bText = b.cells[colIdx].textContent.trim().toLowerCase();
-    if (aText < bText) return currentSort.asc ? -1 : 1;
-    if (aText > bText) return currentSort.asc ? 1 : -1;
-    return 0;
-  });
-  rows.forEach(function(row) { tbody.appendChild(row); });
-  table.querySelectorAll('.sort-arrow').forEach(function(el, i) {
-    el.textContent = i === colIdx ? (currentSort.asc ? '▲' : '▼') : '';
-  });
-}
 function toggleAll(el) {
   document.querySelectorAll('.bulk-check').forEach(function(cb) { cb.checked = el.checked; });
   updateBulkBar();

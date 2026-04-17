@@ -25,6 +25,12 @@ pub struct ListParams {
     pub q: String,
     #[serde(default)]
     pub page: Option<u32>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub sort: Option<String>,
+    #[serde(default)]
+    pub order: Option<String>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -105,20 +111,32 @@ async fn list_entries(
 
     let total = entries.len();
     let q = params.q.trim().to_string();
-    let entries = if q.is_empty() {
-        entries
-    } else {
-        content::filter_entries(entries, &q)
-    };
-    let filtered = entries.len();
-
+    let status_filter = params.status.as_deref().unwrap_or("all").to_string();
+    let sort_field = params.sort.clone().unwrap_or_default();
+    let sort_order = params.order.as_deref().unwrap_or("asc").to_string();
     let page = params.page.unwrap_or(1).max(1) as usize;
+
+    let query_params = content::QueryParams {
+        status: status_filter.clone(),
+        q: q.clone(),
+        filters: vec![],
+        sort_field: if sort_field.is_empty() {
+            "_id".into()
+        } else {
+            sort_field.clone()
+        },
+        sort_order: if sort_order == "desc" {
+            content::SortOrder::Desc
+        } else {
+            content::SortOrder::Asc
+        },
+        offset: (page - 1) * PAGE_SIZE,
+        limit: Some(PAGE_SIZE),
+    };
+    let result = content::query_entries(entries, &query_params);
+    let filtered = result.total;
     let total_pages = (filtered + PAGE_SIZE - 1) / PAGE_SIZE.max(1);
-    let entries: Vec<_> = entries
-        .into_iter()
-        .skip((page - 1) * PAGE_SIZE)
-        .take(PAGE_SIZE)
-        .collect();
+    let entries = result.entries;
     let has_prev = page > 1;
     let has_next = page < total_pages;
 
@@ -159,6 +177,7 @@ async fn list_entries(
         .collect();
 
     let column_headers: Vec<&str> = columns.iter().map(|(_, label)| label.as_str()).collect();
+    let column_keys: Vec<&str> = columns.iter().map(|(key, _)| key.as_str()).collect();
 
     let user_role = &role.0;
     let current_username = username_str(&user);
@@ -181,8 +200,12 @@ async fn list_entries(
             schema_title => schema_file.meta.title,
             schema_slug => schema_slug,
             columns => column_headers,
+            column_keys => column_keys,
             entries => entry_data,
             q => q,
+            status_filter => status_filter,
+            sort_field => sort_field,
+            sort_order => sort_order,
             total => total,
             filtered => filtered,
             page => page,
