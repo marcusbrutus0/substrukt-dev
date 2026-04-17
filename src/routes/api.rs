@@ -162,6 +162,17 @@ pub fn api_app_routes() -> Router<AppState> {
             "/content/{schema_slug}/single",
             get(get_single).put(upsert_single).delete(delete_single),
         )
+        .route("/content/{schema_slug}/_bulk/create", post(api_bulk_create))
+        .route("/content/{schema_slug}/_bulk/update", post(api_bulk_update))
+        .route("/content/{schema_slug}/_bulk/delete", post(api_bulk_delete))
+        .route(
+            "/content/{schema_slug}/_bulk/publish",
+            post(api_bulk_publish),
+        )
+        .route(
+            "/content/{schema_slug}/_bulk/unpublish",
+            post(api_bulk_unpublish),
+        )
         .route(
             "/content/{schema_slug}/{entry_id}/publish",
             post(api_publish_entry),
@@ -1266,6 +1277,540 @@ async fn api_list_deployments(
         }
         Err(e) => internal_error(e).into_response(),
     }
+}
+
+const MAX_BULK_ENTRIES: usize = 500;
+
+#[derive(serde::Deserialize)]
+struct BulkCreateRequest {
+    entries: Vec<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize)]
+struct BulkUpdateRequest {
+    entries: Vec<serde_json::Value>,
+}
+
+#[derive(serde::Deserialize)]
+struct BulkIdsRequest {
+    ids: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct BulkItemResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    errors: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+async fn api_bulk_create(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
+    Json(body): Json<BulkCreateRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return internal_error(e).into_response(),
+    };
+    if schema_file.meta.kind == crate::schema::models::Kind::Single {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "Bulk create not supported for single-kind schemas"})),
+        )
+            .into_response();
+    }
+    if body.entries.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "entries array is empty"})),
+        )
+            .into_response();
+    }
+    if body.entries.len() > MAX_BULK_ENTRIES {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("Too many entries. Maximum is {MAX_BULK_ENTRIES} per request.")})),
+        )
+            .into_response();
+    }
+
+    let mut results = Vec::new();
+    let mut created = 0usize;
+    let mut failed = 0usize;
+    let mut used_ids = std::collections::HashSet::new();
+
+    for (i, data) in body.entries.into_iter().enumerate() {
+        let target_status = content::resolve_target_status(&data, &content_dir, &schema_file, None);
+        let ctx = content::ValidationContext {
+            entry_id: None,
+            target_status: &target_status,
+            cache: &state.cache,
+            app_slug: &app.app.slug,
+            schema_slug: &schema_slug,
+        };
+        if let Err(errors) = content::validate_content(&schema_file, &data, &ctx) {
+            let msgs: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+            results.push(BulkItemResult {
+                index: Some(i),
+                id: None,
+                status: "error".into(),
+                errors: Some(msgs),
+                error: None,
+            });
+            failed += 1;
+            continue;
+        }
+        match content::save_entry(&content_dir, &schema_file, None, data) {
+            Ok(id) => {
+                crate::cache::reload_entry(
+                    &state.cache,
+                    &state.etag_cache,
+                    &content_dir,
+                    &schema_file,
+                    &id,
+                    &app.app.slug,
+                );
+                used_ids.insert(id.clone());
+                results.push(BulkItemResult {
+                    index: Some(i),
+                    id: Some(id),
+                    status: "created".into(),
+                    errors: None,
+                    error: None,
+                });
+                created += 1;
+            }
+            Err(e) => {
+                results.push(BulkItemResult {
+                    index: Some(i),
+                    id: None,
+                    status: "error".into(),
+                    errors: None,
+                    error: Some(e.to_string()),
+                });
+                failed += 1;
+            }
+        }
+    }
+
+    state.audit.log_with_app(
+        "api",
+        "content_bulk_create",
+        "content",
+        &format!("{schema_slug}: {created} created, {failed} failed"),
+        None,
+        Some(app.app.id),
+    );
+
+    Json(serde_json::json!({
+        "total": created + failed,
+        "created": created,
+        "failed": failed,
+        "results": results,
+    }))
+    .into_response()
+}
+
+async fn api_bulk_update(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
+    Json(body): Json<BulkUpdateRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return internal_error(e).into_response(),
+    };
+    if body.entries.is_empty() || body.entries.len() > MAX_BULK_ENTRIES {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "entries array is empty or exceeds limit"})),
+        )
+            .into_response();
+    }
+
+    let mut results = Vec::new();
+    let mut updated = 0usize;
+    let mut failed = 0usize;
+
+    for (i, data) in body.entries.into_iter().enumerate() {
+        let entry_id = data
+            .get("_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if entry_id.is_empty() {
+            results.push(BulkItemResult {
+                index: Some(i),
+                id: None,
+                status: "error".into(),
+                errors: None,
+                error: Some("missing _id field".into()),
+            });
+            failed += 1;
+            continue;
+        }
+
+        let target_status =
+            content::resolve_target_status(&data, &content_dir, &schema_file, Some(&entry_id));
+        let ctx = content::ValidationContext {
+            entry_id: Some(&entry_id),
+            target_status: &target_status,
+            cache: &state.cache,
+            app_slug: &app.app.slug,
+            schema_slug: &schema_slug,
+        };
+        if let Err(errors) = content::validate_content(&schema_file, &data, &ctx) {
+            let msgs: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+            results.push(BulkItemResult {
+                index: Some(i),
+                id: Some(entry_id),
+                status: "error".into(),
+                errors: Some(msgs),
+                error: None,
+            });
+            failed += 1;
+            continue;
+        }
+
+        if let Ok(Some(current)) = content::get_entry(&content_dir, &schema_file, &entry_id) {
+            let snap_meta = crate::history::SnapshotMeta {
+                user_id: "api".into(),
+                username: "api".into(),
+                source: crate::history::SnapshotSource::Api,
+            };
+            let _ = crate::history::snapshot_entry(
+                &app_dir,
+                &schema_slug,
+                &entry_id,
+                &current.data,
+                state.config.version_history_count,
+                Some(&snap_meta),
+            );
+        }
+
+        match content::save_entry(&content_dir, &schema_file, Some(&entry_id), data) {
+            Ok(_) => {
+                crate::cache::reload_entry(
+                    &state.cache,
+                    &state.etag_cache,
+                    &content_dir,
+                    &schema_file,
+                    &entry_id,
+                    &app.app.slug,
+                );
+                results.push(BulkItemResult {
+                    index: Some(i),
+                    id: Some(entry_id),
+                    status: "updated".into(),
+                    errors: None,
+                    error: None,
+                });
+                updated += 1;
+            }
+            Err(e) => {
+                results.push(BulkItemResult {
+                    index: Some(i),
+                    id: Some(entry_id),
+                    status: "error".into(),
+                    errors: None,
+                    error: Some(e.to_string()),
+                });
+                failed += 1;
+            }
+        }
+    }
+
+    state.audit.log_with_app(
+        "api",
+        "content_bulk_update",
+        "content",
+        &format!("{schema_slug}: {updated} updated, {failed} failed"),
+        None,
+        Some(app.app.id),
+    );
+
+    Json(serde_json::json!({
+        "total": updated + failed,
+        "updated": updated,
+        "failed": failed,
+        "results": results,
+    }))
+    .into_response()
+}
+
+async fn api_bulk_delete(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
+    Json(body): Json<BulkIdsRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return internal_error(e).into_response(),
+    };
+
+    let mut results = Vec::new();
+    let mut deleted = 0usize;
+    let mut failed = 0usize;
+
+    for id in &body.ids {
+        let _ = uploads::db_delete_references(&state.pool, app.app.id, &schema_slug, id).await;
+        match content::delete_entry(&content_dir, &schema_file, id) {
+            Ok(()) => {
+                crate::history::delete_history(&app_dir, &schema_slug, id);
+                let key = format!("{}/{schema_slug}/{id}", app.app.slug);
+                state.cache.remove(&key);
+                results.push(BulkItemResult {
+                    index: None,
+                    id: Some(id.clone()),
+                    status: "deleted".into(),
+                    errors: None,
+                    error: None,
+                });
+                deleted += 1;
+            }
+            Err(e) => {
+                results.push(BulkItemResult {
+                    index: None,
+                    id: Some(id.clone()),
+                    status: "error".into(),
+                    errors: None,
+                    error: Some(e.to_string()),
+                });
+                failed += 1;
+            }
+        }
+    }
+
+    state.audit.log_with_app(
+        "api",
+        "content_bulk_delete",
+        "content",
+        &format!("{schema_slug}: {deleted} deleted, {failed} failed"),
+        None,
+        Some(app.app.id),
+    );
+
+    Json(serde_json::json!({
+        "total": deleted + failed,
+        "deleted": deleted,
+        "failed": failed,
+        "results": results,
+    }))
+    .into_response()
+}
+
+async fn api_bulk_publish(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
+    Json(body): Json<BulkIdsRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return internal_error(e).into_response(),
+    };
+
+    let mut results = Vec::new();
+    let mut published = 0usize;
+    let mut failed = 0usize;
+
+    for id in &body.ids {
+        if let Ok(Some(entry)) = content::get_entry(&content_dir, &schema_file, id) {
+            let ctx = content::ValidationContext {
+                entry_id: Some(id),
+                target_status: "published",
+                cache: &state.cache,
+                app_slug: &app.app.slug,
+                schema_slug: &schema_slug,
+            };
+            if let Err(errors) = content::validate_for_publish(&schema_file, &entry.data, &ctx) {
+                let msgs: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+                results.push(BulkItemResult {
+                    index: None,
+                    id: Some(id.clone()),
+                    status: "error".into(),
+                    errors: Some(msgs),
+                    error: None,
+                });
+                failed += 1;
+                continue;
+            }
+        }
+        match content::set_entry_status(&content_dir, &schema_file, id, "published") {
+            Ok(()) => {
+                crate::cache::reload_entry(
+                    &state.cache,
+                    &state.etag_cache,
+                    &content_dir,
+                    &schema_file,
+                    id,
+                    &app.app.slug,
+                );
+                results.push(BulkItemResult {
+                    index: None,
+                    id: Some(id.clone()),
+                    status: "published".into(),
+                    errors: None,
+                    error: None,
+                });
+                published += 1;
+            }
+            Err(e) => {
+                results.push(BulkItemResult {
+                    index: None,
+                    id: Some(id.clone()),
+                    status: "error".into(),
+                    errors: None,
+                    error: Some(e.to_string()),
+                });
+                failed += 1;
+            }
+        }
+    }
+
+    state.audit.log_with_app(
+        "api",
+        "content_bulk_publish",
+        "content",
+        &format!("{schema_slug}: {published} published, {failed} failed"),
+        None,
+        Some(app.app.id),
+    );
+
+    Json(serde_json::json!({
+        "total": published + failed,
+        "published": published,
+        "failed": failed,
+        "results": results,
+    }))
+    .into_response()
+}
+
+async fn api_bulk_unpublish(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug)): Path<(String, String)>,
+    Json(body): Json<BulkIdsRequest>,
+) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return internal_error(e).into_response(),
+    };
+
+    let mut results = Vec::new();
+    let mut unpublished = 0usize;
+    let mut failed = 0usize;
+
+    for id in &body.ids {
+        match content::set_entry_status(&content_dir, &schema_file, id, "draft") {
+            Ok(()) => {
+                crate::cache::reload_entry(
+                    &state.cache,
+                    &state.etag_cache,
+                    &content_dir,
+                    &schema_file,
+                    id,
+                    &app.app.slug,
+                );
+                results.push(BulkItemResult {
+                    index: None,
+                    id: Some(id.clone()),
+                    status: "unpublished".into(),
+                    errors: None,
+                    error: None,
+                });
+                unpublished += 1;
+            }
+            Err(e) => {
+                results.push(BulkItemResult {
+                    index: None,
+                    id: Some(id.clone()),
+                    status: "error".into(),
+                    errors: None,
+                    error: Some(e.to_string()),
+                });
+                failed += 1;
+            }
+        }
+    }
+
+    state.audit.log_with_app(
+        "api",
+        "content_bulk_unpublish",
+        "content",
+        &format!("{schema_slug}: {unpublished} unpublished, {failed} failed"),
+        None,
+        Some(app.app.id),
+    );
+
+    Json(serde_json::json!({
+        "total": unpublished + failed,
+        "unpublished": unpublished,
+        "failed": failed,
+        "results": results,
+    }))
+    .into_response()
 }
 
 async fn api_list_versions(

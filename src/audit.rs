@@ -463,6 +463,8 @@ impl AuditLogger {
             sqlx::query_as(
                 "SELECT MAX(timestamp) FROM audit_log WHERE app_id = ? AND action IN (\
                     'content_create', 'content_update', 'content_delete', \
+                    'content_bulk_create', 'content_bulk_update', 'content_bulk_delete', \
+                    'content_bulk_publish', 'content_bulk_unpublish', \
                     'schema_create', 'schema_update', 'schema_delete', \
                     'entry_published', 'entry_unpublished')",
             )
@@ -474,6 +476,8 @@ impl AuditLogger {
             sqlx::query_as(
                 "SELECT MAX(timestamp) FROM audit_log WHERE action IN (\
                     'content_create', 'content_update', 'content_delete', \
+                    'content_bulk_create', 'content_bulk_update', 'content_bulk_delete', \
+                    'content_bulk_publish', 'content_bulk_unpublish', \
                     'schema_create', 'schema_update', 'schema_delete', \
                     'entry_published', 'entry_unpublished')",
             )
