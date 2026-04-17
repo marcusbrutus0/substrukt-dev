@@ -67,6 +67,7 @@ pub fn routes() -> Router<AppState> {
             axum::routing::post(bulk_delete),
         )
         .route("/{schema_slug}/{entry_id}/history", get(entry_history))
+        .route("/{schema_slug}/{entry_id}/diff", get(entry_diff))
         .route(
             "/{schema_slug}/{entry_id}/revert/{timestamp}",
             axum::routing::post(revert_entry),
@@ -1419,6 +1420,8 @@ async fn entry_history(
                 timestamp => v.timestamp,
                 formatted_time => formatted_time,
                 size => v.size,
+                username => v.username.as_deref().unwrap_or("Unknown"),
+                source => v.source.as_deref().unwrap_or(""),
             }
         })
         .collect();
@@ -1444,6 +1447,114 @@ async fn entry_history(
             schema_slug => schema_slug,
             entry_id => entry_id,
             versions => version_data,
+        })
+        .map_err(|e| format!("Render error: {e}"))?;
+    Ok(Html(html))
+}
+
+#[derive(serde::Deserialize)]
+struct DiffParams {
+    from: u64,
+    to: Option<String>,
+}
+
+async fn entry_diff(
+    Extension(user): Extension<allowthem_core::User>,
+    Extension(role): Extension<auth::CurrentUserRole>,
+    HxRequest(is_htmx): HxRequest,
+    State(state): State<AppState>,
+    session: Session,
+    app: AppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
+    Query(params): Query<DiffParams>,
+) -> axum::response::Result<Html<String>> {
+    let csrf_token = auth::ensure_csrf_token(&session).await;
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = schema::get_schema(&schemas_dir, &schema_slug)
+        .map_err(|e| format!("Error: {e}"))?
+        .ok_or("Schema not found")?;
+
+    let from_data = crate::history::get_version(&app_dir, &schema_slug, &entry_id, params.from)
+        .map_err(|e| format!("Error: {e}"))?
+        .ok_or("Version not found")?;
+
+    let from_date = chrono::DateTime::from_timestamp_millis(params.from as i64)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| params.from.to_string());
+
+    let (to_data, to_label) = if let Some(ref to_str) = params.to {
+        if let Ok(ts) = to_str.parse::<u64>() {
+            let data = crate::history::get_version(&app_dir, &schema_slug, &entry_id, ts)
+                .map_err(|e| format!("Error: {e}"))?
+                .ok_or("Target version not found")?;
+            let label = chrono::DateTime::from_timestamp_millis(ts as i64)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| ts.to_string());
+            (data, label)
+        } else {
+            let entry = content::get_entry(&content_dir, &schema_file, &entry_id)
+                .map_err(|e| format!("Error: {e}"))?
+                .ok_or("Entry not found")?;
+            (entry.data, "Current".to_string())
+        }
+    } else {
+        let entry = content::get_entry(&content_dir, &schema_file, &entry_id)
+            .map_err(|e| format!("Error: {e}"))?
+            .ok_or("Entry not found")?;
+        (entry.data, "Current".to_string())
+    };
+
+    let diffs = crate::history::diff_entries(&from_data, &to_data, &schema_file.schema);
+
+    let diff_data: Vec<minijinja::Value> = diffs
+        .iter()
+        .map(|d| {
+            let (diff_type, old_val, new_val) = match &d.kind {
+                crate::history::DiffKind::Changed { old, new } => {
+                    ("changed", old.to_string(), new.to_string())
+                }
+                crate::history::DiffKind::Added { value } => {
+                    ("added", String::new(), value.to_string())
+                }
+                crate::history::DiffKind::Removed { value } => {
+                    ("removed", value.to_string(), String::new())
+                }
+            };
+            minijinja::context! {
+                path => d.path,
+                label => d.label,
+                diff_type => diff_type,
+                old_val => old_val,
+                new_val => new_val,
+            }
+        })
+        .collect();
+
+    let user_role = &role.0;
+    let current_username = username_str(&user);
+    let tmpl = state
+        .templates
+        .acquire_env()
+        .map_err(|e| format!("Template env error: {e}"))?;
+    let template = tmpl
+        .get_template("content/diff.html")
+        .map_err(|e| format!("Template error: {e}"))?;
+    let html = template
+        .render(minijinja::context! {
+            base_template => base_for_htmx(is_htmx),
+            csrf_token => csrf_token,
+            user_role => user_role,
+            current_username => current_username,
+            app => app.template_context(),
+            nav_schemas => app.nav_schemas(&state.config),
+            schema_title => schema_file.meta.title,
+            schema_slug => schema_slug,
+            entry_id => entry_id,
+            from_date => from_date,
+            to_label => to_label,
+            diffs => diff_data,
         })
         .map_err(|e| format!("Render error: {e}"))?;
     Ok(Html(html))

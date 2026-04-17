@@ -12,6 +12,8 @@
     <thead class="bg-card-alt">
       <tr>
         <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Date</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Author</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Source</th>
         <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Size</th>
         <th class="px-4 py-2.5"></th>
       </tr>
@@ -20,8 +22,11 @@
       {% for v in versions %}
       <tr class="hover:bg-card-alt">
         <td class="px-4 py-2.5 font-mono text-sm text-muted" title="{{ v.timestamp }}">{{ v.formatted_time }}</td>
+        <td class="px-4 py-2.5 text-sm text-secondary">{{ v.username }}</td>
+        <td class="px-4 py-2.5 text-sm text-muted">{% if v.source %}{{ v.source }}{% else %}&mdash;{% endif %}</td>
         <td class="px-4 py-2.5 text-sm text-secondary">{{ v.size }} bytes</td>
-        <td class="px-4 py-2.5 text-right">
+        <td class="px-4 py-2.5 text-right space-x-2">
+          <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/diff?from={{ v.timestamp }}" class="text-accent hover:underline text-sm">Compare</a>
           <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/revert/{{ v.timestamp }}" style="display:inline">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <button type="submit" onclick="return confirm('Revert to this version?')" class="text-accent hover:underline text-sm">Revert</button>

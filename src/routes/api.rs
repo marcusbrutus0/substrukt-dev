@@ -171,6 +171,18 @@ pub fn api_app_routes() -> Router<AppState> {
             post(api_unpublish_entry),
         )
         .route(
+            "/content/{schema_slug}/{entry_id}/versions",
+            get(api_list_versions),
+        )
+        .route(
+            "/content/{schema_slug}/{entry_id}/versions/{timestamp}",
+            get(api_get_version),
+        )
+        .route(
+            "/content/{schema_slug}/{entry_id}/versions/{timestamp}/revert",
+            post(api_revert_version),
+        )
+        .route(
             "/content/{schema_slug}/{entry_id}",
             get(get_entry).put(update_entry).delete(delete_entry),
         )
@@ -1208,6 +1220,138 @@ async fn api_list_deployments(
                 })
                 .collect();
             Json(serde_json::json!(data)).into_response()
+        }
+        Err(e) => internal_error(e).into_response(),
+    }
+}
+
+async fn api_list_versions(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let app_dir = state.config.app_dir(&app.app.slug);
+    match crate::history::list_versions(&app_dir, &schema_slug, &entry_id) {
+        Ok(versions) => {
+            let data: Vec<serde_json::Value> = versions
+                .iter()
+                .map(|v| {
+                    let date = chrono::DateTime::from_timestamp_millis(v.timestamp as i64)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_default();
+                    serde_json::json!({
+                        "timestamp": v.timestamp,
+                        "date": date,
+                        "size": v.size,
+                        "user_id": v.user_id,
+                        "username": v.username,
+                        "source": v.source,
+                    })
+                })
+                .collect();
+            Json(serde_json::json!(data)).into_response()
+        }
+        Err(e) => internal_error(e).into_response(),
+    }
+}
+
+async fn api_get_version(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug, entry_id, timestamp)): Path<(String, String, String, u64)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let app_dir = state.config.app_dir(&app.app.slug);
+    match crate::history::get_version(&app_dir, &schema_slug, &entry_id, timestamp) {
+        Ok(Some(data)) => Json(data).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => internal_error(e).into_response(),
+    }
+}
+
+async fn api_revert_version(
+    State(state): State<AppState>,
+    token: BearerToken,
+    app: ApiAppContext,
+    Path((_app_slug, schema_slug, entry_id, timestamp)): Path<(String, String, String, u64)>,
+) -> impl IntoResponse {
+    if let Err(e) = require_api_role(&token, "editor") {
+        return e.into_response();
+    }
+    if let Err(e) = require_token_app(&token, &app) {
+        return e.into_response();
+    }
+    let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
+    let content_dir = state.config.app_content_dir(&app.app.slug);
+    let app_dir = state.config.app_dir(&app.app.slug);
+    let schema_file = match schema::get_schema(&schemas_dir, &schema_slug) {
+        Ok(Some(s)) => s,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return internal_error(e).into_response(),
+    };
+
+    let version_data =
+        match crate::history::get_version(&app_dir, &schema_slug, &entry_id, timestamp) {
+            Ok(Some(data)) => data,
+            Ok(None) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({"error": "Version not found"})),
+                )
+                    .into_response();
+            }
+            Err(e) => return internal_error(e).into_response(),
+        };
+
+    if let Ok(Some(current)) = content::get_entry(&content_dir, &schema_file, &entry_id) {
+        let snap_meta = crate::history::SnapshotMeta {
+            user_id: "api".into(),
+            username: "api".into(),
+            source: crate::history::SnapshotSource::Revert,
+        };
+        if let Err(e) = crate::history::snapshot_entry(
+            &app_dir,
+            &schema_slug,
+            &entry_id,
+            &current.data,
+            state.config.version_history_count,
+            Some(&snap_meta),
+        ) {
+            tracing::warn!("Failed to snapshot version: {e}");
+        }
+    }
+
+    match content::save_entry(&content_dir, &schema_file, Some(&entry_id), version_data) {
+        Ok(_) => {
+            crate::cache::reload_entry(
+                &state.cache,
+                &state.etag_cache,
+                &content_dir,
+                &schema_file,
+                &entry_id,
+                &app.app.slug,
+            );
+            state.audit.log_with_app(
+                "api",
+                "content_update",
+                "content",
+                &format!("{schema_slug}/{entry_id}"),
+                Some(&format!("reverted to version {timestamp}")),
+                Some(app.app.id),
+            );
+            Json(serde_json::json!({
+                "status": "reverted",
+                "entry_id": entry_id,
+                "reverted_to": timestamp,
+            }))
+            .into_response()
         }
         Err(e) => internal_error(e).into_response(),
     }

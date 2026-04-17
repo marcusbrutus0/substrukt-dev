@@ -1,0 +1,35 @@
+{% extends base_template %}
+{% block title %}Diff — {{ schema_title }} — Substrukt{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold tracking-tight">Comparing: {{ from_date }} vs {{ to_label }}</h1>
+  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/history" class="text-muted hover:text-primary text-sm">Back to History</a>
+</div>
+
+{% if diffs %}
+<div class="bg-card border border-border-light rounded-lg overflow-hidden">
+  <table class="w-full">
+    <thead class="bg-card-alt">
+      <tr>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted w-1/5">Field</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted w-2/5">Previous</th>
+        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted w-2/5">Current</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-border-light">
+      {% for d in diffs %}
+      <tr class="{% if d.diff_type == 'changed' %}bg-amber-50 dark:bg-amber-950/30{% elif d.diff_type == 'added' %}bg-green-50 dark:bg-green-950/30{% elif d.diff_type == 'removed' %}bg-red-50 dark:bg-red-950/30{% endif %}">
+        <td class="px-4 py-2.5 text-sm font-medium">{{ d.label }}</td>
+        <td class="px-4 py-2.5 text-sm text-muted font-mono break-all">{% if d.old_val %}{{ d.old_val }}{% else %}&mdash;{% endif %}</td>
+        <td class="px-4 py-2.5 text-sm font-mono break-all">{% if d.new_val %}{{ d.new_val }}{% else %}&mdash;{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
+  No differences found.
+</div>
+{% endif %}
+{% endblock %}
