@@ -7373,10 +7373,7 @@ async fn api_pagination_envelope_response() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     let resp = api
         .get(s.url("/api/v1/apps/default/content/articles?status=all&limit=2"))
@@ -7404,10 +7401,7 @@ async fn api_no_pagination_bare_array() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     let resp = api
         .get(s.url("/api/v1/apps/default/content/articles?status=all"))
@@ -7418,7 +7412,10 @@ async fn api_no_pagination_bare_array() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: serde_json::Value = resp.json().await.unwrap();
 
-    assert!(body.is_array(), "without limit/offset, should return bare array");
+    assert!(
+        body.is_array(),
+        "without limit/offset, should return bare array"
+    );
     assert_eq!(body.as_array().unwrap().len(), 5);
 }
 
@@ -7430,10 +7427,7 @@ async fn api_pagination_offset() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     let resp = api
         .get(s.url("/api/v1/apps/default/content/articles?status=all&limit=2&offset=3"))
@@ -7445,7 +7439,10 @@ async fn api_pagination_offset() {
 
     assert_eq!(body["meta"]["total"], 5);
     assert_eq!(body["meta"]["offset"], 3);
-    assert_eq!(body["meta"]["count"], 2, "should get 2 entries starting from offset 3");
+    assert_eq!(
+        body["meta"]["count"], 2,
+        "should get 2 entries starting from offset 3"
+    );
 }
 
 #[tokio::test]
@@ -7456,10 +7453,7 @@ async fn api_pagination_offset_beyond_total() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     let resp = api
         .get(s.url("/api/v1/apps/default/content/articles?status=all&limit=10&offset=100"))
@@ -7482,15 +7476,12 @@ async fn api_sort_by_title_desc() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     let resp = api
-        .get(s.url(
-            "/api/v1/apps/default/content/articles?status=all&sort=title&order=desc&limit=5",
-        ))
+        .get(
+            s.url("/api/v1/apps/default/content/articles?status=all&sort=title&order=desc&limit=5"),
+        )
         .bearer_auth(&token)
         .send()
         .await
@@ -7513,10 +7504,7 @@ async fn api_sort_by_id_desc() {
     let token = s.create_api_token("sort-id-desc").await;
     s.create_schema(PAGINATED_SCHEMA).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     // Create entries with known IDs (title-based slugs)
     for title in ["Banana", "Apple", "Cherry"] {
@@ -7529,9 +7517,7 @@ async fn api_sort_by_id_desc() {
     }
 
     let resp = api
-        .get(s.url(
-            "/api/v1/apps/default/content/articles?status=all&sort=_id&order=desc&limit=10",
-        ))
+        .get(s.url("/api/v1/apps/default/content/articles?status=all&sort=_id&order=desc&limit=10"))
         .bearer_auth(&token)
         .send()
         .await
@@ -7544,7 +7530,11 @@ async fn api_sort_by_id_desc() {
         .map(|e| e["title"].as_str().unwrap())
         .collect();
 
-    assert_eq!(ids, vec!["Cherry", "Banana", "Apple"], "sort=_id&order=desc should reverse ID order");
+    assert_eq!(
+        ids,
+        vec!["Cherry", "Banana", "Apple"],
+        "sort=_id&order=desc should reverse ID order"
+    );
 }
 
 #[tokio::test]
@@ -7555,15 +7545,12 @@ async fn api_filter_by_field() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     let resp = api
-        .get(s.url(
-            "/api/v1/apps/default/content/articles?status=all&filter.category=news&limit=10",
-        ))
+        .get(
+            s.url("/api/v1/apps/default/content/articles?status=all&filter.category=news&limit=10"),
+        )
         .bearer_auth(&token)
         .send()
         .await
@@ -7584,10 +7571,7 @@ async fn api_filter_combined_with_search_and_status() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     // status=published + filter.category=news + sort + limit
     let resp = api
@@ -7619,10 +7603,7 @@ async fn api_filter_unknown_field_returns_empty() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     let resp = api
         .get(s.url(
@@ -7646,10 +7627,7 @@ async fn api_sort_invalid_field_falls_back() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     let resp = api
         .get(s.url(
@@ -7659,13 +7637,20 @@ async fn api_sort_invalid_field_falls_back() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "invalid sort field should not 500");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "invalid sort field should not 500"
+    );
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["meta"]["total"], 5, "all entries should be returned");
     // With invalid sort field, all values are None, so secondary sort by ID kicks in
     let first_id = body["data"][0]["title"].as_str().unwrap();
-    assert!(!first_id.is_empty(), "entries should be returned in ID order");
+    assert!(
+        !first_id.is_empty(),
+        "entries should be returned in ID order"
+    );
 }
 
 #[tokio::test]
@@ -7676,15 +7661,10 @@ async fn api_pagination_limit_clamped_to_max() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     let resp = api
-        .get(s.url(
-            "/api/v1/apps/default/content/articles?status=all&limit=9999",
-        ))
+        .get(s.url("/api/v1/apps/default/content/articles?status=all&limit=9999"))
         .bearer_auth(&token)
         .send()
         .await
@@ -7703,15 +7683,10 @@ async fn api_pagination_limit_zero_defaults_to_20() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     let resp = api
-        .get(s.url(
-            "/api/v1/apps/default/content/articles?status=all&limit=0",
-        ))
+        .get(s.url("/api/v1/apps/default/content/articles?status=all&limit=0"))
         .bearer_auth(&token)
         .send()
         .await
@@ -7719,7 +7694,10 @@ async fn api_pagination_limit_zero_defaults_to_20() {
     let body: serde_json::Value = resp.json().await.unwrap();
 
     assert_eq!(body["meta"]["limit"], 20, "limit=0 should default to 20");
-    assert_eq!(body["meta"]["count"], 5, "should return all 5 entries (< 20)");
+    assert_eq!(
+        body["meta"]["count"], 5,
+        "should return all 5 entries (< 20)"
+    );
 }
 
 #[tokio::test]
@@ -7730,10 +7708,7 @@ async fn api_status_default_is_published() {
     s.create_schema(PAGINATED_SCHEMA).await;
     setup_paginated_entries(&s, &token).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     // Default (no status param) should return only published
     let resp = api
@@ -7757,10 +7732,7 @@ async fn api_filter_url_encoded_value() {
     let token = s.create_api_token("filter-encoded").await;
     s.create_schema(PAGINATED_SCHEMA).await;
 
-    let api = Client::builder()
-        .cookie_store(false)
-        .build()
-        .unwrap();
+    let api = Client::builder().cookie_store(false).build().unwrap();
 
     // Create an entry with a title containing a space
     api.post(s.url("/api/v1/apps/default/content/articles"))
@@ -7772,9 +7744,7 @@ async fn api_filter_url_encoded_value() {
 
     // Filter with URL-encoded value
     let resp = api
-        .get(s.url(
-            "/api/v1/apps/default/content/articles?filter.title=Hello%20World&limit=10",
-        ))
+        .get(s.url("/api/v1/apps/default/content/articles?filter.title=Hello%20World&limit=10"))
         .bearer_auth(&token)
         .send()
         .await
