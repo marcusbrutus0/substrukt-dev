@@ -522,6 +522,121 @@ fn render_markdown_fields_inner(data: &mut Value, schema: &Value, depth: usize) 
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub enum SortOrder {
+    #[default]
+    Asc,
+    Desc,
+}
+
+pub struct QueryParams {
+    pub status: String,
+    pub q: String,
+    pub filters: Vec<(String, String)>,
+    pub sort_field: String,
+    pub sort_order: SortOrder,
+    pub offset: usize,
+    pub limit: Option<usize>,
+}
+
+pub struct QueryResult {
+    pub entries: Vec<ContentEntry>,
+    pub total: usize,
+}
+
+pub fn query_entries(entries: Vec<ContentEntry>, params: &QueryParams) -> QueryResult {
+    let entries = filter_by_status(entries, &params.status);
+    let entries = if params.filters.is_empty() {
+        entries
+    } else {
+        filter_by_fields(entries, &params.filters)
+    };
+    let entries = if params.q.is_empty() {
+        entries
+    } else {
+        filter_entries(entries, &params.q)
+    };
+    let total = entries.len();
+    let mut entries = entries;
+    sort_entries(&mut entries, &params.sort_field, &params.sort_order);
+    let entries: Vec<ContentEntry> = match params.limit {
+        Some(limit) => entries
+            .into_iter()
+            .skip(params.offset)
+            .take(limit)
+            .collect(),
+        None => entries.into_iter().skip(params.offset).collect(),
+    };
+    QueryResult { entries, total }
+}
+
+pub fn filter_by_fields(
+    entries: Vec<ContentEntry>,
+    filters: &[(String, String)],
+) -> Vec<ContentEntry> {
+    entries
+        .into_iter()
+        .filter(|e| {
+            filters.iter().all(|(field, value)| {
+                let Some(field_val) = e.data.get(field) else {
+                    return false;
+                };
+                match field_val {
+                    Value::String(s) => s == value,
+                    Value::Number(n) => {
+                        if let Ok(v) = value.parse::<f64>() {
+                            n.as_f64().is_some_and(|nv| nv == v)
+                        } else {
+                            false
+                        }
+                    }
+                    Value::Bool(b) => match value.as_str() {
+                        "true" => *b,
+                        "false" => !*b,
+                        _ => false,
+                    },
+                    _ => false,
+                }
+            })
+        })
+        .collect()
+}
+
+fn sort_entries(entries: &mut [ContentEntry], field: &str, order: &SortOrder) {
+    entries.sort_by(|a, b| {
+        let av = if field == "_id" {
+            None
+        } else {
+            a.data.get(field)
+        };
+        let bv = if field == "_id" {
+            None
+        } else {
+            b.data.get(field)
+        };
+
+        let cmp = match (av, bv) {
+            (Some(Value::String(sa)), Some(Value::String(sb))) => sa.cmp(sb),
+            (Some(Value::Number(na)), Some(Value::Number(nb))) => na
+                .as_f64()
+                .unwrap_or(0.0)
+                .partial_cmp(&nb.as_f64().unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal),
+            (Some(Value::Bool(ba)), Some(Value::Bool(bb))) => ba.cmp(bb),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            _ => std::cmp::Ordering::Equal,
+        };
+
+        let cmp = match order {
+            SortOrder::Asc => cmp,
+            SortOrder::Desc => cmp.reverse(),
+        };
+
+        cmp.then_with(|| a.id.cmp(&b.id))
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1243,5 +1358,172 @@ mod tests {
         let mut data = json!({"tags": ["one", "two"]});
         render_markdown_fields(&mut data, &schema);
         assert_eq!(data["tags"], json!(["one", "two"]));
+    }
+
+    #[test]
+    fn filter_by_fields_exact_string_match() {
+        let entries = vec![
+            ContentEntry { id: "a".into(), data: json!({"title": "Hello", "cat": "news"}) },
+            ContentEntry { id: "b".into(), data: json!({"title": "World", "cat": "blog"}) },
+            ContentEntry { id: "c".into(), data: json!({"title": "Test", "cat": "news"}) },
+        ];
+        let filtered = filter_by_fields(entries, &[("cat".into(), "news".into())]);
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|e| e.data["cat"] == "news"));
+    }
+
+    #[test]
+    fn filter_by_fields_numeric_match() {
+        let entries = vec![
+            ContentEntry { id: "a".into(), data: json!({"title": "A", "count": 5}) },
+            ContentEntry { id: "b".into(), data: json!({"title": "B", "count": 10}) },
+        ];
+        let filtered = filter_by_fields(entries, &[("count".into(), "5".into())]);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "a");
+    }
+
+    #[test]
+    fn filter_by_fields_boolean_match() {
+        let entries = vec![
+            ContentEntry { id: "a".into(), data: json!({"active": true}) },
+            ContentEntry { id: "b".into(), data: json!({"active": false}) },
+        ];
+        let filtered = filter_by_fields(entries, &[("active".into(), "true".into())]);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "a");
+    }
+
+    #[test]
+    fn filter_by_fields_multiple_and() {
+        let entries = vec![
+            ContentEntry { id: "a".into(), data: json!({"cat": "news", "lang": "en"}) },
+            ContentEntry { id: "b".into(), data: json!({"cat": "news", "lang": "fr"}) },
+            ContentEntry { id: "c".into(), data: json!({"cat": "blog", "lang": "en"}) },
+        ];
+        let filtered = filter_by_fields(
+            entries,
+            &[("cat".into(), "news".into()), ("lang".into(), "en".into())],
+        );
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "a");
+    }
+
+    #[test]
+    fn filter_by_fields_unknown_field_returns_empty() {
+        let entries = vec![
+            ContentEntry { id: "a".into(), data: json!({"title": "Hello"}) },
+        ];
+        let filtered = filter_by_fields(entries, &[("nonexistent".into(), "val".into())]);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn sort_entries_by_string_asc() {
+        let mut entries = vec![
+            ContentEntry { id: "c".into(), data: json!({"title": "Zebra"}) },
+            ContentEntry { id: "a".into(), data: json!({"title": "Apple"}) },
+            ContentEntry { id: "b".into(), data: json!({"title": "Mango"}) },
+        ];
+        sort_entries(&mut entries, "title", &SortOrder::Asc);
+        assert_eq!(entries[0].data["title"], "Apple");
+        assert_eq!(entries[1].data["title"], "Mango");
+        assert_eq!(entries[2].data["title"], "Zebra");
+    }
+
+    #[test]
+    fn sort_entries_by_string_desc() {
+        let mut entries = vec![
+            ContentEntry { id: "a".into(), data: json!({"title": "Apple"}) },
+            ContentEntry { id: "c".into(), data: json!({"title": "Zebra"}) },
+        ];
+        sort_entries(&mut entries, "title", &SortOrder::Desc);
+        assert_eq!(entries[0].data["title"], "Zebra");
+        assert_eq!(entries[1].data["title"], "Apple");
+    }
+
+    #[test]
+    fn sort_entries_stable_by_id() {
+        let mut entries = vec![
+            ContentEntry { id: "b".into(), data: json!({"title": "Same"}) },
+            ContentEntry { id: "a".into(), data: json!({"title": "Same"}) },
+            ContentEntry { id: "c".into(), data: json!({"title": "Same"}) },
+        ];
+        sort_entries(&mut entries, "title", &SortOrder::Asc);
+        assert_eq!(entries[0].id, "a");
+        assert_eq!(entries[1].id, "b");
+        assert_eq!(entries[2].id, "c");
+    }
+
+    #[test]
+    fn sort_entries_missing_values_last() {
+        let mut entries = vec![
+            ContentEntry { id: "a".into(), data: json!({"title": "Hello"}) },
+            ContentEntry { id: "b".into(), data: json!({}) },
+            ContentEntry { id: "c".into(), data: json!({"title": "World"}) },
+        ];
+        sort_entries(&mut entries, "title", &SortOrder::Asc);
+        assert_eq!(entries[0].data["title"], "Hello");
+        assert_eq!(entries[1].data["title"], "World");
+        assert_eq!(entries[2].id, "b");
+    }
+
+    #[test]
+    fn query_entries_search_filter_sort_paginate() {
+        let entries = vec![
+            ContentEntry { id: "a".into(), data: json!({"_status": "published", "title": "Alpha hello", "cat": "news"}) },
+            ContentEntry { id: "b".into(), data: json!({"_status": "published", "title": "Beta hello", "cat": "blog"}) },
+            ContentEntry { id: "c".into(), data: json!({"_status": "draft", "title": "Gamma hello", "cat": "news"}) },
+            ContentEntry { id: "d".into(), data: json!({"_status": "published", "title": "Delta hello", "cat": "news"}) },
+        ];
+        let result = query_entries(entries, &QueryParams {
+            status: "published".into(),
+            q: "hello".into(),
+            filters: vec![("cat".into(), "news".into())],
+            sort_field: "title".into(),
+            sort_order: SortOrder::Desc,
+            offset: 0,
+            limit: Some(1),
+        });
+        assert_eq!(result.total, 2);
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].id, "d");
+    }
+
+    #[test]
+    fn query_entries_offset_beyond_total() {
+        let entries = vec![
+            ContentEntry { id: "a".into(), data: json!({"_status": "published"}) },
+        ];
+        let result = query_entries(entries, &QueryParams {
+            status: "all".into(),
+            q: String::new(),
+            filters: vec![],
+            sort_field: "_id".into(),
+            sort_order: SortOrder::Asc,
+            offset: 100,
+            limit: Some(10),
+        });
+        assert_eq!(result.total, 1);
+        assert!(result.entries.is_empty());
+    }
+
+    #[test]
+    fn query_entries_no_limit_returns_all() {
+        let entries = vec![
+            ContentEntry { id: "a".into(), data: json!({"_status": "published"}) },
+            ContentEntry { id: "b".into(), data: json!({"_status": "published"}) },
+        ];
+        let result = query_entries(entries, &QueryParams {
+            status: "all".into(),
+            q: String::new(),
+            filters: vec![],
+            sort_field: "_id".into(),
+            sort_order: SortOrder::Asc,
+            offset: 0,
+            limit: None,
+        });
+        assert_eq!(result.total, 2);
+        assert_eq!(result.entries.len(), 2);
     }
 }
