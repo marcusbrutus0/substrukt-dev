@@ -13,3 +13,4 @@
 /node_modules/
 .playwright-cli/
 .playwright/
+tasks.org

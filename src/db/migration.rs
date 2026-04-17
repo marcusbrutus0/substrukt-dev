@@ -92,11 +92,10 @@ pub async fn finalize_schema(
     let mut conn = pool.acquire().await?;
 
     // Check if migration already done (old users table gone)
-    let old_users_exist: Option<String> = sqlx::query_scalar(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='users'",
-    )
-    .fetch_optional(&mut *conn)
-    .await?;
+    let old_users_exist: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+            .fetch_optional(&mut *conn)
+            .await?;
 
     if old_users_exist.is_none() {
         return Ok(()); // Already migrated
