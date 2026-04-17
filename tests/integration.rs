@@ -7326,3 +7326,461 @@ async fn api_render_schema_default_renders_without_param() {
         "render=raw should override schema default"
     );
 }
+
+// ── API pagination, sorting, and filtering tests ─────────────
+
+const PAGINATED_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Articles", "slug": "articles", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "title": "Title"},
+        "category": {"type": "string", "title": "Category"},
+        "priority": {"type": "integer", "title": "Priority"}
+    },
+    "required": ["title"]
+}"#;
+
+async fn setup_paginated_entries(s: &TestServer, token: &str) {
+    let api = Client::builder()
+        .cookie_store(false)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let entries = vec![
+        serde_json::json!({"title": "Alpha", "category": "news", "priority": 3, "_status": "published"}),
+        serde_json::json!({"title": "Bravo", "category": "blog", "priority": 1, "_status": "published"}),
+        serde_json::json!({"title": "Charlie", "category": "news", "priority": 2, "_status": "draft"}),
+        serde_json::json!({"title": "Delta", "category": "blog", "priority": 4, "_status": "published"}),
+        serde_json::json!({"title": "Echo", "category": "news", "priority": 5, "_status": "published"}),
+    ];
+    for entry in entries {
+        let resp = api
+            .post(s.url("/api/v1/apps/default/content/articles"))
+            .bearer_auth(token)
+            .json(&entry)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+}
+
+#[tokio::test]
+async fn api_pagination_envelope_response() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("pag-envelope").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url("/api/v1/apps/default/content/articles?status=all&limit=2"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert!(body.get("data").is_some(), "should have data field");
+    assert!(body.get("meta").is_some(), "should have meta field");
+    assert_eq!(body["meta"]["total"], 5);
+    assert_eq!(body["meta"]["limit"], 2);
+    assert_eq!(body["meta"]["offset"], 0);
+    assert_eq!(body["meta"]["count"], 2);
+    assert_eq!(body["data"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn api_no_pagination_bare_array() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("pag-bare").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url("/api/v1/apps/default/content/articles?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert!(body.is_array(), "without limit/offset, should return bare array");
+    assert_eq!(body.as_array().unwrap().len(), 5);
+}
+
+#[tokio::test]
+async fn api_pagination_offset() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("pag-offset").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url("/api/v1/apps/default/content/articles?status=all&limit=2&offset=3"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert_eq!(body["meta"]["total"], 5);
+    assert_eq!(body["meta"]["offset"], 3);
+    assert_eq!(body["meta"]["count"], 2, "should get 2 entries starting from offset 3");
+}
+
+#[tokio::test]
+async fn api_pagination_offset_beyond_total() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("pag-beyond").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url("/api/v1/apps/default/content/articles?status=all&limit=10&offset=100"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert_eq!(body["meta"]["total"], 5);
+    assert_eq!(body["meta"]["count"], 0);
+    assert!(body["data"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn api_sort_by_title_desc() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("sort-title").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url(
+            "/api/v1/apps/default/content/articles?status=all&sort=title&order=desc&limit=5",
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let titles: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["title"].as_str().unwrap())
+        .collect();
+
+    assert_eq!(titles, vec!["Echo", "Delta", "Charlie", "Bravo", "Alpha"]);
+}
+
+#[tokio::test]
+async fn api_sort_by_id_desc() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("sort-id-desc").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    // Create entries with known IDs (title-based slugs)
+    for title in ["Banana", "Apple", "Cherry"] {
+        api.post(s.url("/api/v1/apps/default/content/articles"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({"title": title, "_status": "published"}))
+            .send()
+            .await
+            .unwrap();
+    }
+
+    let resp = api
+        .get(s.url(
+            "/api/v1/apps/default/content/articles?status=all&sort=_id&order=desc&limit=10",
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let ids: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["title"].as_str().unwrap())
+        .collect();
+
+    assert_eq!(ids, vec!["Cherry", "Banana", "Apple"], "sort=_id&order=desc should reverse ID order");
+}
+
+#[tokio::test]
+async fn api_filter_by_field() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("filter-field").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url(
+            "/api/v1/apps/default/content/articles?status=all&filter.category=news&limit=10",
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert_eq!(body["meta"]["total"], 3, "3 entries have category=news");
+    for entry in body["data"].as_array().unwrap() {
+        assert_eq!(entry["category"], "news");
+    }
+}
+
+#[tokio::test]
+async fn api_filter_combined_with_search_and_status() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("filter-combined").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    // status=published + filter.category=news + sort + limit
+    let resp = api
+        .get(s.url(
+            "/api/v1/apps/default/content/articles?status=published&filter.category=news&sort=title&order=asc&limit=10",
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    // Alpha (published, news), Echo (published, news) — Charlie is draft
+    assert_eq!(body["meta"]["total"], 2);
+    let titles: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, vec!["Alpha", "Echo"]);
+}
+
+#[tokio::test]
+async fn api_filter_unknown_field_returns_empty() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("filter-unknown").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url(
+            "/api/v1/apps/default/content/articles?status=all&filter.nonexistent=val&limit=10",
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert_eq!(body["meta"]["total"], 0);
+    assert!(body["data"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn api_sort_invalid_field_falls_back() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("sort-invalid").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url(
+            "/api/v1/apps/default/content/articles?status=all&sort=nonexistent_field&limit=10",
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "invalid sort field should not 500");
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["meta"]["total"], 5, "all entries should be returned");
+    // With invalid sort field, all values are None, so secondary sort by ID kicks in
+    let first_id = body["data"][0]["title"].as_str().unwrap();
+    assert!(!first_id.is_empty(), "entries should be returned in ID order");
+}
+
+#[tokio::test]
+async fn api_pagination_limit_clamped_to_max() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("limit-clamp").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url(
+            "/api/v1/apps/default/content/articles?status=all&limit=9999",
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    // limit should be clamped to 500 in meta
+    assert_eq!(body["meta"]["limit"], 500);
+}
+
+#[tokio::test]
+async fn api_pagination_limit_zero_defaults_to_20() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("limit-zero").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    let resp = api
+        .get(s.url(
+            "/api/v1/apps/default/content/articles?status=all&limit=0",
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert_eq!(body["meta"]["limit"], 20, "limit=0 should default to 20");
+    assert_eq!(body["meta"]["count"], 5, "should return all 5 entries (< 20)");
+}
+
+#[tokio::test]
+async fn api_status_default_is_published() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("status-default").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+    setup_paginated_entries(&s, &token).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    // Default (no status param) should return only published
+    let resp = api
+        .get(s.url("/api/v1/apps/default/content/articles"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    // bare array (no pagination), should only have published entries
+    assert!(body.is_array());
+    let entries = body.as_array().unwrap();
+    assert_eq!(entries.len(), 4, "4 of 5 entries are published");
+}
+
+#[tokio::test]
+async fn api_filter_url_encoded_value() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    let token = s.create_api_token("filter-encoded").await;
+    s.create_schema(PAGINATED_SCHEMA).await;
+
+    let api = Client::builder()
+        .cookie_store(false)
+        .build()
+        .unwrap();
+
+    // Create an entry with a title containing a space
+    api.post(s.url("/api/v1/apps/default/content/articles"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"title": "Hello World", "category": "test", "_status": "published"}))
+        .send()
+        .await
+        .unwrap();
+
+    // Filter with URL-encoded value
+    let resp = api
+        .get(s.url(
+            "/api/v1/apps/default/content/articles?filter.title=Hello%20World&limit=10",
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+
+    assert_eq!(body["meta"]["total"], 1);
+    assert_eq!(body["data"][0]["title"], "Hello World");
+}

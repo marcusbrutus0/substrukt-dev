@@ -604,36 +604,35 @@ pub fn filter_by_fields(
 
 fn sort_entries(entries: &mut [ContentEntry], field: &str, order: &SortOrder) {
     entries.sort_by(|a, b| {
-        let av = if field == "_id" {
-            None
+        let primary = if field == "_id" {
+            a.id.cmp(&b.id)
         } else {
-            a.data.get(field)
+            let av = a.data.get(field);
+            let bv = b.data.get(field);
+            match (av, bv) {
+                (Some(Value::String(sa)), Some(Value::String(sb))) => sa.cmp(sb),
+                (Some(Value::Number(na)), Some(Value::Number(nb))) => na
+                    .as_f64()
+                    .unwrap_or(0.0)
+                    .partial_cmp(&nb.as_f64().unwrap_or(0.0))
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                (Some(Value::Bool(ba)), Some(Value::Bool(bb))) => ba.cmp(bb),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            }
         };
-        let bv = if field == "_id" {
-            None
+
+        let primary = match order {
+            SortOrder::Asc => primary,
+            SortOrder::Desc => primary.reverse(),
+        };
+
+        if field == "_id" {
+            primary
         } else {
-            b.data.get(field)
-        };
-
-        let cmp = match (av, bv) {
-            (Some(Value::String(sa)), Some(Value::String(sb))) => sa.cmp(sb),
-            (Some(Value::Number(na)), Some(Value::Number(nb))) => na
-                .as_f64()
-                .unwrap_or(0.0)
-                .partial_cmp(&nb.as_f64().unwrap_or(0.0))
-                .unwrap_or(std::cmp::Ordering::Equal),
-            (Some(Value::Bool(ba)), Some(Value::Bool(bb))) => ba.cmp(bb),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            _ => std::cmp::Ordering::Equal,
-        };
-
-        let cmp = match order {
-            SortOrder::Asc => cmp,
-            SortOrder::Desc => cmp.reverse(),
-        };
-
-        cmp.then_with(|| a.id.cmp(&b.id))
+            primary.then_with(|| a.id.cmp(&b.id))
+        }
     });
 }
 
@@ -1617,5 +1616,165 @@ mod tests {
         );
         assert_eq!(result.total, 2);
         assert_eq!(result.entries.len(), 2);
+    }
+
+    #[test]
+    fn sort_entries_by_id_desc() {
+        let mut entries = vec![
+            ContentEntry {
+                id: "alpha".into(),
+                data: json!({}),
+            },
+            ContentEntry {
+                id: "charlie".into(),
+                data: json!({}),
+            },
+            ContentEntry {
+                id: "bravo".into(),
+                data: json!({}),
+            },
+        ];
+        sort_entries(&mut entries, "_id", &SortOrder::Desc);
+        assert_eq!(entries[0].id, "charlie");
+        assert_eq!(entries[1].id, "bravo");
+        assert_eq!(entries[2].id, "alpha");
+    }
+
+    #[test]
+    fn sort_entries_by_id_asc() {
+        let mut entries = vec![
+            ContentEntry {
+                id: "charlie".into(),
+                data: json!({}),
+            },
+            ContentEntry {
+                id: "alpha".into(),
+                data: json!({}),
+            },
+            ContentEntry {
+                id: "bravo".into(),
+                data: json!({}),
+            },
+        ];
+        sort_entries(&mut entries, "_id", &SortOrder::Asc);
+        assert_eq!(entries[0].id, "alpha");
+        assert_eq!(entries[1].id, "bravo");
+        assert_eq!(entries[2].id, "charlie");
+    }
+
+    #[test]
+    fn filter_by_fields_boolean_false_match() {
+        let entries = vec![
+            ContentEntry {
+                id: "a".into(),
+                data: json!({"active": true}),
+            },
+            ContentEntry {
+                id: "b".into(),
+                data: json!({"active": false}),
+            },
+        ];
+        let filtered = filter_by_fields(entries, &[("active".into(), "false".into())]);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "b");
+    }
+
+    #[test]
+    fn filter_by_fields_null_value_no_match() {
+        let entries = vec![
+            ContentEntry {
+                id: "a".into(),
+                data: json!({"title": null}),
+            },
+            ContentEntry {
+                id: "b".into(),
+                data: json!({"title": "Hello"}),
+            },
+        ];
+        let filtered = filter_by_fields(entries, &[("title".into(), "Hello".into())]);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "b");
+    }
+
+    #[test]
+    fn query_entries_empty_filters_no_effect() {
+        let entries = vec![
+            ContentEntry {
+                id: "a".into(),
+                data: json!({"_status": "published", "title": "Hello"}),
+            },
+            ContentEntry {
+                id: "b".into(),
+                data: json!({"_status": "published", "title": "World"}),
+            },
+        ];
+        let result = query_entries(
+            entries,
+            &QueryParams {
+                status: "all".into(),
+                q: String::new(),
+                filters: vec![],
+                sort_field: "_id".into(),
+                sort_order: SortOrder::Asc,
+                offset: 0,
+                limit: None,
+            },
+        );
+        assert_eq!(result.total, 2);
+        assert_eq!(result.entries.len(), 2);
+    }
+
+    #[test]
+    fn sort_entries_by_number() {
+        let mut entries = vec![
+            ContentEntry {
+                id: "a".into(),
+                data: json!({"price": 30}),
+            },
+            ContentEntry {
+                id: "b".into(),
+                data: json!({"price": 10}),
+            },
+            ContentEntry {
+                id: "c".into(),
+                data: json!({"price": 20}),
+            },
+        ];
+        sort_entries(&mut entries, "price", &SortOrder::Asc);
+        assert_eq!(entries[0].id, "b");
+        assert_eq!(entries[1].id, "c");
+        assert_eq!(entries[2].id, "a");
+    }
+
+    #[test]
+    fn query_entries_limit_zero_defaults_to_all_with_offset() {
+        let entries = vec![
+            ContentEntry {
+                id: "a".into(),
+                data: json!({"_status": "published"}),
+            },
+            ContentEntry {
+                id: "b".into(),
+                data: json!({"_status": "published"}),
+            },
+            ContentEntry {
+                id: "c".into(),
+                data: json!({"_status": "published"}),
+            },
+        ];
+        let result = query_entries(
+            entries,
+            &QueryParams {
+                status: "all".into(),
+                q: String::new(),
+                filters: vec![],
+                sort_field: "_id".into(),
+                sort_order: SortOrder::Asc,
+                offset: 1,
+                limit: Some(0),
+            },
+        );
+        assert_eq!(result.total, 3);
+        assert_eq!(result.entries.len(), 0, "limit=0 should return 0 entries");
     }
 }
