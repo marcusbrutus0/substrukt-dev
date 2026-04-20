@@ -747,6 +747,81 @@ async fn verify_resend_is_silent_for_unknown_email() {
     assert!(body.contains("Check your email"), "got: {body}");
 }
 
+#[tokio::test]
+async fn invitation_signup_allows_subsequent_login() {
+    // Proves the invitation-implies-verified policy: if auto_verify regresses,
+    // the freshly signed-up user will be hard-blocked at login.
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/settings/users").await;
+    let resp = s
+        .client
+        .post(s.url("/settings/users/invite"))
+        .form(&[
+            ("email", "invitee@test.com"),
+            ("role", "editor"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let invite_url = extract_invite_url(&body).unwrap();
+
+    let client2 = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let token = extract_hidden_token(&body).unwrap();
+
+    let resp = client2
+        .post(s.url("/signup"))
+        .form(&[
+            ("token", token.as_str()),
+            ("username", "invitee"),
+            ("password", "securepass123"),
+            ("confirm_password", "securepass123"),
+            ("_csrf", &csrf),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Fresh client, no session — login must succeed because auto_verify flipped the flag.
+    let fresh = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let body = fresh
+        .get(s.url("/login"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+    let resp = fresh
+        .post(s.url("/login"))
+        .form(&[
+            ("username", "invitee"),
+            ("password", "securepass123"),
+            ("_csrf", csrf.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
+}
+
 // ── Schema CRUD tests ────────────────────────────────────────
 
 const BLOG_SCHEMA: &str = r#"{
