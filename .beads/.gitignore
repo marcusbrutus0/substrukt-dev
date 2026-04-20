@@ -8,6 +8,9 @@ bd.sock.startlock
 sync-state.json
 last-touched
 
+# Local credential key (machine-specific, must not be shared)
+.beads-credential-key
+
 # Local version tracking (prevents upgrade notification spam after git ops)
 .local_version
 
