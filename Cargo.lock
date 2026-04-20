@@ -84,6 +84,8 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 [[package]]
 name = "allowthem-core"
 version = "0.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9bf1ab052f4386344cb82aca37d5109a4e36e74535e92f639c7960d398bb1cd"
 dependencies = [
  "aes-gcm",
  "argon2",
