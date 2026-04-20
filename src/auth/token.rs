@@ -43,7 +43,7 @@ impl FromRequestParts<AppState> for BearerToken {
             .ok_or_else(unauthorized)?;
 
         // Validate via allowthem
-        let user_id = state
+        let (user_id, _token_info) = state
             .ath
             .db()
             .validate_api_token(raw_token)

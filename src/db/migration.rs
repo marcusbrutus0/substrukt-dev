@@ -60,7 +60,7 @@ pub async fn migrate_users_to_allowthem(
 
         let new_user = ath
             .db()
-            .create_user_with_hash(email, &old_user.password_hash, Some(username))
+            .create_user_with_hash(email, &old_user.password_hash, Some(username), None)
             .await
             .map_err(|e| eyre::eyre!("Failed to migrate user {}: {e}", old_user.username))?;
 
