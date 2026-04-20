@@ -15,6 +15,14 @@ pub fn routes() -> axum::Router<AppState> {
         .route("/logout", post(logout))
         .route("/setup", get(setup_page).post(setup_submit))
         .route("/signup", get(signup_page).post(signup_submit))
+        .route(
+            "/forgot-password",
+            get(forgot_password_page).post(forgot_password_submit),
+        )
+        .route(
+            "/reset-password",
+            get(reset_password_page).post(reset_password_submit),
+        )
 }
 
 #[derive(serde::Deserialize)]
@@ -531,6 +539,198 @@ async fn render_signup_error(
 fn render_error_page(state: &AppState, message: &str) -> Response {
     let html = crate::routes::render_error(state, 400, message, false);
     (axum::http::StatusCode::BAD_REQUEST, Html(html)).into_response()
+}
+
+// ── Password reset ───────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct ForgotPasswordForm {
+    email: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ResetTokenQuery {
+    token: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ResetPasswordForm {
+    token: String,
+    password: String,
+    confirm_password: String,
+}
+
+async fn forgot_password_page(session: Session, State(state): State<AppState>) -> impl IntoResponse {
+    let csrf_token = ensure_csrf_token(&session).await;
+    render_template(
+        &state,
+        "forgot_password.html",
+        minijinja::context! { csrf_token => csrf_token },
+    )
+}
+
+async fn forgot_password_submit(
+    session: Session,
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Form(form): Form<ForgotPasswordForm>,
+) -> Response {
+    // Rate-limit to deter enumeration and abuse.
+    let ip = client_ip(&headers, state.config.trust_proxy_headers);
+    if !state.login_limiter.check(&ip) {
+        let csrf_token = ensure_csrf_token(&session).await;
+        return render_template(
+            &state,
+            "forgot_password.html",
+            minijinja::context! {
+                csrf_token => csrf_token,
+                error => "Too many attempts. Please try again later.",
+            },
+        )
+        .into_response();
+    }
+
+    // Always show the same "check your email" page — do not reveal whether the
+    // address has an account.
+    if let Ok(email) = allowthem_core::Email::new(form.email.trim().to_string()) {
+        match state.ath.db().create_password_reset(&email).await {
+            Ok(Some(raw_token)) => {
+                let host = headers
+                    .get("host")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("localhost");
+                let scheme = if state.config.secure_cookies {
+                    "https"
+                } else {
+                    "http"
+                };
+                let reset_url = format!("{scheme}://{host}/reset-password?token={raw_token}");
+                let body = format!(
+                    "You requested a password reset for your Substrukt account.\n\n\
+                     Click the link below to set a new password:\n\n{reset_url}\n\n\
+                     This link expires in 30 minutes. If you did not request this, ignore this email."
+                );
+                let html = format!(
+                    "<p>You requested a password reset for your Substrukt account.</p>\
+                     <p><a href=\"{reset_url}\">Click here to set a new password</a>.</p>\
+                     <p>This link expires in 30 minutes. If you did not request this, ignore this email.</p>"
+                );
+                let message = allowthem_core::EmailMessage {
+                    to: email.as_str(),
+                    subject: "Reset your Substrukt password",
+                    body: &body,
+                    html: Some(&html),
+                };
+                if let Err(e) = state.email_sender.send(message).await {
+                    tracing::error!("password reset email failed: {e}");
+                }
+            }
+            Ok(None) => {
+                // No such user — stay silent.
+            }
+            Err(e) => {
+                tracing::error!("create_password_reset failed: {e}");
+            }
+        }
+    }
+
+    render_template(
+        &state,
+        "forgot_password.html",
+        minijinja::context! { sent => true },
+    )
+    .into_response()
+}
+
+async fn reset_password_page(
+    session: Session,
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<ResetTokenQuery>,
+) -> Response {
+    let raw_token = match query.token {
+        Some(t) if !t.is_empty() => t,
+        _ => return render_error_page(&state, "Invalid or missing reset token."),
+    };
+
+    match state.ath.db().validate_reset_token(&raw_token).await {
+        Ok(Some(_)) => {}
+        _ => {
+            return render_error_page(
+                &state,
+                "This password reset link is invalid or has expired.",
+            );
+        }
+    }
+
+    let csrf_token = ensure_csrf_token(&session).await;
+    render_template(
+        &state,
+        "reset_password.html",
+        minijinja::context! {
+            csrf_token => csrf_token,
+            token => raw_token,
+        },
+    )
+    .into_response()
+}
+
+async fn reset_password_submit(
+    session: Session,
+    State(state): State<AppState>,
+    Form(form): Form<ResetPasswordForm>,
+) -> Response {
+    let validation_error: Option<&'static str> = if form.password.len() < 8 {
+        Some("Password must be at least 8 characters.")
+    } else if form.password != form.confirm_password {
+        Some("Passwords do not match.")
+    } else {
+        None
+    };
+
+    if let Some(msg) = validation_error {
+        let csrf_token = ensure_csrf_token(&session).await;
+        return render_template(
+            &state,
+            "reset_password.html",
+            minijinja::context! {
+                csrf_token => csrf_token,
+                token => form.token,
+                error => msg,
+            },
+        )
+        .into_response();
+    }
+
+    match state
+        .ath
+        .db()
+        .execute_reset(&form.token, &form.password)
+        .await
+    {
+        Ok(true) => {
+            let _ = state
+                .ath
+                .db()
+                .log_audit(
+                    allowthem_core::AuditEvent::PasswordReset,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await;
+            Redirect::to("/login").into_response()
+        }
+        Ok(false) => render_error_page(
+            &state,
+            "This password reset link is invalid or has expired.",
+        ),
+        Err(e) => {
+            tracing::error!("execute_reset failed: {e}");
+            render_error_page(&state, "Failed to reset password. Please try again.")
+        }
+    }
 }
 
 fn render_template(state: &AppState, template: &str, ctx: minijinja::Value) -> Html<String> {

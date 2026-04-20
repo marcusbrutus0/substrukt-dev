@@ -239,6 +239,8 @@ pub async fn require_auth(
     if path.starts_with("/login")
         || path.starts_with("/setup")
         || path.starts_with("/signup")
+        || path.starts_with("/forgot-password")
+        || path.starts_with("/reset-password")
         || path.starts_with("/api/")
     {
         return next.run(request).await;
