@@ -251,7 +251,7 @@ async fn setup_submit(
     let user = match state
         .ath
         .db()
-        .create_user(email, &form.password, Some(username))
+        .create_user(email, &form.password, Some(username), None)
         .await
     {
         Ok(u) => u,
@@ -435,7 +435,7 @@ async fn signup_submit(
     let user = match state
         .ath
         .db()
-        .create_user(email, &form.password, Some(username))
+        .create_user(email, &form.password, Some(username), None)
         .await
     {
         Ok(u) => u,

@@ -170,7 +170,7 @@ async fn main() -> eyre::Result<()> {
             let first_user = users.into_iter().next().unwrap();
             let (raw_token, info) = ath
                 .db()
-                .create_api_token(first_user.id, &name, None)
+                .create_api_token(first_user.id, &name, None, None)
                 .await
                 .map_err(|e| eyre::eyre!("Failed to create token: {e}"))?;
             // Create app_tokens entry linking token to app
