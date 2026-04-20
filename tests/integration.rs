@@ -18,6 +18,7 @@ struct TestServer {
     base_url: String,
     client: Client,
     pool: sqlx::SqlitePool,
+    ath: allowthem_core::AllowThem,
     _data_dir: tempfile::TempDir,
     _shutdown: tokio::sync::oneshot::Sender<()>,
 }
@@ -82,6 +83,7 @@ impl TestServer {
             .handle();
 
         let pool_for_test = pool.clone();
+        let ath_for_test = ath.clone();
         let state = Arc::new(AppStateInner {
             pool,
             config,
@@ -130,6 +132,7 @@ impl TestServer {
             base_url,
             client,
             pool: pool_for_test,
+            ath: ath_for_test,
             _data_dir: data_dir,
             _shutdown: tx,
         }
@@ -343,6 +346,177 @@ async fn auth_login_and_logout() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     assert_eq!(resp.headers().get("location").unwrap(), "/apps");
+}
+
+// ── Password reset tests ─────────────────────────────────────
+
+#[tokio::test]
+async fn forgot_password_is_publicly_accessible() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    // Log out so request is anonymous.
+    let _ = s.client.get(s.url("/logout")).send().await;
+    let resp = s.client.get(s.url("/forgot-password")).send().await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Forgot password"), "unexpected body: {body}");
+}
+
+#[tokio::test]
+async fn forgot_password_always_shows_sent_page() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let csrf = s.get_csrf("/forgot-password").await;
+    // Submit an email that does not exist — must still render the generic
+    // "check your email" page (no account enumeration).
+    let resp = s
+        .client
+        .post(s.url("/forgot-password"))
+        .form(&[("email", "ghost@example.com"), ("_csrf", csrf.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Check your email"), "unexpected body: {body}");
+}
+
+#[tokio::test]
+async fn reset_password_end_to_end_changes_password() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    // Setup created admin@setup.local. Mint a reset token directly (bypasses
+    // the outbound email — LogEmailSender would otherwise swallow it).
+    let email = allowthem_core::Email::new("admin@setup.local".to_string()).unwrap();
+    let raw_token = s
+        .ath
+        .db()
+        .create_password_reset(&email)
+        .await
+        .unwrap()
+        .expect("admin user exists");
+
+    // GET the reset page with the token — should render the form.
+    let resp = s
+        .client
+        .get(s.url(&format!("/reset-password?token={raw_token}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).expect("CSRF token present on reset form");
+
+    // Submit the new password.
+    let resp = s
+        .client
+        .post(s.url("/reset-password"))
+        .form(&[
+            ("token", raw_token.as_str()),
+            ("password", "newpassword123"),
+            ("confirm_password", "newpassword123"),
+            ("_csrf", csrf.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/login");
+
+    // Old password no longer works.
+    let csrf = s.get_csrf("/login").await;
+    let resp = s
+        .client
+        .post(s.url("/login"))
+        .form(&[
+            ("username", "admin"),
+            ("password", "testpassword"),
+            ("_csrf", csrf.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "old password should be rejected");
+
+    // New password works.
+    let csrf = s.get_csrf("/login").await;
+    let resp = s
+        .client
+        .post(s.url("/login"))
+        .form(&[
+            ("username", "admin"),
+            ("password", "newpassword123"),
+            ("_csrf", csrf.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
+}
+
+#[tokio::test]
+async fn reset_password_rejects_invalid_token() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let resp = s
+        .client
+        .get(s.url("/reset-password?token=not-a-real-token"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn reset_password_rejects_used_token() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+
+    let email = allowthem_core::Email::new("admin@setup.local".to_string()).unwrap();
+    let raw_token = s
+        .ath
+        .db()
+        .create_password_reset(&email)
+        .await
+        .unwrap()
+        .unwrap();
+
+    let resp = s
+        .client
+        .get(s.url(&format!("/reset-password?token={raw_token}")))
+        .send()
+        .await
+        .unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).unwrap();
+
+    // Consume the token.
+    let resp = s
+        .client
+        .post(s.url("/reset-password"))
+        .form(&[
+            ("token", raw_token.as_str()),
+            ("password", "newpassword123"),
+            ("confirm_password", "newpassword123"),
+            ("_csrf", csrf.as_str()),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // Reusing the same token must fail.
+    let resp = s
+        .client
+        .get(s.url(&format!("/reset-password?token={raw_token}")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 // ── Schema CRUD tests ────────────────────────────────────────
