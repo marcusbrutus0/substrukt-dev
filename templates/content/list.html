@@ -102,7 +102,7 @@
         {% for col in entry.columns %}
         <td>
           {%- if col == "true" -%}
-          <span class="wf-tag ok">Yes</span>
+          <span class="wf-tag ok"><span class="dot"></span>Yes</span>
           {%- elif col == "false" -%}
           <span class="wf-tag">No</span>
           {%- else -%}
