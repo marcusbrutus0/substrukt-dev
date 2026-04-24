@@ -1,77 +1,85 @@
 {% extends base_template %}
 {% block title %}Users — Substrukt{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold tracking-tight mb-6">Users</h1>
+<h1 style="font-family: var(--font-mono); font-weight: 800; font-size: 28px; letter-spacing: -0.02em; text-transform: uppercase; color: var(--fg-strong); margin: 0 0 24px;">Users</h1>
 
 {% if flash_message %}
-<div class="p-4 rounded mb-6 text-sm border
-  {% if flash_kind == 'success' %}bg-success-soft border-success text-success
-  {% elif flash_kind == 'error' %}bg-danger-soft border-danger text-danger
-  {% else %}bg-card-alt border-border-light text-primary{% endif %}">
-  {{ flash_message }}
+{% if flash_kind == 'success' %}
+<div class="wf-alert ok" style="margin-bottom: 20px;">
+  <div class="wf-alert-bar"></div>
+  <div>{{ flash_message }}</div>
 </div>
+{% elif flash_kind == 'error' %}
+<div class="wf-alert err" style="margin-bottom: 20px;">
+  <div class="wf-alert-bar"></div>
+  <div>{{ flash_message }}</div>
+</div>
+{% endif %}
 {% endif %}
 
 {% if invite_url %}
-<div class="bg-success-soft border border-success text-success p-4 rounded mb-6">
-  <div class="font-medium mb-1">Invitation created! Share this link with the user:</div>
-  <div class="flex items-center gap-2 mt-2">
-    <code id="invite-url-value" class="flex-1 bg-card-alt text-primary p-2 rounded text-sm font-mono break-all select-all">{{ invite_url }}</code>
-    <button type="button" onclick="copyToClipboard('invite-url-value', this)"
-      class="shrink-0 bg-card-alt border border-border text-primary px-3 py-2 rounded text-sm hover:bg-card transition-colors">
-      Copy
-    </button>
+<div class="wf-alert ok" style="margin-bottom: 20px;">
+  <div class="wf-alert-bar"></div>
+  <div style="flex: 1;">
+    <div style="font-weight: 600; margin-bottom: 4px;">Invitation created! Share this link with the user:</div>
+    <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+      <code id="invite-url-value" style="flex: 1; background: var(--bg-sunken); color: var(--fg-strong); padding: 8px; font-family: var(--font-mono); font-size: 13px; word-break: break-all; user-select: all;">{{ invite_url }}</code>
+      <button type="button" onclick="copyToClipboard('invite-url-value', this)" class="wf-btn">Copy</button>
+    </div>
   </div>
 </div>
 {% endif %}
 
 {% if error %}
-<div class="bg-danger-soft border border-danger text-danger p-4 rounded mb-6 text-sm">{{ error }}</div>
+<div class="wf-alert err" style="margin-bottom: 20px;">
+  <div class="wf-alert-bar"></div>
+  <div>{{ error }}</div>
+</div>
 {% endif %}
 
-<div class="bg-card border border-border-light rounded-lg overflow-hidden mb-6">
-  <h2 class="text-lg font-medium px-4 py-3 border-b border-border-light">Registered Users</h2>
+<div class="wf-panel" style="padding: 0; margin-bottom: 24px;">
+  <div class="wf-panel-head"><span class="wf-panel-title">Registered Users</span></div>
   {% if users %}
-  <table class="w-full">
-    <thead class="bg-card-alt">
+  <table class="wf-table">
+    <thead>
       <tr>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Username</th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Role</th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Created</th>
-        <th class="px-4 py-2.5"></th>
+        <th>Username</th>
+        <th>Role</th>
+        <th>Created</th>
+        <th></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-border-light">
+    <tbody>
       {% for u in users %}
-      <tr class="hover:bg-card-alt">
-        <td class="px-4 py-2.5 font-medium">{{ u.username }}{% if u.username == current_username %} <span class="text-xs text-muted">(you)</span>{% endif %}</td>
-        <td class="px-4 py-2.5 text-sm">
+      <tr>
+        <td class="strong">{{ u.username }}{% if u.username == current_username %} <span style="color: var(--fg-muted); font-size: 12px;">(you)</span>{% endif %}</td>
+        <td>
           {% if u.username != current_username %}
-          <form method="post" action="/settings/users/{{ u.id }}/role" class="inline">
+          <form method="post" action="/settings/users/{{ u.id }}/role" style="display: inline;">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <select name="role" onchange="this.form.submit()" class="px-2 py-0.5 rounded-full text-xs font-medium border-0 cursor-pointer
-              {% if u.role == 'admin' %}bg-danger-soft text-danger
-              {% elif u.role == 'editor' %}bg-accent-soft text-accent
-              {% else %}bg-card-alt text-muted{% endif %}">
+            <select name="role" onchange="this.form.submit()" class="wf-select sm">
               <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
               <option value="editor" {% if u.role == 'editor' %}selected{% endif %}>editor</option>
               <option value="viewer" {% if u.role == 'viewer' %}selected{% endif %}>viewer</option>
             </select>
           </form>
           {% else %}
-          <span class="px-2 py-0.5 rounded-full text-xs font-medium
-            {% if u.role == 'admin' %}bg-danger-soft text-danger
-            {% elif u.role == 'editor' %}bg-accent-soft text-accent
-            {% else %}bg-card-alt text-muted{% endif %}">{{ u.role }}</span>
+          {% if u.role == 'admin' %}
+          <span class="wf-tag err">admin</span>
+          {% elif u.role == 'editor' %}
+          <span class="wf-tag warn">editor</span>
+          {% else %}
+          <span class="wf-tag">viewer</span>
+          {% endif %}
           {% endif %}
         </td>
-        <td class="px-4 py-2.5 text-muted text-sm">{{ u.created_at|datefmt }}</td>
-        <td class="px-4 py-2.5 text-right">
+        <td class="muted">{{ u.created_at|datefmt }}</td>
+        <td style="text-align: right;">
           {% if u.username != current_username %}
-          <form method="post" action="/settings/users/{{ u.id }}/delete" class="inline"
+          <form method="post" action="/settings/users/{{ u.id }}/delete" style="display: inline;"
             onsubmit="return confirm('Delete user {{ u.username }}? This cannot be undone.')">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <button type="submit" class="text-danger hover:text-danger text-sm">Delete</button>
+            <button type="submit" style="color: var(--err); background: none; border: none; cursor: pointer;">Delete</button>
           </form>
           {% endif %}
         </td>
@@ -80,53 +88,60 @@
     </tbody>
   </table>
   {% else %}
-  <div class="p-8 text-center text-muted">No registered users.</div>
+  <div class="wf-empty bordered">
+    <div class="wf-empty-body">No registered users.</div>
+  </div>
   {% endif %}
 </div>
 
-<div class="bg-card border border-border-light rounded-lg p-6 mb-6">
-  <h2 class="text-lg font-medium mb-4">Invite User</h2>
-  <form method="post" action="/settings/users/invite" class="flex gap-3">
-    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <input type="email" name="email" placeholder="Email address" required
-      class="flex-1 px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
-    <select name="role" aria-label="Role" class="px-3 py-2 bg-input-bg border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-accent">
-      <option value="editor">Editor</option>
-      <option value="viewer">Viewer</option>
-      <option value="admin">Admin</option>
-    </select>
-    <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
-      Send Invite
-    </button>
-  </form>
+<div class="wf-panel" style="margin-bottom: 24px;">
+  <div class="wf-panel-head"><span class="wf-panel-title">Invite User</span></div>
+  <div class="wf-panel-body">
+    <form method="post" action="/settings/users/invite" style="display: flex; gap: 12px;">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="email" name="email" placeholder="Email address" required class="wf-input" style="flex: 1;">
+      <select name="role" aria-label="Role" class="wf-select">
+        <option value="editor">Editor</option>
+        <option value="viewer">Viewer</option>
+        <option value="admin">Admin</option>
+      </select>
+      <button type="submit" class="wf-btn primary">Send Invite</button>
+    </form>
+  </div>
 </div>
 
 {% if invitations %}
-<div class="bg-card border border-border-light rounded-lg overflow-hidden">
-  <table class="w-full">
-    <thead class="bg-card-alt">
+<div class="wf-panel" style="padding: 0;">
+  <div class="wf-panel-head"><span class="wf-panel-title">Pending Invitations</span></div>
+  <table class="wf-table">
+    <thead>
       <tr>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Email</th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Role</th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Invited</th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Expires</th>
-        <th class="px-4 py-2.5"></th>
+        <th>Email</th>
+        <th>Role</th>
+        <th>Invited</th>
+        <th>Expires</th>
+        <th></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-border-light">
+    <tbody>
       {% for inv in invitations %}
-      <tr class="hover:bg-card-alt">
-        <td class="px-4 py-2.5 font-medium">{{ inv.email }}</td>
-        <td class="px-4 py-2.5 text-sm"><span class="px-2 py-0.5 rounded-full text-xs font-medium
-          {% if inv.role == 'admin' %}bg-danger-soft text-danger
-          {% elif inv.role == 'editor' %}bg-accent-soft text-accent
-          {% else %}bg-card-alt text-muted{% endif %}">{{ inv.role }}</span></td>
-        <td class="px-4 py-2.5 text-muted text-sm">{{ inv.created_at|datefmt }}</td>
-        <td class="px-4 py-2.5 text-muted text-sm">{{ inv.expires_at|datefmt }}</td>
-        <td class="px-4 py-2.5 text-right">
-          <form method="post" action="/settings/users/invitations/{{ inv.id }}/delete" class="inline">
+      <tr>
+        <td class="strong">{{ inv.email }}</td>
+        <td>
+          {% if inv.role == 'admin' %}
+          <span class="wf-tag err">admin</span>
+          {% elif inv.role == 'editor' %}
+          <span class="wf-tag warn">editor</span>
+          {% else %}
+          <span class="wf-tag">viewer</span>
+          {% endif %}
+        </td>
+        <td class="muted">{{ inv.created_at|datefmt }}</td>
+        <td class="muted">{{ inv.expires_at|datefmt }}</td>
+        <td style="text-align: right;">
+          <form method="post" action="/settings/users/invitations/{{ inv.id }}/delete" style="display: inline;">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <button type="submit" class="text-danger hover:text-danger text-sm"
+            <button type="submit" style="color: var(--err); background: none; border: none; cursor: pointer;"
               onclick="return confirm('Revoke this invitation?')">Revoke</button>
           </form>
         </td>
@@ -136,8 +151,8 @@
   </table>
 </div>
 {% else %}
-<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
-  No pending invitations.
+<div class="wf-empty bordered">
+  <div class="wf-empty-body">No pending invitations.</div>
 </div>
 {% endif %}
 {% endblock %}
