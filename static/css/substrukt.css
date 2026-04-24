@@ -17,3 +17,15 @@
   --accent-hover: color-mix(in srgb, #d97706 82%, black);
   --accent-press: color-mix(in srgb, #d97706 70%, white);
 }
+
+/* Shell grid layout */
+.wf-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  grid-template-rows: 1fr 22px;
+  grid-template-areas: "side main" "ml ml";
+  height: 100vh;
+}
+.wf-shell > .wf-sidebar { grid-area: side; }
+.wf-shell > .wf-main { grid-area: main; overflow: auto; padding: 28px 32px; }
+.wf-shell > .wf-modeline { grid-area: ml; }

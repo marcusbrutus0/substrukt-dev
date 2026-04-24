@@ -17,6 +17,7 @@ use axum::{
 };
 use axum_htmx::HxRequest;
 use tower_http::catch_panic::CatchPanicLayer;
+use tower_http::services::ServeDir;
 
 use crate::auth::{require_auth, verify_csrf};
 use crate::metrics;
@@ -59,6 +60,7 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::get(serve_wavefunk_logo),
         )
         .route("/metrics", axum::routing::get(metrics::metrics_handler))
+        .nest_service("/static/css", ServeDir::new("static/css"))
         .fallback(not_found)
         .layer(middleware::from_fn(metrics::track_metrics))
         .layer(CatchPanicLayer::custom(handle_panic))

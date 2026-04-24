@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-mode="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,157 +7,88 @@
   <meta name="csrf-token" content="{{ csrf_token }}">
   <title>{% block title %}Substrukt{% endblock %}</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/css/substrukt.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
   <style>
-    :root {
-      --surface: #f8fafc;
-      --card: #ffffff;
-      --card-alt: #f1f5f9;
-      --sidebar: #0f172a;
-      --sidebar-hover: #1e293b;
-      --text-primary: #0f172a;
-      --text-secondary: #475569;
-      --text-muted: #94a3b8;
-      --border: #cbd5e1;
-      --border-light: #e2e8f0;
-      --accent: #f59e0b;
-      --accent-hover: #d97706;
-      --accent-soft: #fef3c7;
-      --danger: #ef4444;
-      --danger-soft: #fef2f2;
-      --success: #22c55e;
-      --success-soft: #f0fdf4;
-      --input-bg: #ffffff;
+    /* EasyMDE dark mode overrides — mapped to wavefunk tokens */
+    :root:not([data-mode="light"]) .EasyMDEContainer .CodeMirror {
+      background: var(--bg-raised);
+      color: var(--fg);
+      border-color: var(--hairline);
     }
-    .dark {
-      --surface: #09090b;
-      --card: #18181b;
-      --card-alt: #27272a;
-      --sidebar: #09090b;
-      --sidebar-hover: #27272a;
-      --text-primary: #fafafa;
-      --text-secondary: #a1a1aa;
-      --text-muted: #52525b;
-      --border: #3f3f46;
-      --border-light: #27272a;
-      --accent: #f59e0b;
-      --accent-hover: #fbbf24;
-      --accent-soft: #451a03;
-      --danger: #f87171;
-      --danger-soft: #451a1a;
-      --success: #4ade80;
-      --success-soft: #052e16;
-      --input-bg: #27272a;
+    :root:not([data-mode="light"]) .EasyMDEContainer .CodeMirror-cursor {
+      border-left-color: var(--fg);
     }
-    .dark .EasyMDEContainer .CodeMirror {
-      background: var(--input-bg);
-      color: var(--text-primary);
-      border-color: var(--border);
+    :root:not([data-mode="light"]) .EasyMDEContainer .editor-toolbar {
+      background: var(--bg-raised);
+      border-color: var(--hairline);
     }
-    .dark .EasyMDEContainer .CodeMirror-cursor {
-      border-left-color: var(--text-primary);
+    :root:not([data-mode="light"]) .EasyMDEContainer .editor-toolbar button {
+      color: var(--fg-muted) !important;
     }
-    .dark .EasyMDEContainer .editor-toolbar {
-      background: var(--card);
-      border-color: var(--border);
+    :root:not([data-mode="light"]) .EasyMDEContainer .editor-toolbar button:hover,
+    :root:not([data-mode="light"]) .EasyMDEContainer .editor-toolbar button.active {
+      background: var(--bg-hover);
+      color: var(--fg) !important;
     }
-    .dark .EasyMDEContainer .editor-toolbar button {
-      color: var(--text-secondary) !important;
+    :root:not([data-mode="light"]) .EasyMDEContainer .editor-preview,
+    :root:not([data-mode="light"]) .EasyMDEContainer .editor-preview-side {
+      background: var(--bg-raised);
+      color: var(--fg);
     }
-    .dark .EasyMDEContainer .editor-toolbar button:hover,
-    .dark .EasyMDEContainer .editor-toolbar button.active {
-      background: var(--card-alt);
-      color: var(--text-primary) !important;
+    :root:not([data-mode="light"]) .EasyMDEContainer .editor-preview pre,
+    :root:not([data-mode="light"]) .EasyMDEContainer .editor-preview-side pre {
+      background: var(--bg-hover);
     }
-    .dark .EasyMDEContainer .editor-preview,
-    .dark .EasyMDEContainer .editor-preview-side {
-      background: var(--card);
-      color: var(--text-primary);
+    :root:not([data-mode="light"]) .EasyMDEContainer .CodeMirror-selected {
+      background: var(--accent-wash) !important;
     }
-    .dark .EasyMDEContainer .editor-preview pre,
-    .dark .EasyMDEContainer .editor-preview-side pre {
-      background: var(--card-alt);
-    }
-    .dark .EasyMDEContainer .CodeMirror-selected {
-      background: var(--accent-soft) !important;
-    }
-    .dark .EasyMDEContainer .editor-toolbar.disabled-for-preview button:not(.no-disable) {
+    :root:not([data-mode="light"]) .EasyMDEContainer .editor-toolbar.disabled-for-preview button:not(.no-disable) {
       opacity: 0.4;
-    }
-    *, *::before, *::after {
-      transition: background-color 0.15s, color 0.15s, border-color 0.15s;
-    }
-    .field-error {
-      display: none;
-      color: var(--danger);
-      font-size: 0.75rem;
-      margin-top: 0.25rem;
-    }
-    .was-validated :invalid {
-      border-color: var(--danger) !important;
-    }
-    .was-validated :invalid ~ .field-error {
-      display: block;
     }
   </style>
   <script>
     (function() {
       var stored = localStorage.getItem('theme');
-      if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.classList.add('dark');
+      if (stored === 'light') {
+        document.documentElement.setAttribute('data-mode', 'light');
       }
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+      // dark is default (no data-mode="light" means dark)
+      window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', function(e) {
         if (!localStorage.getItem('theme')) {
-          document.documentElement.classList.toggle('dark', e.matches);
+          if (e.matches) {
+            document.documentElement.setAttribute('data-mode', 'light');
+          } else {
+            document.documentElement.removeAttribute('data-mode');
+          }
         }
       });
     })();
   </script>
-  <script src="https://cdn.twind.style" crossorigin></script>
-  <script>
-    twind.install({
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            surface: 'var(--surface)',
-            card: 'var(--card)',
-            'card-alt': 'var(--card-alt)',
-            sidebar: 'var(--sidebar)',
-            'sidebar-hover': 'var(--sidebar-hover)',
-            primary: 'var(--text-primary)',
-            secondary: 'var(--text-secondary)',
-            muted: 'var(--text-muted)',
-            accent: { DEFAULT: 'var(--accent)', hover: 'var(--accent-hover)', soft: 'var(--accent-soft)' },
-            danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
-            success: { DEFAULT: 'var(--success)', soft: 'var(--success-soft)' },
-            border: 'var(--border)',
-            'border-light': 'var(--border-light)',
-            'input-bg': 'var(--input-bg)',
-          }
-        }
-      }
-    });
-  </script>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
   <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2/dist/htmx.min.js"></script>
 </head>
-<body class="bg-surface text-primary min-h-screen" hx-boost="true" hx-target="#main-content" hx-swap="innerHTML">
-  <div class="flex min-h-screen">
-    <nav id="sidebar-nav" class="w-56 bg-sidebar text-white p-4 flex flex-col gap-1 min-h-screen border-r border-border-light">
+<body hx-boost="true" hx-target="#main-content" hx-swap="innerHTML">
+  <div class="wf-shell">
+    <aside class="wf-sidebar">
       {% include "_nav.html" %}
-    </nav>
-    <main id="main-content" class="flex-1 p-8">
+    </aside>
+    <main class="wf-main" id="main-content">
       {% if flash_kind %}
-      <div class="mb-4 p-4 rounded-md text-sm
-        {% if flash_kind == 'success' %}bg-success-soft text-success border border-success
-        {% elif flash_kind == 'error' %}bg-danger-soft text-danger border border-danger
-        {% else %}bg-accent-soft text-accent border border-accent{% endif %}">
-        {{ flash_message }}
+      <div class="wf-alert {% if flash_kind == 'success' %}ok{% elif flash_kind == 'error' %}err{% else %}info{% endif %}" style="margin-bottom: 20px;">
+        <div class="wf-alert-bar"></div>
+        <div>{{ flash_message }}</div>
       </div>
       {% endif %}
       {% block content %}{% endblock %}
     </main>
+    <div class="wf-modeline" role="status">
+      <span class="wf-ml-seg wf-ml-chevron">SK</span>
+      <span class="wf-ml-seg wf-ml-buffer">{% if app %}{{ app.slug }}{% else %}substrukt{% endif %}</span>
+      <span class="wf-ml-seg wf-ml-mode"><span class="kicker">Role</span><span>{{ user_role }}</span></span>
+      <span class="wf-ml-fill" aria-hidden="true"></span>
+      <span class="wf-ml-seg">{{ current_username }}</span>
+    </div>
   </div>
   <script>
     function addArrayItem(name) {
@@ -167,9 +98,20 @@
       var index = container.querySelectorAll('.array-item').length;
       var html = template.innerHTML.replace(/__INDEX__/g, index);
       var div = document.createElement('div');
-      div.className = 'array-item border border-border-light p-3 rounded mb-2';
+      div.className = 'array-item wf-framed';
       div.setAttribute('data-index', index);
-      div.innerHTML = '<div class="flex justify-end mb-1"><button type="button" onclick="this.closest(\'.array-item\').remove()" class="text-danger text-sm hover:text-danger">Remove</button></div>' + html;
+      var header = document.createElement('div');
+      header.style.cssText = 'display: flex; justify-content: flex-end; margin-bottom: 4px;';
+      var removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.style.cssText = 'color: var(--err); cursor: pointer; background: none; border: none; font-size: 13px;';
+      removeBtn.textContent = 'Remove';
+      removeBtn.addEventListener('click', function() { div.remove(); });
+      header.appendChild(removeBtn);
+      div.appendChild(header);
+      var content = document.createElement('div');
+      content.innerHTML = html;
+      while (content.firstChild) { div.appendChild(content.firstChild); }
       container.appendChild(div);
       initMarkdownEditors();
       initUploadZones();
@@ -296,7 +238,7 @@
     }
     function highlightActiveNav() {
       var path = window.location.pathname;
-      document.querySelectorAll('#sidebar-nav a').forEach(function(link) {
+      document.querySelectorAll('#sidebar-nav a.wf-nav-item').forEach(function(link) {
         var href = link.getAttribute('href');
         if (!href) return;
         var isActive;
@@ -306,12 +248,31 @@
           isActive = (path === href) || path.startsWith(href + '/');
         }
         if (isActive) {
-          link.classList.add('bg-sidebar-hover', 'text-white', 'border-l-2', 'border-accent', 'font-medium');
-          link.style.paddingLeft = '10px';
+          link.classList.add('is-active');
         } else {
-          link.classList.remove('bg-sidebar-hover', 'text-white', 'border-l-2', 'border-accent', 'font-medium');
-          link.style.paddingLeft = '';
+          link.classList.remove('is-active');
         }
+      });
+    }
+    function toggleTheme() {
+      var isLight = document.documentElement.getAttribute('data-mode') === 'light';
+      if (isLight) {
+        document.documentElement.removeAttribute('data-mode');
+        localStorage.setItem('theme', 'dark');
+      } else {
+        document.documentElement.setAttribute('data-mode', 'light');
+        localStorage.setItem('theme', 'light');
+      }
+      document.querySelectorAll('.theme-icon').forEach(function(el) {
+        el.textContent = document.documentElement.getAttribute('data-mode') === 'light' ? '☾' : '☀';
+      });
+    }
+    function copyToClipboard(elementId, btn) {
+      var text = document.getElementById(elementId).textContent;
+      navigator.clipboard.writeText(text).then(function() {
+        var original = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(function() { btn.textContent = original; }, 2000);
       });
     }
     initMarkdownEditors();
@@ -334,21 +295,6 @@
     document.body.addEventListener('htmx:afterSettle', function() {
       highlightActiveNav();
     });
-    function copyToClipboard(elementId, btn) {
-      var text = document.getElementById(elementId).textContent;
-      navigator.clipboard.writeText(text).then(function() {
-        var original = btn.textContent;
-        btn.textContent = 'Copied!';
-        setTimeout(function() { btn.textContent = original; }, 2000);
-      });
-    }
-    function toggleTheme() {
-      var isDark = document.documentElement.classList.toggle('dark');
-      localStorage.setItem('theme', isDark ? 'dark' : 'light');
-      document.querySelectorAll('.theme-icon').forEach(function(el) {
-        el.textContent = isDark ? '\u2600' : '\u263E';
-      });
-    }
   </script>
 </body>
 </html>
