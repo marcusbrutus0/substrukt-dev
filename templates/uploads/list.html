@@ -1,66 +1,65 @@
 {% extends base_template %}
 {% block title %}Uploads — Substrukt{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold tracking-tight">Uploads</h1>
+<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
+  <h1>Uploads</h1>
 </div>
 
-<div class="bg-card border border-border-light rounded-lg p-6">
-  <form class="flex gap-4 mb-6" hx-get="/apps/{{ app.slug }}/uploads" hx-target="#uploads-table" hx-select="#uploads-table" hx-push-url="true" hx-swap="outerHTML"
+<div class="wf-panel" style="padding: 0;">
+  <form class="wf-filterbar" hx-get="/apps/{{ app.slug }}/uploads" hx-target="#uploads-table" hx-select="#uploads-table" hx-push-url="true" hx-swap="outerHTML"
     onsubmit="this.querySelectorAll('input,select').forEach(function(el){if(!el.value)el.disabled=true})">
-    <input type="text" name="q" value="{{ filter_q }}" placeholder="Search by filename..."
-      class="px-3 py-2 bg-input-bg border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent flex-1">
-    <select name="schema" aria-label="Filter by schema" class="px-3 py-2 bg-input-bg border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-accent">
+    <input class="wf-input sm" type="text" name="q" value="{{ filter_q }}" placeholder="Search by filename...">
+    <select class="wf-select sm" name="schema" aria-label="Filter by schema">
       <option value="">All schemas</option>
       {% for s in schemas %}
       <option value="{{ s.slug }}" {% if filter_schema == s.slug %}selected{% endif %}>{{ s.title }}</option>
       {% endfor %}
     </select>
-    <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">Filter</button>
+    <button class="wf-btn sm primary" type="submit">Filter</button>
   </form>
 
   <div id="uploads-table">
     {% if uploads %}
-    <table class="w-full text-sm">
+    <table class="wf-table">
       <thead>
-        <tr class="border-b border-border-light text-left text-muted">
-          <th class="pb-2 font-medium">Filename</th>
-          <th class="pb-2 font-medium">Type</th>
-          <th class="pb-2 font-medium">Size</th>
-          <th class="pb-2 font-medium">Created</th>
-          <th class="pb-2 font-medium">Used By</th>
-          <th class="pb-2 font-medium">Actions</th>
+        <tr>
+          <th>Filename</th>
+          <th>Type</th>
+          <th>Size</th>
+          <th>Created</th>
+          <th>Used By</th>
+          <th>Actions</th>
         </tr>
       </thead>
-      <tbody class="divide-y divide-border-light">
+      <tbody>
         {% for upload in uploads %}
-        <tr class="hover:bg-card-alt">
-          <td class="py-2.5 font-mono text-xs">{{ upload.filename }}</td>
-          <td class="py-2.5 text-muted text-xs">{{ upload.mime }}</td>
-          <td class="py-2.5 text-muted text-xs">{{ upload.size }}</td>
-          <td class="py-2.5 text-muted text-xs">{{ upload.created_at|datefmt }}</td>
-          <td class="py-2.5">
+        <tr>
+          <td class="strong">{{ upload.filename }}</td>
+          <td>{{ upload.mime }}</td>
+          <td class="num">{{ upload.size }}</td>
+          <td>{{ upload.created_at|datefmt }}</td>
+          <td>
             {% if upload.references %}
               {% for ref in upload.references %}
               <a href="/apps/{{ app.slug }}/content/{{ ref.schema_slug }}/{{ ref.entry_id }}/edit"
-                 class="text-accent hover:underline text-xs">{{ ref.schema_slug }}/{{ ref.entry_id }}</a>{% if not loop.last %}, {% endif %}
+                 style="color: var(--accent);">{{ ref.schema_slug }}/{{ ref.entry_id }}</a>{% if not loop.last %}, {% endif %}
               {% endfor %}
             {% else %}
-              <span class="text-amber-600 text-xs font-medium">Orphaned</span>
+              <span class="wf-tag warn"><span class="dot"></span>Orphaned</span>
             {% endif %}
           </td>
-          <td class="py-2.5">
+          <td>
             <a href="/apps/{{ app.slug }}/uploads/file/{{ upload.hash }}/{{ upload.filename }}" target="_blank"
-               class="text-accent hover:underline text-xs mr-2">View</a>
+               style="color: var(--accent);">View</a>
             <a href="/apps/{{ app.slug }}/uploads/file/{{ upload.hash }}/{{ upload.filename }}" download
-               class="text-accent hover:underline text-xs">Download</a>
+               style="color: var(--accent);">Download</a>
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
     {% else %}
-    <p class="text-muted text-sm">No uploads found. Files uploaded via content forms will appear here.</p>
+    <div class="wf-empty bordered"><div class="wf-empty-body">No uploads found. Files uploaded via content forms will appear here.</div></div>
     {% endif %}
   </div>
 </div>
