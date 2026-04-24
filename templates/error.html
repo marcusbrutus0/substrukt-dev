@@ -1,9 +1,11 @@
 {% extends base_template %}
 {% block title %}{{ status }} — Substrukt{% endblock %}
 {% block content %}
-<div class="flex flex-col items-center justify-center min-h-[50vh]">
-  <h1 class="text-6xl font-bold text-muted mb-4">{{ status }}</h1>
-  <p class="text-lg text-secondary mb-8">{{ message }}</p>
-  <a href="/" class="text-accent hover:underline">Back to Dashboard</a>
+<div class="wf-empty bordered" style="min-height: 50vh; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+  <div class="wf-empty-glyph">{{ status }}</div>
+  <div class="wf-empty-title">{{ message }}</div>
+  <div class="wf-empty-actions">
+    <a href="/" class="wf-btn primary">Back to Dashboard</a>
+  </div>
 </div>
 {% endblock %}

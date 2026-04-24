@@ -36,7 +36,7 @@ fn build_hint_line(hints: &[String]) -> String {
         String::new()
     } else {
         format!(
-            r#"  <p class="text-xs text-muted mt-1">{}</p>
+            r#"  <p style="color: var(--fg-muted); font-size: 12px; margin-top: 4px;">{}</p>
 "#,
             hints.join(" · ")
         )
@@ -252,7 +252,7 @@ fn render_form_fields_inner(
     depth: usize,
 ) -> String {
     if depth > MAX_NESTING_DEPTH {
-        return r#"<div class="mb-4 text-danger text-sm">Error: maximum nesting depth exceeded</div>"#.to_string();
+        return r#"<div class="wf-field" style="color: var(--err); font-size: 13px;">Error: maximum nesting depth exceeded</div>"#.to_string();
     }
 
     let mut html = String::new();
@@ -339,9 +339,9 @@ fn render_field(
             let (constraint_attrs, hints) = string_constraints(schema, true);
             let hint_html = build_hint_line(&hints);
             format!(
-                r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <textarea id="{name}" name="{name}" rows="12" data-markdown class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
+                r#"<div class="wf-field" style="margin-top: 16px;">
+  <label for="{name}" class="wf-label">{label}{req_star}</label>
+  <textarea id="{name}" name="{name}" rows="12" data-markdown class="wf-textarea" style="width: 100%; margin-top: 4px;"{constraint_attrs}{req_attr}>{val}</textarea>
 {req_msg}{hint_html}</div>
 "#
             )
@@ -351,9 +351,9 @@ fn render_field(
             let (constraint_attrs, hints) = string_constraints(schema, true);
             let hint_html = build_hint_line(&hints);
             format!(
-                r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
+                r#"<div class="wf-field" style="margin-top: 16px;">
+  <label for="{name}" class="wf-label">{label}{req_star}</label>
+  <textarea id="{name}" name="{name}" rows="6" class="wf-textarea" style="width: 100%; margin-top: 4px;"{constraint_attrs}{req_attr}>{val}</textarea>
 {req_msg}{hint_html}</div>
 "#
             )
@@ -375,18 +375,18 @@ fn render_field(
                 // Show image thumbnail for image MIME types
                 let thumbnail = if mime.starts_with("image/") {
                     format!(
-                        r#"<img src="/apps/{app_slug}/uploads/file/{hash}/{filename}" alt="{filename}" class="h-16 w-16 object-cover rounded border border-border-light">"#
+                        r#"<img src="/apps/{app_slug}/uploads/file/{hash}/{filename}" alt="{filename}" style="height: 64px; width: 64px; object-fit: cover; border: 1px solid var(--hairline);">"#
                     )
                 } else {
                     String::new()
                 };
 
                 current_html = format!(
-                    r#"<div class="mb-2 text-sm text-secondary flex items-center gap-3">
+                    r#"<div style="margin-bottom: 8px; font-size: 13px; display: flex; align-items: center; gap: 12px;">
     {thumbnail}
     <div>
-      <div>Current: <a href="/apps/{app_slug}/uploads/file/{hash}/{filename}" class="text-accent underline" target="_blank">{filename}</a></div>
-      <div class="text-muted text-xs">{mime}</div>
+      <div>Current: <a href="/apps/{app_slug}/uploads/file/{hash}/{filename}" style="color: var(--accent); text-decoration: underline;" target="_blank">{filename}</a></div>
+      <div style="color: var(--fg-muted); font-size: 12px;">{mime}</div>
     </div>
   </div>
   <input type="hidden" name="{name}.__current" value='{json_val}'>"#
@@ -396,14 +396,14 @@ fn render_field(
             let hint_html =
                 build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
             format!(
-                r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
+                r#"<div class="wf-field" style="margin-top: 16px;">
+  <label for="{name}" class="wf-label">{label}{req_star}</label>
   {current_html}
-  <div class="upload-zone border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-accent transition-colors relative" data-upload-zone>
-    <div class="upload-zone-prompt text-muted text-sm">Drag a file here or click to browse</div>
-    <div class="upload-zone-info hidden text-sm text-secondary mt-2"></div>
-    <div class="upload-zone-preview hidden mt-2 flex justify-center"></div>
-    <input type="file" id="{name}" name="{name}" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" data-upload-input{req_attr}>
+  <div class="wf-dropzone" data-upload-zone>
+    <div class="upload-zone-prompt wf-dropzone-title">Drag a file here or click to browse</div>
+    <div class="upload-zone-info" style="display: none; font-size: 13px; margin-top: 8px;"></div>
+    <div class="upload-zone-preview" style="display: none; margin-top: 8px; display: flex; justify-content: center;"></div>
+    <input type="file" id="{name}" name="{name}" class="wf-dropzone-input" data-upload-input{req_attr}>
   </div>
 {hint_html}</div>
 "#
@@ -429,9 +429,9 @@ fn render_field(
             let hint_html =
                 build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
             format!(
-                r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
+                r#"<div class="wf-field" style="margin-top: 16px;">
+  <label for="{name}" class="wf-label">{label}{req_star}</label>
+  <select id="{name}" name="{name}" class="wf-select" style="width: 100%; margin-top: 4px;"{req_attr}>
     {opts_html}
   </select>
 {req_msg}{hint_html}</div>
@@ -454,9 +454,9 @@ fn render_field(
                 let hint_html =
                     build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
                 format!(
-                    r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <select id="{name}" name="{name}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
+                    r#"<div class="wf-field" style="margin-top: 16px;">
+  <label for="{name}" class="wf-label">{label}{req_star}</label>
+  <select id="{name}" name="{name}" class="wf-select" style="width: 100%; margin-top: 4px;"{req_attr}>
     {options}
   </select>
 {req_msg}{hint_html}</div>
@@ -468,9 +468,9 @@ fn render_field(
                 let (constraint_attrs, hints) = string_constraints(schema, true);
                 let hint_html = build_hint_line(&hints);
                 format!(
-                    r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <textarea id="{name}" name="{name}" rows="6" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>{val}</textarea>
+                    r#"<div class="wf-field" style="margin-top: 16px;">
+  <label for="{name}" class="wf-label">{label}{req_star}</label>
+  <textarea id="{name}" name="{name}" rows="6" class="wf-textarea" style="width: 100%; margin-top: 4px;"{constraint_attrs}{req_attr}>{val}</textarea>
 {req_msg}{hint_html}</div>
 "#
                 )
@@ -479,9 +479,9 @@ fn render_field(
                 let (constraint_attrs, hints) = string_constraints(schema, false);
                 let hint_html = build_hint_line(&hints);
                 format!(
-                    r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{constraint_attrs}{req_attr}>
+                    r#"<div class="wf-field" style="margin-top: 16px;">
+  <label for="{name}" class="wf-label">{label}{req_star}</label>
+  <input type="text" id="{name}" name="{name}" value="{val}" class="wf-input" style="width: 100%; margin-top: 4px;"{constraint_attrs}{req_attr}>
 {req_msg}{hint_html}</div>
 "#
                 )
@@ -506,9 +506,9 @@ fn render_field(
             };
 
             format!(
-                r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <input type="number" id="{name}" name="{name}" value="{val}"{step}{constraint_attrs} class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent"{req_attr}>
+                r#"<div class="wf-field" style="margin-top: 16px;">
+  <label for="{name}" class="wf-label">{label}{req_star}</label>
+  <input type="number" id="{name}" name="{name}" value="{val}"{step}{constraint_attrs} class="wf-input" style="width: 100%; margin-top: 4px;"{req_attr}>
 {req_msg}{hint_html}</div>
 "#
             )
@@ -519,11 +519,11 @@ fn render_field(
             let hint_html =
                 build_hint_line(&get_description(schema).into_iter().collect::<Vec<_>>());
             format!(
-                r#"<div class="mb-4">
-  <label for="{name}" class="flex items-center gap-2">
+                r#"<div class="wf-field" style="margin-top: 16px;">
+  <label for="{name}" class="wf-check-row">
     <input type="hidden" name="{name}" value="false">
-    <input type="checkbox" id="{name}" name="{name}" value="true" class="rounded border-border text-accent focus:ring-accent"{checked_attr}>
-    <span class="text-sm font-medium text-secondary">{label}</span>
+    <input type="checkbox" id="{name}" name="{name}" value="true" class="wf-check"{checked_attr}>
+    <span>{label}</span>
   </label>
 {hint_html}</div>
 "#
@@ -533,8 +533,8 @@ fn render_field(
             let inner =
                 render_form_fields_inner(schema, value, name, ref_options, app_slug, depth + 1);
             format!(
-                r#"<fieldset class="mb-4 p-4 border border-border-light rounded-md">
-  <legend class="text-sm font-medium text-secondary px-2">{label}</legend>
+                r#"<fieldset style="border-top: 1px solid var(--hairline-dim); padding-top: 16px; margin-top: 16px;">
+  <legend class="wf-label" style="padding: 0 4px;">{label}</legend>
   {inner}
 </fieldset>
 "#
@@ -556,15 +556,15 @@ fn render_field(
                         String::new()
                     } else {
                         format!(
-                            r#"<span class="text-xs text-muted truncate max-w-xs">{}</span>"#,
+                            r#"<span style="color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px;">{}</span>"#,
                             escape_html_attr(&preview)
                         )
                     };
                     items_html.push_str(&format!(
-                        r#"<div class="array-item border border-border-light p-3 rounded mb-2" data-index="{i}">
-  <div class="flex items-center justify-between mb-1">
+                        r#"<div class="array-item wf-framed" data-index="{i}">
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
     {preview_html}
-    <button type="button" onclick="this.closest('.array-item').remove()" class="text-danger text-sm hover:text-danger shrink-0">Remove</button>
+    <button type="button" onclick="this.closest('.array-item').remove()" style="color: var(--err); background: none; border: none; cursor: pointer; flex-shrink: 0;">Remove</button>
   </div>
   {}
 </div>"#,
@@ -601,13 +601,13 @@ fn render_field(
             let hint_html = build_hint_line(&hints);
 
             format!(
-                r#"<div class="mb-4">
-  <label class="block text-sm font-medium text-secondary mb-1">{label}</label>
+                r#"<div class="wf-field" style="margin-top: 16px;">
+  <label class="wf-label">{label}</label>
   <div id="array-{name}" class="array-container">
     {items_html}
   </div>
   <template id="template-{name}">{template_html}</template>
-  <button type="button" onclick="addArrayItem('{name}')" class="mt-2 px-3 py-1 text-sm bg-card-alt border border-border rounded hover:bg-card-alt">+ Add Item</button>
+  <button type="button" onclick="addArrayItem('{name}')" class="wf-btn ghost sm" style="margin-top: 8px;">+ Add Item</button>
 {hint_html}</div>
 "#
             )
@@ -615,9 +615,9 @@ fn render_field(
         _ => {
             let val = escape_html_attr(value.and_then(|v| v.as_str()).unwrap_or(""));
             format!(
-                r#"<div class="mb-4">
-  <label for="{name}" class="block text-sm font-medium text-secondary mb-1">{label}{req_star}</label>
-  <input type="text" id="{name}" name="{name}" value="{val}" class="w-full px-3 py-2 border border-border rounded-md"{req_attr}>
+                r#"<div class="wf-field" style="margin-top: 16px;">
+  <label for="{name}" class="wf-label">{label}{req_star}</label>
+  <input type="text" id="{name}" name="{name}" value="{val}" class="wf-input" style="width: 100%; margin-top: 4px;"{req_attr}>
 {req_msg}</div>
 "#
             )
@@ -920,7 +920,7 @@ mod tests {
             "should show description"
         );
         assert!(
-            html.contains("text-xs text-muted"),
+            html.contains("color: var(--fg-muted); font-size: 12px;"),
             "should use hint styling"
         );
     }
@@ -937,7 +937,7 @@ mod tests {
         });
         let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
         assert!(
-            !html.contains("text-xs text-muted"),
+            !html.contains("color: var(--fg-muted); font-size: 12px;"),
             "should not have hint line"
         );
     }
@@ -969,8 +969,8 @@ mod tests {
             "should have preview area"
         );
         assert!(
-            html.contains(r#"opacity-0"#),
-            "file input should be invisible overlay"
+            html.contains("wf-dropzone-input"),
+            "file input should use wf-dropzone-input class"
         );
     }
 
@@ -1136,7 +1136,7 @@ mod tests {
             "should show item count range hint"
         );
         assert!(
-            html.contains("text-xs text-muted"),
+            html.contains("color: var(--fg-muted); font-size: 12px;"),
             "should use hint styling"
         );
     }
