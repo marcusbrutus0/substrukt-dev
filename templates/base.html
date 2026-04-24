@@ -153,15 +153,15 @@
 
         zone.addEventListener('dragover', function(e) {
           e.preventDefault();
-          zone.classList.add('border-accent', 'bg-accent-soft');
+          zone.classList.add('is-dragover');
         });
         zone.addEventListener('dragleave', function(e) {
           e.preventDefault();
-          zone.classList.remove('border-accent', 'bg-accent-soft');
+          zone.classList.remove('is-dragover');
         });
         zone.addEventListener('drop', function(e) {
           e.preventDefault();
-          zone.classList.remove('border-accent', 'bg-accent-soft');
+          zone.classList.remove('is-dragover');
           if (e.dataTransfer && e.dataTransfer.files.length > 0) {
             input.files = e.dataTransfer.files;
             input.dispatchEvent(new Event('change', { bubbles: true }));
