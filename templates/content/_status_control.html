@@ -1,30 +1,24 @@
-<span id="entry-status" class="ml-2 align-middle inline-flex items-center gap-2">
+<span id="entry-status" style="margin-left: 8px; display: inline-flex; align-items: center; gap: 8px; vertical-align: middle;">
   {% if entry_status == "draft" %}
-    <span class="px-2 py-0.5 rounded text-xs font-medium bg-accent-soft text-accent">Draft</span>
+    <span class="wf-tag warn"><span class="dot"></span>Draft</span>
     {% if user_role != "viewer" %}
     <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/publish"
           hx-post="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/publish"
           hx-target="#entry-status" hx-swap="outerHTML"
-          class="inline">
+          style="display: inline;">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <button type="submit"
-              class="px-3 py-1 rounded text-xs font-medium bg-success text-white hover:bg-success-hover">
-        Publish
-      </button>
+      <button type="submit" class="wf-btn sm primary">Publish</button>
     </form>
     {% endif %}
   {% else %}
-    <span class="px-2 py-0.5 rounded text-xs font-medium bg-success-soft text-success">Published</span>
+    <span class="wf-tag ok"><span class="dot"></span>Published</span>
     {% if user_role != "viewer" %}
     <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/unpublish"
           hx-post="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/unpublish"
           hx-target="#entry-status" hx-swap="outerHTML"
-          class="inline">
+          style="display: inline;">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <button type="submit"
-              class="px-3 py-1 rounded text-xs font-medium border border-border text-secondary hover:bg-card-alt">
-        Unpublish
-      </button>
+      <button type="submit" class="wf-btn sm">Unpublish</button>
     </form>
     {% endif %}
   {% endif %}

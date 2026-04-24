@@ -1,35 +1,35 @@
 {% extends base_template %}
 {% block title %}History — {{ schema_title }} — Substrukt{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold tracking-tight">History: {{ entry_id }}</h1>
-  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/edit" class="text-muted hover:text-primary text-sm">Back to Edit</a>
+<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;">
+  <h1 style="font-family: var(--font-mono); font-weight: 800; font-size: 28px; letter-spacing: -0.02em; text-transform: uppercase; color: var(--fg-strong); margin: 0;">History: {{ entry_id }}</h1>
+  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/edit" style="color: var(--fg-muted);">Back to Edit</a>
 </div>
 
 {% if versions %}
-<div class="bg-card border border-border-light rounded-lg overflow-hidden">
-  <table class="w-full">
-    <thead class="bg-card-alt">
+<div class="wf-panel" style="padding: 0;">
+  <table class="wf-table">
+    <thead>
       <tr>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Date</th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Author</th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Source</th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">Size</th>
-        <th class="px-4 py-2.5"></th>
+        <th>Date</th>
+        <th>Author</th>
+        <th>Source</th>
+        <th>Size</th>
+        <th></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-border-light">
+    <tbody>
       {% for v in versions %}
-      <tr class="hover:bg-card-alt">
-        <td class="px-4 py-2.5 font-mono text-sm text-muted" title="{{ v.timestamp }}">{{ v.formatted_time }}</td>
-        <td class="px-4 py-2.5 text-sm text-secondary">{{ v.username }}</td>
-        <td class="px-4 py-2.5 text-sm text-muted">{% if v.source %}{{ v.source }}{% else %}&mdash;{% endif %}</td>
-        <td class="px-4 py-2.5 text-sm text-secondary">{{ v.size }} bytes</td>
-        <td class="px-4 py-2.5 text-right space-x-2">
-          <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/diff?from={{ v.timestamp }}" class="text-accent hover:underline text-sm">Compare</a>
-          <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/revert/{{ v.timestamp }}" style="display:inline">
+      <tr>
+        <td style="font-family: var(--font-mono);" title="{{ v.timestamp }}">{{ v.formatted_time }}</td>
+        <td>{{ v.username }}</td>
+        <td style="color: var(--fg-muted);">{% if v.source %}{{ v.source }}{% else %}&mdash;{% endif %}</td>
+        <td>{{ v.size }} bytes</td>
+        <td style="text-align: right; white-space: nowrap;">
+          <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/diff?from={{ v.timestamp }}" style="color: var(--accent);">Compare</a>
+          <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/revert/{{ v.timestamp }}" style="display:inline; margin-left: 8px;">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <button type="submit" onclick="return confirm('Revert to this version?')" class="text-accent hover:underline text-sm">Revert</button>
+            <button type="submit" onclick="return confirm('Revert to this version?')" style="color: var(--accent); background: none; border: none; cursor: pointer; font-size: inherit;">Revert</button>
           </form>
         </td>
       </tr>
@@ -38,8 +38,8 @@
   </table>
 </div>
 {% else %}
-<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
-  No previous versions.
+<div class="wf-empty bordered">
+  <div class="wf-empty-title">No previous versions</div>
 </div>
 {% endif %}
 {% endblock %}

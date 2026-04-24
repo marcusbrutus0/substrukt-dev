@@ -1,28 +1,15 @@
 {% extends base_template %}
 {% block title %}{{ schema_title }} — Substrukt{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold tracking-tight">{{ schema_title }}</h1>
+<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;">
+  <h1 style="font-family: var(--font-mono); font-weight: 800; font-size: 28px; letter-spacing: -0.02em; text-transform: uppercase; color: var(--fg-strong); margin: 0;">{{ schema_title }}</h1>
   {% if user_role != "viewer" %}
-  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/new" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">New Entry</a>
+  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/new" class="wf-btn primary">New Entry</a>
   {% endif %}
 </div>
 
-<div class="mb-4 flex gap-3">
-  <input type="text" name="q" value="{{ q }}" placeholder="Search entries..."
-    hx-get="/apps/{{ app.slug }}/content/{{ schema_slug }}" hx-trigger="input changed delay:300ms"
-    hx-target="#main-content" hx-push-url="true"
-    hx-include="[name='status']"
-    class="flex-1 px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent text-sm">
-  <select name="status" hx-get="/apps/{{ app.slug }}/content/{{ schema_slug }}" hx-trigger="change" hx-target="#main-content" hx-push-url="true" hx-include="[name='q']"
-    class="px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent text-sm">
-    <option value="all"{% if status_filter == "all" %} selected{% endif %}>All</option>
-    <option value="published"{% if status_filter == "published" %} selected{% endif %}>Published</option>
-    <option value="draft"{% if status_filter == "draft" %} selected{% endif %}>Draft</option>
-  </select>
-</div>
 {% if q or status_filter != "all" %}
-<p class="text-sm text-muted mb-4">Showing {{ filtered }} of {{ total }} entries{% if q %} matching "{{ q }}"{% endif %}{% if status_filter != "all" %} ({{ status_filter }}){% endif %}</p>
+<p style="color: var(--fg-muted); font-size: 13px; margin-bottom: 16px;">Showing {{ filtered }} of {{ total }} entries{% if q %} matching "{{ q }}"{% endif %}{% if status_filter != "all" %} ({{ status_filter }}){% endif %}</p>
 {% endif %}
 
 {% set base_url = "/apps/" ~ app.slug ~ "/content/" ~ schema_slug %}
@@ -31,85 +18,104 @@
 {% if status_filter != "all" %}{% set filter_params = filter_params ~ "status=" ~ status_filter ~ "&" %}{% endif %}
 
 {% if entries %}
-<div class="bg-card border border-border-light rounded-lg overflow-hidden">
+<div class="wf-panel" style="padding: 0;">
+  <div class="wf-filterbar">
+    <div class="wf-input-group" style="flex: 1;">
+      <span class="wf-input-addon">⌕</span>
+      <input type="text" name="q" value="{{ q }}" placeholder="Search entries..."
+        hx-get="/apps/{{ app.slug }}/content/{{ schema_slug }}" hx-trigger="input changed delay:300ms"
+        hx-target="#main-content" hx-push-url="true"
+        hx-include="[name='status']"
+        class="wf-input sm">
+    </div>
+    <select name="status" hx-get="/apps/{{ app.slug }}/content/{{ schema_slug }}" hx-trigger="change" hx-target="#main-content" hx-push-url="true" hx-include="[name='q']"
+      class="wf-select sm">
+      <option value="all"{% if status_filter == "all" %} selected{% endif %}>All</option>
+      <option value="published"{% if status_filter == "published" %} selected{% endif %}>Published</option>
+      <option value="draft"{% if status_filter == "draft" %} selected{% endif %}>Draft</option>
+    </select>
+  </div>
+
   {% if user_role != "viewer" %}
-  <div id="bulk-bar" class="hidden mb-3 p-3 bg-card-alt border border-border-light rounded-lg flex items-center gap-3">
-    <span id="bulk-count" class="text-sm font-medium">0 selected</span>
+  <div id="bulk-bar" class="wf-bulkbar" style="display: none;">
+    <span class="wf-sel-count" id="bulk-count">0 selected</span>
+    <div class="wf-bar-sep"></div>
     <form method="post" id="bulk-publish-form" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/_bulk/publish" hx-boost="false">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <input type="hidden" name="ids" id="bulk-publish-ids">
-      <button type="submit" class="text-sm px-3 py-1 bg-success-soft text-success border border-success rounded hover:bg-success hover:text-white">Publish</button>
+      <button type="submit" class="wf-btn sm ghost">Publish</button>
     </form>
     <form method="post" id="bulk-unpublish-form" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/_bulk/unpublish" hx-boost="false">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <input type="hidden" name="ids" id="bulk-unpublish-ids">
-      <button type="submit" class="text-sm px-3 py-1 bg-accent-soft text-accent border border-accent rounded hover:bg-accent hover:text-black">Unpublish</button>
+      <button type="submit" class="wf-btn sm ghost">Unpublish</button>
     </form>
     <form method="post" id="bulk-delete-form" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/_bulk/delete" hx-boost="false"
       onsubmit="return confirm('Delete ' + document.querySelectorAll('.bulk-check:checked').length + ' entries? This cannot be undone.')">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <input type="hidden" name="ids" id="bulk-delete-ids">
-      <button type="submit" class="text-sm px-3 py-1 bg-danger-soft text-danger border border-danger rounded hover:bg-danger hover:text-white">Delete</button>
+      <button type="submit" class="wf-btn sm ghost">Delete</button>
     </form>
   </div>
   {% endif %}
-  <table id="content-table" class="w-full">
-    <thead class="bg-card-alt">
+
+  <table id="content-table" class="wf-table">
+    <thead>
       <tr>
         {% if user_role != "viewer" %}
-        <th class="px-4 py-2.5 w-8"><input type="checkbox" id="select-all" onchange="toggleAll(this)" class="rounded border-border"></th>
+        <th style="width: 32px;"><input type="checkbox" id="select-all" onchange="toggleAll(this)" class="wf-check"></th>
         {% endif %}
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">
-          <a href="{{ base_url }}?{{ filter_params }}sort=_id&order={% if sort_field == '_id' and sort_order == 'asc' %}desc{% else %}asc{% endif %}" class="hover:text-primary select-none">
+        <th>
+          <a href="{{ base_url }}?{{ filter_params }}sort=_id&order={% if sort_field == '_id' and sort_order == 'asc' %}desc{% else %}asc{% endif %}" style="color: inherit;">
             ID {% if sort_field == "_id" or sort_field == "" %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
           </a>
         </th>
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">
-          <a href="{{ base_url }}?{{ filter_params }}sort=_status&order={% if sort_field == '_status' and sort_order == 'asc' %}desc{% else %}asc{% endif %}" class="hover:text-primary select-none">
+        <th>
+          <a href="{{ base_url }}?{{ filter_params }}sort=_status&order={% if sort_field == '_status' and sort_order == 'asc' %}desc{% else %}asc{% endif %}" style="color: inherit;">
             Status {% if sort_field == "_status" %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
           </a>
         </th>
         {% for col in columns %}
-        <th class="text-left px-4 py-2.5 text-sm font-medium text-muted">
-          <a href="{{ base_url }}?{{ filter_params }}sort={{ column_keys[loop.index0] }}&order={% if sort_field == column_keys[loop.index0] and sort_order == 'asc' %}desc{% else %}asc{% endif %}" class="hover:text-primary select-none">
+        <th>
+          <a href="{{ base_url }}?{{ filter_params }}sort={{ column_keys[loop.index0] }}&order={% if sort_field == column_keys[loop.index0] and sort_order == 'asc' %}desc{% else %}asc{% endif %}" style="color: inherit;">
             {{ col }} {% if sort_field == column_keys[loop.index0] %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
           </a>
         </th>
         {% endfor %}
-        <th class="px-4 py-2.5"></th>
+        <th></th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-border-light">
+    <tbody>
       {% for entry in entries %}
-      <tr class="hover:bg-card-alt">
+      <tr>
         {% if user_role != "viewer" %}
-        <td class="px-4 py-2.5 w-8"><input type="checkbox" class="bulk-check rounded border-border" value="{{ entry.id }}" onchange="updateBulkBar()"></td>
+        <td style="width: 32px;"><input type="checkbox" class="bulk-check wf-check" value="{{ entry.id }}" onchange="updateBulkBar()"></td>
         {% endif %}
-        <td class="px-4 py-2.5 font-mono text-sm text-muted">{{ entry.id }}</td>
-        <td class="px-4 py-2.5">
+        <td style="font-family: var(--font-mono); color: var(--fg-muted);">{{ entry.id }}</td>
+        <td>
           {% if entry.status == "published" %}
-          <span class="px-2 py-0.5 rounded text-xs font-medium bg-success-soft text-success">Published</span>
+          <span class="wf-tag ok"><span class="dot"></span>Published</span>
           {% else %}
-          <span class="px-2 py-0.5 rounded text-xs font-medium bg-accent-soft text-accent">Draft</span>
+          <span class="wf-tag warn"><span class="dot"></span>Draft</span>
           {% endif %}
         </td>
         {% for col in entry.columns %}
-        <td class="px-4 py-2.5 text-sm">
+        <td>
           {%- if col == "true" -%}
-          <span class="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">Yes</span>
+          <span class="wf-tag ok">Yes</span>
           {%- elif col == "false" -%}
-          <span class="px-2 py-0.5 rounded text-xs font-medium bg-card-alt text-muted">No</span>
+          <span class="wf-tag">No</span>
           {%- else -%}
           {{ col }}
           {%- endif -%}
         </td>
         {% endfor %}
-        <td class="px-4 py-2.5 text-right space-x-2">
-          <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/edit" class="text-accent hover:underline text-sm">{% if user_role == "viewer" %}View{% else %}Edit{% endif %}</a>
+        <td style="text-align: right; white-space: nowrap;">
+          <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/edit" style="color: var(--accent);">{% if user_role == "viewer" %}View{% else %}Edit{% endif %}</a>
           {% if user_role != "viewer" %}
-          <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/delete" hx-boost="false" onsubmit="return confirm('Delete this entry?')" class="inline">
+          <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/delete" hx-boost="false" onsubmit="return confirm('Delete this entry?')" style="display: inline; margin-left: 8px;">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <button type="submit" class="text-danger hover:text-danger text-sm">Delete</button>
+            <button type="submit" style="color: var(--err); background: none; border: none; cursor: pointer; font-size: inherit;">Delete</button>
           </form>
           {% endif %}
         </td>
@@ -121,23 +127,18 @@
 {% if has_prev or has_next %}
 {% set sort_params = "" %}
 {% if sort_field %}{% set sort_params = sort_params ~ "sort=" ~ sort_field ~ "&order=" ~ sort_order ~ "&" %}{% endif %}
-<div class="flex items-center justify-center gap-4 mt-4">
-  {% if has_prev %}
-  <a href="{{ base_url }}?{{ filter_params }}{{ sort_params }}page={{ page - 1 }}" class="text-sm text-accent hover:underline">← Previous</a>
-  {% else %}
-  <span class="text-sm text-muted opacity-50 select-none">← Previous</span>
-  {% endif %}
-  <span class="text-sm text-muted">Page {{ page }}</span>
-  {% if has_next %}
-  <a href="{{ base_url }}?{{ filter_params }}{{ sort_params }}page={{ page + 1 }}" class="text-sm text-accent hover:underline">Next →</a>
-  {% else %}
-  <span class="text-sm text-muted opacity-50 select-none">Next →</span>
-  {% endif %}
+<div class="wf-pagination" style="margin-top: 16px;">
+  {% if has_prev %}<a href="{{ base_url }}?{{ filter_params }}{{ sort_params }}page={{ page - 1 }}">←</a>{% else %}<button disabled>←</button>{% endif %}
+  <span style="color: var(--fg-muted); font-size: 13px;">Page {{ page }}</span>
+  {% if has_next %}<a href="{{ base_url }}?{{ filter_params }}{{ sort_params }}page={{ page + 1 }}">→</a>{% else %}<button disabled>→</button>{% endif %}
 </div>
 {% endif %}
 {% else %}
-<div class="bg-card border border-border-light rounded-lg p-8 text-center text-muted">
-  {% if q %}No entries match your search.{% else %}No entries yet. <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/new" class="text-accent hover:underline">Create your first entry</a>.{% endif %}
+<div class="wf-empty bordered">
+  <div class="wf-empty-title">{% if q %}No entries match your search{% else %}No entries yet{% endif %}</div>
+  {% if not q %}
+  <div class="wf-empty-body"><a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/new" style="color: var(--accent);">Create your first entry</a>.</div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -151,7 +152,7 @@ function updateBulkBar() {
   var bar = document.getElementById('bulk-bar');
   if (!bar) return;
   if (checked.length > 0) {
-    bar.classList.remove('hidden');
+    bar.style.display = '';
     document.getElementById('bulk-count').textContent = checked.length + ' selected';
     var ids = Array.from(checked).map(function(cb) { return cb.value; }).join(',');
     var pub_ids = document.getElementById('bulk-publish-ids');
@@ -161,7 +162,7 @@ function updateBulkBar() {
     if (unpub_ids) unpub_ids.value = ids;
     if (del_ids) del_ids.value = ids;
   } else {
-    bar.classList.add('hidden');
+    bar.style.display = 'none';
   }
 }
 </script>

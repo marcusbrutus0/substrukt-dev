@@ -1,56 +1,58 @@
 {% extends base_template %}
 {% block title %}{% if is_single %}{{ schema_title }}{% elif is_new %}New {{ schema_title }}{% elif entry_title %}{{ entry_title }} — {{ schema_title }}{% else %}Edit {{ schema_title }}{% endif %} — Substrukt{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-6">
-  <h1 class="text-2xl font-bold tracking-tight">
-    {% if is_single %}{{ schema_title }}{% elif is_new %}New {{ schema_title }}{% elif entry_title %}{{ entry_title }} <span class="text-base font-normal text-muted">({{ schema_title }})</span>{% else %}Edit {{ schema_title }}{% endif %}
+<div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;">
+  <h1 style="font-family: var(--font-mono); font-weight: 800; font-size: 28px; letter-spacing: -0.02em; text-transform: uppercase; color: var(--fg-strong); margin: 0;">
+    {% if is_single %}{{ schema_title }}{% elif is_new %}New {{ schema_title }}{% elif entry_title %}{{ entry_title }} <span style="font-weight: 400; font-size: 16px; color: var(--fg-muted); text-transform: none; letter-spacing: 0; font-family: var(--font-sans, inherit);">({{ schema_title }})</span>{% else %}Edit {{ schema_title }}{% endif %}
     {% if not is_new %}{% include "content/_status_control.html" %}{% endif %}
   </h1>
   {% if not is_single %}
-  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}" class="text-muted hover:text-primary text-sm">Back to {{ schema_title }}</a>
+  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}" style="color: var(--fg-muted);">Back to {{ schema_title }}</a>
   {% endif %}
 </div>
 
 {% if flash_message %}
-<div class="p-4 rounded mb-4 text-sm border
-  {% if flash_kind == 'success' %}bg-success-soft border-success text-success
-  {% elif flash_kind == 'error' %}bg-danger-soft border-danger text-danger
-  {% else %}bg-card-alt border-border-light text-primary{% endif %}">
-  {{ flash_message }}
+<div class="wf-alert {% if flash_kind == 'success' %}ok{% elif flash_kind == 'error' %}err{% else %}info{% endif %}">
+  <div class="wf-alert-bar"></div>
+  <div>{{ flash_message }}</div>
 </div>
 {% endif %}
 
 {% if errors %}
-<div class="bg-danger-soft text-danger p-4 rounded mb-4">
-  <div class="font-medium mb-1">Validation errors:</div>
-  <ul class="list-disc list-inside text-sm">
-    {% for error in errors %}
-    <li>{{ error }}</li>
-    {% endfor %}
-  </ul>
+<div class="wf-alert err">
+  <div class="wf-alert-bar"></div>
+  <div>
+    <strong>Validation errors:</strong>
+    <ul style="margin: 4px 0 0 16px; padding: 0;">
+      {% for error in errors %}
+      <li>{{ error }}</li>
+      {% endfor %}
+    </ul>
+  </div>
 </div>
 {% endif %}
 
-<div class="bg-card border border-border-light rounded-lg p-6">
+<div class="wf-panel">
+  <div class="wf-panel-body">
   <form method="post" enctype="multipart/form-data"
     action="{% if is_single %}/apps/{{ app.slug }}/content/{{ schema_slug }}/_single{% elif is_new %}/apps/{{ app.slug }}/content/{{ schema_slug }}/new{% else %}/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}{% endif %}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     {{ form_fields|safe }}
     {% if user_role == "viewer" %}
-    <div class="mt-6 pt-4 border-t border-border-light text-sm text-muted">
+    <div style="color: var(--fg-muted); font-size: 13px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--hairline);">
       You have view-only access. Contact an admin to request editor permissions.
     </div>
     {% else %}
-    <div class="flex gap-3 mt-6 pt-4 border-t border-border-light">
-      <button type="submit" class="bg-accent text-black px-4 py-2 rounded-md hover:bg-accent-hover text-sm font-medium">
+    <div style="display: flex; gap: 12px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--hairline);">
+      <button type="submit" class="wf-btn primary">
         {% if is_single %}Save{% elif is_new %}Create{% else %}Save Changes{% endif %}
       </button>
       {% if not is_single %}
-      <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}" class="px-4 py-2 rounded-md border border-border text-secondary hover:bg-card-alt text-sm font-medium">
+      <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}" class="wf-btn">
         Cancel
       </a>
       {% if not is_new %}
-      <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/history" class="px-4 py-2 rounded-md border border-border text-secondary hover:bg-card-alt text-sm font-medium">
+      <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/history" class="wf-btn">
         History
       </a>
       {% endif %}
@@ -58,6 +60,7 @@
     </div>
     {% endif %}
   </form>
+  </div>
 </div>
 
 {% if user_role != "viewer" %}
