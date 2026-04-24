@@ -1,89 +1,105 @@
-  <div class="flex items-center gap-2 mb-6 px-2">
-    <img src="/static/favicon.svg" alt="" class="w-6 h-6">
-    <span class="text-lg font-mono tracking-tight font-bold">Substrukt</span>
-  </div>
-  <a href="/apps" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Apps</a>
+<div class="wf-brand">
+  <span class="wf-brand-name">Substrukt</span>
+</div>
+<nav class="wf-nav-list" id="sidebar-nav">
+  <a class="wf-nav-item" href="/apps">&#9656; Apps</a>
   {% if app %}
-  <div class="mt-3 mb-1 px-3 text-xs font-semibold text-muted uppercase tracking-wider">{{ app.name }}</div>
-  <a href="/apps/{{ app.slug }}/schemas" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Schemas</a>
+  <div class="wf-nav-section">{{ app.name }}</div>
+  <a class="wf-nav-item" href="/apps/{{ app.slug }}/schemas">&#9656; Schemas</a>
   {% if nav_schemas %}
-  <div class="mt-3">
-    <button onclick="toggleNavSection('nav-content')" class="flex items-center justify-between w-full px-3 py-1 text-xs font-semibold text-muted uppercase tracking-wider hover:text-white">
-      <span>Content</span>
-      <span id="nav-content-arrow" class="text-[10px] transition-transform">▼</span>
-    </button>
-    <div id="nav-content" class="nav-section">
-      {% for s in nav_schemas %}
-      <a href="/apps/{{ app.slug }}/content/{{ s.slug }}" class="block px-3 py-2 rounded hover:bg-sidebar-hover text-sm">{{ s.title }}</a>
-      {% endfor %}
-    </div>
+  <div class="wf-nav-section" style="cursor: pointer;" onclick="toggleNavSection('nav-content')">
+    Content <span id="nav-content-arrow" style="font-size: 10px; transition: transform 0.15s;">&#9660;</span>
+  </div>
+  <div id="nav-content" class="nav-section">
+    {% for s in nav_schemas %}
+    <a class="wf-nav-item" href="/apps/{{ app.slug }}/content/{{ s.slug }}">&#9656; {{ s.title }}</a>
+    {% endfor %}
   </div>
   {% endif %}
-  <div class="mt-3 border-t border-sidebar-hover pt-2">
-    <a href="/apps/{{ app.slug }}/uploads" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Uploads</a>
-    {% if user_role != "viewer" %}
-    <a href="/apps/{{ app.slug }}/deployments" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Deployments</a>
-    {% endif %}
-    {% if user_role == "admin" %}
-    <a href="/apps/{{ app.slug }}/data" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Data</a>
-    <a href="/apps/{{ app.slug }}/settings" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Settings</a>
-    {% endif %}
-  </div>
+  <a class="wf-nav-item" href="/apps/{{ app.slug }}/uploads">&#9656; Uploads</a>
+  {% if user_role != "viewer" %}
+  <a class="wf-nav-item" href="/apps/{{ app.slug }}/deployments">&#9656; Deployments</a>
   {% endif %}
   {% if user_role == "admin" %}
-  <div class="mt-3 border-t border-sidebar-hover pt-2">
-    <button onclick="toggleNavSection('nav-admin')" class="flex items-center justify-between w-full px-3 py-1 text-xs font-semibold text-muted uppercase tracking-wider hover:text-white">
-      <span>Admin</span>
-      <span id="nav-admin-arrow" class="text-[10px] transition-transform">▼</span>
-    </button>
-    <div id="nav-admin" class="nav-section">
-      <a href="/settings/users" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Users</a>
-      <a href="/settings/audit-log" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Audit Log</a>
-      <a href="/settings/backups" class="block px-3 py-2 rounded hover:bg-sidebar-hover">Backups</a>
-    </div>
+  <a class="wf-nav-item" href="/apps/{{ app.slug }}/data">&#9656; Data</a>
+  <a class="wf-nav-item" href="/apps/{{ app.slug }}/settings">&#9656; Settings</a>
+  {% endif %}
+  {% endif %}
+
+  {% if user_role == "admin" %}
+  <div class="wf-nav-section" style="cursor: pointer;" onclick="toggleNavSection('nav-admin')">
+    Admin <span id="nav-admin-arrow" style="font-size: 10px; transition: transform 0.15s;">&#9660;</span>
+  </div>
+  <div id="nav-admin" class="nav-section">
+    <a class="wf-nav-item" href="/settings/users">&#9656; Users</a>
+    <a class="wf-nav-item" href="/settings/audit-log">&#9656; Audit Log</a>
+    <a class="wf-nav-item" href="/settings/backups">&#9656; Backups</a>
   </div>
   {% endif %}
-  <div class="mt-auto pt-4 border-t border-border-light">
-    {% if current_username %}
-    <a href="/settings/profile" class="block px-3 py-1 text-sm text-muted truncate hover:text-primary" title="{{ current_username }}">{{ current_username }}</a>
-    {% endif %}
-    <div class="flex items-center justify-between">
-    <form method="post" action="/logout" hx-boost="false">
-      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <button type="submit" class="text-left px-3 py-2 rounded hover:bg-sidebar-hover text-muted">Logout</button>
-    </form>
-    <button onclick="toggleTheme()" class="px-3 py-2 rounded hover:bg-sidebar-hover text-muted" title="Toggle theme" aria-label="Toggle dark mode">
-      <span class="theme-icon"></span>
-    </button>
+</nav>
+
+<!-- User profile at bottom of sidebar -->
+<div class="wf-pop-anchor" style="margin-top: auto;">
+  <button class="wf-user" onclick="toggleUserMenu()" type="button">
+    <div class="wf-avatar accent sm">{{ current_username[:2] | upper if current_username else '??' }}</div>
+    <div class="wf-user-id">
+      <div class="wf-user-name">{{ current_username }}</div>
     </div>
-    <a href="https://wavefunk.io" target="_blank" rel="noopener" class="flex items-center justify-center gap-1.5 pt-3 opacity-40 hover:opacity-70 transition-opacity">
-      <span class="text-[10px] uppercase tracking-wider">powered by</span>
-      <img src="/static/wavefunk.svg" alt="wavefunk" class="h-3">
-    </a>
+    <span class="wf-user-caret">&#9652;</span>
+  </button>
+  <div class="wf-popover" id="user-menu" data-side="top">
+    <div class="wf-menu">
+      <a class="wf-menu-item" href="/settings/profile">Profile</a>
+      <button class="wf-menu-item" onclick="toggleTheme(); toggleUserMenu();">
+        <span class="theme-icon">&#9788;</span> Toggle theme
+      </button>
+      <div class="wf-menu-sep"></div>
+      <form method="post" action="/logout" hx-boost="false" style="display: contents;">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" class="wf-menu-item danger">Log out</button>
+      </form>
+    </div>
   </div>
+</div>
 <script>
-  (function() {
-    var isDark = document.documentElement.classList.contains('dark');
-    document.querySelectorAll('.theme-icon').forEach(function(el) {
-      el.textContent = isDark ? '\u2600' : '\u263E';
-    });
-    // Restore collapsed state from localStorage
-    document.querySelectorAll('.nav-section').forEach(function(section) {
-      var key = 'nav-collapsed-' + section.id;
-      if (localStorage.getItem(key) === 'true') {
-        section.style.display = 'none';
-        var arrow = document.getElementById(section.id + '-arrow');
-        if (arrow) arrow.style.transform = 'rotate(-90deg)';
-      }
-    });
-  })();
-  function toggleNavSection(id) {
-    var section = document.getElementById(id);
-    var arrow = document.getElementById(id + '-arrow');
-    if (!section) return;
-    var collapsed = section.style.display !== 'none';
-    section.style.display = collapsed ? 'none' : '';
-    if (arrow) arrow.style.transform = collapsed ? 'rotate(-90deg)' : '';
-    localStorage.setItem('nav-collapsed-' + id, collapsed);
+(function() {
+  // Set theme icon based on current mode
+  var isLight = document.documentElement.getAttribute('data-mode') === 'light';
+  document.querySelectorAll('.theme-icon').forEach(function(el) {
+    el.textContent = isLight ? '☾' : '☀';
+  });
+  // Restore collapsed state from localStorage
+  document.querySelectorAll('.nav-section').forEach(function(section) {
+    var key = 'nav-collapsed-' + section.id;
+    if (localStorage.getItem(key) === 'true') {
+      section.style.display = 'none';
+      var arrow = document.getElementById(section.id + '-arrow');
+      if (arrow) arrow.style.transform = 'rotate(-90deg)';
+    }
+  });
+})();
+
+function toggleNavSection(id) {
+  var section = document.getElementById(id);
+  var arrow = document.getElementById(id + '-arrow');
+  if (!section) return;
+  var collapsed = section.style.display !== 'none';
+  section.style.display = collapsed ? 'none' : '';
+  if (arrow) arrow.style.transform = collapsed ? 'rotate(-90deg)' : '';
+  localStorage.setItem('nav-collapsed-' + id, collapsed);
+}
+
+function toggleUserMenu() {
+  var menu = document.getElementById('user-menu');
+  if (menu) menu.classList.toggle('is-open');
+}
+
+// Close user menu when clicking outside
+document.addEventListener('click', function(e) {
+  var anchor = document.querySelector('.wf-pop-anchor');
+  var menu = document.getElementById('user-menu');
+  if (menu && menu.classList.contains('is-open') && anchor && !anchor.contains(e.target)) {
+    menu.classList.remove('is-open');
   }
+});
 </script>
