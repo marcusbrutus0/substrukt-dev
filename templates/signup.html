@@ -1,112 +1,52 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-mode="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Sign Up — Substrukt</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <style>
-    :root {
-      --surface: #f8fafc;
-      --card: #ffffff;
-      --text-primary: #0f172a;
-      --text-secondary: #475569;
-      --text-muted: #94a3b8;
-      --border: #cbd5e1;
-      --accent: #f59e0b;
-      --accent-hover: #d97706;
-      --danger: #ef4444;
-      --danger-soft: #fef2f2;
-      --input-bg: #ffffff;
-    }
-    .dark {
-      --surface: #09090b;
-      --card: #18181b;
-      --text-primary: #fafafa;
-      --text-secondary: #a1a1aa;
-      --text-muted: #52525b;
-      --border: #3f3f46;
-      --accent: #f59e0b;
-      --accent-hover: #fbbf24;
-      --danger: #f87171;
-      --danger-soft: #451a1a;
-      --input-bg: #27272a;
-    }
-    *, *::before, *::after {
-      transition: background-color 0.15s, color 0.15s, border-color 0.15s;
-    }
-  </style>
+  <link rel="stylesheet" href="/static/css/substrukt.css">
   <script>
     (function() {
       var stored = localStorage.getItem('theme');
-      if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.classList.add('dark');
+      if (stored === 'light') {
+        document.documentElement.setAttribute('data-mode', 'light');
       }
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
-        if (!localStorage.getItem('theme')) {
-          document.documentElement.classList.toggle('dark', e.matches);
-        }
-      });
     })();
   </script>
-  <script src="https://cdn.twind.style" crossorigin></script>
-  <script>
-    twind.install({
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            surface: 'var(--surface)',
-            card: 'var(--card)',
-            primary: 'var(--text-primary)',
-            secondary: 'var(--text-secondary)',
-            muted: 'var(--text-muted)',
-            accent: { DEFAULT: 'var(--accent)', hover: 'var(--accent-hover)' },
-            danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
-            border: 'var(--border)',
-            'input-bg': 'var(--input-bg)',
-          }
-        }
-      }
-    });
-  </script>
 </head>
-<body class="bg-surface text-primary min-h-screen flex items-center justify-center">
-  <div class="bg-card rounded-lg shadow-lg p-8 w-full max-w-sm relative">
-    <button onclick="var d=document.documentElement.classList.toggle('dark');localStorage.setItem('theme',d?'dark':'light');this.querySelector('.theme-icon').textContent=d?'\u2600':'\u263E'" class="absolute top-4 right-4 text-muted hover:text-primary text-sm">
-      <span class="theme-icon"></span>
+<body style="background: var(--bg); color: var(--fg); min-height: 100vh; display: flex; align-items: center; justify-content: center;">
+  <div style="border: 1px solid var(--hairline); padding: 32px; width: 100%; max-width: 380px; position: relative;">
+    <button style="position: absolute; top: 16px; right: 16px; color: var(--fg-muted); background: none; border: none; cursor: pointer;" onclick="var isLight=document.documentElement.getAttribute('data-mode')==='light';if(isLight){document.documentElement.removeAttribute('data-mode');localStorage.setItem('theme','dark')}else{document.documentElement.setAttribute('data-mode','light');localStorage.setItem('theme','light')};this.querySelector('.theme-icon').textContent=document.documentElement.getAttribute('data-mode')==='light'?'☾':'☀'">
+      <span class="theme-icon">☀</span>
     </button>
-    <script>(function(){var el=document.currentScript.previousElementSibling.querySelector('.theme-icon');el.textContent=document.documentElement.classList.contains('dark')?'\u2600':'\u263E'})()</script>
-    <h1 class="text-2xl font-bold mb-2 text-center font-mono tracking-tight">Substrukt</h1>
-    <p class="text-muted text-center mb-6">Create your account</p>
+    <script>(function(){var el=document.currentScript.previousElementSibling.querySelector('.theme-icon');el.textContent=document.documentElement.getAttribute('data-mode')==='light'?'☾':'☀'})()</script>
+    <h1 style="font-family: var(--font-mono); font-weight: 800; font-size: 28px; letter-spacing: -0.02em; text-transform: uppercase; color: var(--fg-strong); margin: 0; text-align: center;">Substrukt</h1>
+    <p style="color: var(--fg-muted); text-align: center; margin: 6px 0 24px; font-size: 13px;">Create your account</p>
     {% if error %}
-    <div class="bg-danger-soft text-danger p-3 rounded mb-4 text-sm">{{ error }}</div>
+    <div class="wf-alert err" style="margin-bottom: 16px;"><div class="wf-alert-bar"></div><div>{{ error }}</div></div>
     {% endif %}
     <form method="post" action="/signup">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <input type="hidden" name="token" value="{{ token }}">
-      <div class="mb-4">
-        <label for="email" class="block text-sm font-medium text-secondary mb-1">Email</label>
-        <input type="email" id="email" value="{{ email }}" readonly
-          class="w-full px-3 py-2 border border-border rounded-md bg-input-bg text-muted focus:outline-none cursor-not-allowed">
+      <div class="wf-field" style="margin-top: 16px;">
+        <label class="wf-label" for="email">Email</label>
+        <input class="wf-input" id="email" type="email" value="{{ email }}" readonly style="width: 100%; margin-top: 4px; cursor: not-allowed; color: var(--fg-muted);">
       </div>
-      <div class="mb-4">
-        <label for="username" class="block text-sm font-medium text-secondary mb-1">Username</label>
-        <input type="text" id="username" name="username" required autofocus
-          class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+      <div class="wf-field" style="margin-top: 16px;">
+        <label class="wf-label" for="username">Username</label>
+        <input class="wf-input" id="username" name="username" type="text" required autofocus style="width: 100%; margin-top: 4px;">
       </div>
-      <div class="mb-4">
-        <label for="password" class="block text-sm font-medium text-secondary mb-1">Password</label>
-        <input type="password" id="password" name="password" required minlength="8"
-          class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+      <div class="wf-field" style="margin-top: 16px;">
+        <label class="wf-label" for="password">Password</label>
+        <input class="wf-input" id="password" name="password" type="password" required minlength="8" style="width: 100%; margin-top: 4px;">
       </div>
-      <div class="mb-6">
-        <label for="confirm_password" class="block text-sm font-medium text-secondary mb-1">Confirm Password</label>
-        <input type="password" id="confirm_password" name="confirm_password" required minlength="8"
-          class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+      <div class="wf-field" style="margin-top: 16px;">
+        <label class="wf-label" for="confirm_password">Confirm Password</label>
+        <input class="wf-input" id="confirm_password" name="confirm_password" type="password" required minlength="8" style="width: 100%; margin-top: 4px;">
       </div>
-      <button type="submit" class="w-full bg-accent text-black py-2 px-4 rounded-md hover:bg-accent-hover font-medium">
+      <button type="submit" class="wf-btn primary" style="width: 100%; margin-top: 18px;">
         Create Account
       </button>
     </form>

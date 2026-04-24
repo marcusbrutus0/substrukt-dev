@@ -1,106 +1,51 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-mode="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Verify email — Substrukt</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <style>
-    :root {
-      --surface: #f8fafc;
-      --card: #ffffff;
-      --text-primary: #0f172a;
-      --text-secondary: #475569;
-      --text-muted: #94a3b8;
-      --border: #cbd5e1;
-      --accent: #f59e0b;
-      --accent-hover: #d97706;
-      --danger: #ef4444;
-      --danger-soft: #fef2f2;
-      --input-bg: #ffffff;
-    }
-    .dark {
-      --surface: #09090b;
-      --card: #18181b;
-      --text-primary: #fafafa;
-      --text-secondary: #a1a1aa;
-      --text-muted: #52525b;
-      --border: #3f3f46;
-      --accent: #f59e0b;
-      --accent-hover: #fbbf24;
-      --danger: #f87171;
-      --danger-soft: #451a1a;
-      --input-bg: #27272a;
-    }
-    *, *::before, *::after {
-      transition: background-color 0.15s, color 0.15s, border-color 0.15s;
-    }
-  </style>
+  <link rel="stylesheet" href="/static/css/substrukt.css">
   <script>
     (function() {
       var stored = localStorage.getItem('theme');
-      if (stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-        document.documentElement.classList.add('dark');
+      if (stored === 'light') {
+        document.documentElement.setAttribute('data-mode', 'light');
       }
     })();
   </script>
-  <script src="https://cdn.twind.style" crossorigin></script>
-  <script>
-    twind.install({
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            surface: 'var(--surface)',
-            card: 'var(--card)',
-            primary: 'var(--text-primary)',
-            secondary: 'var(--text-secondary)',
-            muted: 'var(--text-muted)',
-            accent: { DEFAULT: 'var(--accent)', hover: 'var(--accent-hover)' },
-            danger: { DEFAULT: 'var(--danger)', soft: 'var(--danger-soft)' },
-            border: 'var(--border)',
-            'input-bg': 'var(--input-bg)',
-          }
-        }
-      }
-    });
-  </script>
 </head>
-<body class="bg-surface text-primary min-h-screen flex items-center justify-center">
-  <div class="bg-card rounded-lg shadow-lg p-8 w-full max-w-sm">
-    <div class="flex flex-col items-center mb-6">
-      <img src="/static/favicon.svg" alt="" class="w-10 h-10 mb-3">
-      <h1 class="text-2xl font-bold text-center font-mono tracking-tight">Substrukt</h1>
-    </div>
+<body style="background: var(--bg); color: var(--fg); min-height: 100vh; display: flex; align-items: center; justify-content: center;">
+  <div style="border: 1px solid var(--hairline); padding: 32px; width: 100%; max-width: 380px; position: relative;">
+    <h1 style="font-family: var(--font-mono); font-weight: 800; font-size: 28px; letter-spacing: -0.02em; text-transform: uppercase; color: var(--fg-strong); margin: 0; text-align: center;">Substrukt</h1>
     {% if sent %}
-      <h2 class="text-lg font-semibold mb-3">Check your email</h2>
-      <p class="text-sm text-secondary mb-4">
+      <p style="color: var(--fg-muted); text-align: center; margin: 6px 0 24px; font-size: 13px;">Check your email</p>
+      <p style="font-size: 13px; color: var(--fg-muted); margin-bottom: 16px;">
         If an unverified account exists for that address, we've sent a new verification link.
         The link expires in 24 hours.
       </p>
-      <a href="/login" class="block text-center text-sm text-accent hover:underline">Back to login</a>
+      <a href="/login" style="color: var(--fg-muted); display: block; text-align: center; font-size: 13px;">Back to login</a>
     {% else %}
-      <h2 class="text-lg font-semibold mb-1">Verify your email</h2>
-      <p class="text-sm text-secondary mb-4">
+      <p style="color: var(--fg-muted); text-align: center; margin: 6px 0 4px; font-size: 13px;">Verify your email</p>
+      <p style="font-size: 13px; color: var(--fg-muted); margin-bottom: 16px;">
         Enter your email and we'll resend the verification link.
       </p>
       {% if error %}
-      <div class="bg-danger-soft text-danger p-3 rounded mb-4 text-sm" role="alert">{{ error }}</div>
+      <div class="wf-alert err" style="margin-bottom: 16px;"><div class="wf-alert-bar"></div><div>{{ error }}</div></div>
       {% endif %}
       <form method="post" action="/verify-resend">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-        <div class="mb-4">
-          <label for="email" class="block text-sm font-medium text-secondary mb-1">Email</label>
-          <input type="email" id="email" name="email" required autofocus autocomplete="email"
-            class="w-full px-3 py-2 border border-border rounded-md bg-input-bg focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent">
+        <div class="wf-field" style="margin-top: 16px;">
+          <label class="wf-label" for="email">Email</label>
+          <input class="wf-input" id="email" name="email" type="email" required autofocus autocomplete="email" style="width: 100%; margin-top: 4px;">
         </div>
-        <button type="submit" class="w-full bg-accent text-black py-2 px-4 rounded-md hover:bg-accent-hover font-medium">
+        <button type="submit" class="wf-btn primary" style="width: 100%; margin-top: 18px;">
           Resend verification
         </button>
       </form>
-      <p class="text-sm text-center mt-4">
-        <a href="/login" class="text-secondary hover:text-primary">Back to login</a>
+      <p style="text-align: center; margin-top: 16px; font-size: 13px;">
+        <a href="/login" style="color: var(--fg-muted);">Back to login</a>
       </p>
     {% endif %}
   </div>
