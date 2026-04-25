@@ -1,15 +1,15 @@
 {% extends base_template %}
 {% block title %}{% if is_single %}{{ schema_title }}{% elif is_new %}New {{ schema_title }}{% elif entry_title %}{{ entry_title }} — {{ schema_title }}{% else %}Edit {{ schema_title }}{% endif %} — Substrukt{% endblock %}
 {% block content %}
-<div class="wf-f wf-ai-c wf-jc-sb wf-mb-6">
-  <h1>
-    {% if is_single %}{{ schema_title }}{% elif is_new %}New {{ schema_title }}{% elif entry_title %}{{ entry_title }} <span class="wf-fg-muted wf-t-lg" style="font-weight: 400; text-transform: none; letter-spacing: 0; font-family: var(--font-sans, inherit);">({{ schema_title }})</span>{% else %}Edit {{ schema_title }}{% endif %}
+  <div class="wf-f wf-ai-c wf-jc-sb wf-mb-6 wf-gap-4">
+    {% if not is_single %}
+      <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}" class="wf-fg-muted wf-shrink-0"><-</a>
+    {% endif %}
+    <h2 class="wf-truncate">
+      {% if is_single %}{{ schema_title }}{% elif is_new %}New {{ schema_title }}{% elif entry_title %}{{ entry_title }} <span class="wf-fg-muted wf-t-lg" style="font-weight: 400; text-transform: none; letter-spacing: 0; font-family: var(--font-sans, inherit);">({{ schema_title }})</span>{% else %}Edit {{ schema_title }}{% endif %}
+    </h1>
     {% if not is_new %}{% include "content/_status_control.html" %}{% endif %}
-  </h1>
-  {% if not is_single %}
-  <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}" class="wf-fg-muted">Back to {{ schema_title }}</a>
-  {% endif %}
-</div>
+  </div>
 
 {% if flash_message %}
 <div class="wf-alert {% if flash_kind == 'success' %}ok{% elif flash_kind == 'error' %}err{% else %}info{% endif %}">
@@ -32,18 +32,19 @@
 </div>
 {% endif %}
 
-<div class="wf-panel">
-  <div class="wf-panel-body">
-  <form method="post" enctype="multipart/form-data"
+<div class="wf-panel wf-grow">
+  <form method="post" enctype="multipart/form-data" class="wf-f wf-col wf-truncate"
     action="{% if is_single %}/apps/{{ app.slug }}/content/{{ schema_slug }}/_single{% elif is_new %}/apps/{{ app.slug }}/content/{{ schema_slug }}/new{% else %}/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}{% endif %}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    {{ form_fields|safe }}
+    <div class="wf-panel-body" style="overflow-y: auto; flex: 1; min-height: 0;">
+      {{ form_fields|safe }}
+    </div>
     {% if user_role == "viewer" %}
-    <div class="wf-fg-muted wf-t-sm wf-mt-6 wf-hair" style="padding-top: 16px;">
-      You have view-only access. Contact an admin to request editor permissions.
+    <div class="wf-tablefoot">
+      <span class="wf-fg-muted wf-t-sm">You have view-only access. Contact an admin to request editor permissions.</span>
     </div>
     {% else %}
-    <div class="wf-f wf-gap-3 wf-mt-6 wf-hair" style="padding-top: 16px;">
+    <div class="wf-tablefoot wf-gap-3">
       <button type="submit" class="wf-btn primary">
         {% if is_single %}Save{% elif is_new %}Create{% else %}Save Changes{% endif %}
       </button>
@@ -60,7 +61,6 @@
     </div>
     {% endif %}
   </form>
-  </div>
 </div>
 
 {% if user_role != "viewer" %}

@@ -74,6 +74,8 @@
 }
 .wf-icon-btn:hover { background: var(--bg-hover); color: var(--fg-strong); border-color: var(--hairline); }
 .wf-icon-btn.ghost { border-color: transparent; }
+.wf-icon-btn.danger { color: var(--err); border-color: var(--err); }
+.wf-icon-btn.danger:hover { background: color-mix(in oklab, var(--err) 12%, transparent); }
 
 @keyframes wf-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
@@ -815,21 +817,31 @@
   color: var(--fg);
   font-variant-numeric: tabular-nums;
 }
+.wf-table thead {
+    border-top: var(--border-1) solid var(--hairline);
+    border-bottom: var(--border-1) solid var(--hairline);
+}
+
 .wf-table thead th {
   font-size: 10px; font-weight: var(--fw-bold);
   letter-spacing: var(--tr-caps); text-transform: uppercase;
   color: var(--fg-muted);
   text-align: left;
   padding: 10px 16px;
-  border-top: var(--border-1) solid var(--hairline);
-  border-bottom: var(--border-1) solid var(--hairline);
   white-space: nowrap; vertical-align: middle;
 }
+
+.wf-table tbody tr {
+    border-bottom: var(--border-1) solid var(--hairline-dim);
+    height: var(--hit);
+}
+
 .wf-table tbody td {
-  padding: 14px 16px; height: var(--hit);
-  border-bottom: var(--border-1) solid var(--hairline-dim);
   vertical-align: middle;
   color: var(--fg);
+  padding: 8px 16px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 240px;
 }
 .wf-table tbody tr:last-child td { border-bottom: var(--border-1) solid var(--hairline); }
 .wf-table th:first-child, .wf-table td:first-child { padding-left: 20px; }
@@ -844,6 +856,16 @@
 .wf-table.is-interactive tbody tr:focus-within { background: var(--bg-hover); outline: 2px solid var(--accent); outline-offset: -2px; }
 .wf-table tbody tr[aria-selected="true"] td { background: var(--bg-hover); color: var(--fg-strong); }
 .wf-table.sticky thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
+
+/* Pinned last column — stays visible while scrolling horizontally. */
+.wf-table.pin-last th:last-child,
+.wf-table.pin-last td:last-child {
+  position: sticky; right: 0;
+  background: var(--bg); z-index: 1;
+  box-shadow: -2px 0 0 0 var(--hairline-dim);
+  width: 1%; white-space: nowrap;
+}
+.wf-table.sticky.pin-last thead th:last-child { z-index: 2; }
 .wf-table tbody tr.is-selected td { background: var(--accent-wash); }
 
 /* Density modes. */

@@ -5,7 +5,7 @@
   <h1>Uploads</h1>
 </div>
 
-<div class="wf-panel wf-p-0">
+<div class="wf-panel wf-p-0 wf-grow">
   <form class="wf-filterbar" hx-get="/apps/{{ app.slug }}/uploads" hx-target="#uploads-table" hx-select="#uploads-table" hx-push-url="true" hx-swap="outerHTML"
     onsubmit="this.querySelectorAll('input,select').forEach(function(el){if(!el.value)el.disabled=true})">
     <input class="wf-input sm" type="text" name="q" value="{{ filter_q }}" placeholder="Search by filename...">
@@ -15,12 +15,12 @@
       <option value="{{ s.slug }}" {% if filter_schema == s.slug %}selected{% endif %}>{{ s.title }}</option>
       {% endfor %}
     </select>
-    <button class="wf-btn sm primary" type="submit">Filter</button>
+    <button class="wf-btn sm primary" type="submit">⫧</button>
   </form>
 
-  <div id="uploads-table">
+  <div id="uploads-table" class="wf-tablescroll wf-grow">
     {% if uploads %}
-    <table class="wf-table">
+    <table class="wf-table sticky pin-last">
       <thead>
         <tr>
           <th>Filename</th>
@@ -28,7 +28,7 @@
           <th>Size</th>
           <th>Created</th>
           <th>Used By</th>
-          <th>Actions</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -47,9 +47,9 @@
               <span class="wf-tag warn"><span class="dot"></span>Orphaned</span>
             {% endif %}
           </td>
-          <td>
-            <a href="/apps/{{ app.slug }}/uploads/file/{{ upload.hash }}/{{ upload.filename }}" target="_blank">View</a>
-            <a href="/apps/{{ app.slug }}/uploads/file/{{ upload.hash }}/{{ upload.filename }}" download>Download</a>
+          <td class="wf-text-right">
+            <a class="wf-btn sm" href="/apps/{{ app.slug }}/uploads/file/{{ upload.hash }}/{{ upload.filename }}" target="_blank">View</a>
+            <a class="wf-btn sm" href="/apps/{{ app.slug }}/uploads/file/{{ upload.hash }}/{{ upload.filename }}" download>Download</a>
           </td>
         </tr>
         {% endfor %}
@@ -58,6 +58,9 @@
     {% else %}
     <div class="wf-empty dense"><div class="wf-empty-glyph">∅</div><div class="wf-empty-title">No uploads</div><div class="wf-empty-body">Files uploaded via content forms will appear here.</div></div>
     {% endif %}
+  </div>
+  <div class="wf-tablefoot">
+    <span>{{ uploads | length }} uploads</span>
   </div>
 </div>
 {% endblock %}

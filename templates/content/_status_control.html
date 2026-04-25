@@ -1,11 +1,10 @@
-<span id="entry-status" class="wf-if wf-ai-c wf-gap-2" style="margin-left: 8px; vertical-align: middle;">
+<span id="entry-status" class="wf-if wf-ai-c wf-gap-2 wf-ml-2">
   {% if entry_status == "draft" %}
     <span class="wf-tag warn"><span class="dot"></span>Draft</span>
     {% if user_role != "viewer" %}
     <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/publish"
           hx-post="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/publish"
-          hx-target="#entry-status" hx-swap="outerHTML"
-          style="display: inline;">
+          hx-target="#entry-status" hx-swap="outerHTML">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <button type="submit" class="wf-btn sm primary">Publish</button>
     </form>
@@ -15,8 +14,8 @@
     {% if user_role != "viewer" %}
     <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/unpublish"
           hx-post="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry_id }}/unpublish"
-          hx-target="#entry-status" hx-swap="outerHTML"
-          style="display: inline;">
+          hx-target="#entry-status" hx-swap="outerHTML" class="wf-f wf-ai-c"
+          >
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
       <button type="submit" class="wf-btn sm">Unpublish</button>
     </form>

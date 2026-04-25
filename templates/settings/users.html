@@ -37,122 +37,134 @@
 </div>
 {% endif %}
 
-<div class="wf-panel wf-p-0 wf-mb-6">
-  <div class="wf-panel-head"><span class="wf-panel-title">Registered Users</span></div>
-  {% if users %}
-  <table class="wf-table">
-    <thead>
-      <tr>
-        <th>Username</th>
-        <th>Role</th>
-        <th>Created</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for u in users %}
-      <tr>
-        <td class="strong">{{ u.username }}{% if u.username == current_username %} <span class="wf-fg-muted wf-t-sm">(you)</span>{% endif %}</td>
-        <td>
-          {% if u.username != current_username %}
-          <form method="post" action="/settings/users/{{ u.id }}/role" style="display: inline;">
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <select name="role" onchange="this.form.submit()" class="wf-select sm">
-              <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
-              <option value="editor" {% if u.role == 'editor' %}selected{% endif %}>editor</option>
-              <option value="viewer" {% if u.role == 'viewer' %}selected{% endif %}>viewer</option>
-            </select>
-          </form>
-          {% else %}
-          {% if u.role == 'admin' %}
-          <span class="wf-tag err">admin</span>
-          {% elif u.role == 'editor' %}
-          <span class="wf-tag warn">editor</span>
-          {% else %}
-          <span class="wf-tag">viewer</span>
-          {% endif %}
-          {% endif %}
-        </td>
-        <td class="muted">{{ u.created_at|datefmt }}</td>
-        <td class="wf-text-right">
-          {% if u.username != current_username %}
-          <form method="post" action="/settings/users/{{ u.id }}/delete" style="display: inline;"
-            onsubmit="return confirm('Delete user {{ u.username }}? This cannot be undone.')">
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <button type="submit" class="wf-err" style="background: none; border: none; cursor: pointer;">Delete</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <div class="wf-empty bordered">
-    <div class="wf-empty-body">No registered users.</div>
-  </div>
-  {% endif %}
-</div>
-
-<div class="wf-panel wf-mb-6">
+<div class="wf-panel wf-mb-4">
   <div class="wf-panel-head"><span class="wf-panel-title">Invite User</span></div>
   <div class="wf-panel-body">
-    <form method="post" action="/settings/users/invite" class="wf-f wf-gap-3">
+    <form method="post" action="/settings/users/invite" class="wf-f wf-ai-e wf-gap-3">
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <input type="email" name="email" placeholder="Email address" required class="wf-input wf-grow">
-      <select name="role" aria-label="Role" class="wf-select">
-        <option value="editor">Editor</option>
-        <option value="viewer">Viewer</option>
-        <option value="admin">Admin</option>
-      </select>
+      <div class="wf-field wf-grow">
+        <label class="wf-label">Email</label>
+        <input type="email" name="email" placeholder="user@example.com" required class="wf-input">
+      </div>
+      <div class="wf-field">
+        <label class="wf-label">Role</label>
+        <select name="role" aria-label="Role" class="wf-select" style="width: 140px;">
+          <option value="editor">Editor</option>
+          <option value="viewer">Viewer</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
       <button type="submit" class="wf-btn primary">Send Invite</button>
     </form>
   </div>
 </div>
 
-{% if invitations %}
-<div class="wf-panel wf-p-0">
-  <div class="wf-panel-head"><span class="wf-panel-title">Pending Invitations</span></div>
-  <table class="wf-table">
-    <thead>
-      <tr>
-        <th>Email</th>
-        <th>Role</th>
-        <th>Invited</th>
-        <th>Expires</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for inv in invitations %}
-      <tr>
-        <td class="strong">{{ inv.email }}</td>
-        <td>
-          {% if inv.role == 'admin' %}
-          <span class="wf-tag err">admin</span>
-          {% elif inv.role == 'editor' %}
-          <span class="wf-tag warn">editor</span>
-          {% else %}
-          <span class="wf-tag">viewer</span>
-          {% endif %}
-        </td>
-        <td class="muted">{{ inv.created_at|datefmt }}</td>
-        <td class="muted">{{ inv.expires_at|datefmt }}</td>
-        <td class="wf-text-right">
-          <form method="post" action="/settings/users/invitations/{{ inv.id }}/delete" style="display: inline;">
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <button type="submit" class="wf-err" style="background: none; border: none; cursor: pointer;"
-              onclick="return confirm('Revoke this invitation?')">Revoke</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="wf-split wf-grow wf-gap-2">
+  <div class="wf-panel wf-p-0 wf-grow">
+    <div class="wf-panel-head"><span class="wf-panel-title">Users</span></div>
+    <div class="wf-tablescroll wf-grow">
+      {% if users %}
+      <table class="wf-table sticky pin-last">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr>
+            <td class="strong">{{ u.username }}{% if u.username == current_username %} <span class="wf-fg-muted wf-t-sm">(you)</span>{% endif %}</td>
+            <td>
+              {% if u.username != current_username %}
+              <form method="post" action="/settings/users/{{ u.id }}/role" style="display: inline;">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <select name="role" onchange="this.form.submit()" class="wf-select sm">
+                  <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
+                  <option value="editor" {% if u.role == 'editor' %}selected{% endif %}>editor</option>
+                  <option value="viewer" {% if u.role == 'viewer' %}selected{% endif %}>viewer</option>
+                </select>
+              </form>
+              {% else %}
+              {% if u.role == 'admin' %}
+              <span class="wf-tag err">admin</span>
+              {% elif u.role == 'editor' %}
+              <span class="wf-tag warn">editor</span>
+              {% else %}
+              <span class="wf-tag">viewer</span>
+              {% endif %}
+              {% endif %}
+            </td>
+            <td class="wf-text-right">
+              {% if u.username != current_username %}
+              <form method="post" action="/settings/users/{{ u.id }}/delete" style="display: inline;"
+                onsubmit="return confirm('Delete user {{ u.username }}? This cannot be undone.')">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button type="submit" class="wf-icon-btn danger" title="Delete">×</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="wf-empty dense">
+        <div class="wf-empty-body">No registered users.</div>
+      </div>
+      {% endif %}
+    </div>
+    <div class="wf-tablefoot">
+      <span>{{ users | length }} users</span>
+    </div>
+  </div>
+
+  <div class="wf-panel wf-p-0">
+    <div class="wf-panel-head"><span class="wf-panel-title">Pending Invitations</span></div>
+    <div class="wf-tablescroll wf-grow">
+      {% if invitations %}
+      <table class="wf-table sticky pin-last">
+        <thead>
+          <tr>
+            <th>Email</th>
+            <th>Role</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for inv in invitations %}
+          <tr>
+            <td class="strong">{{ inv.email }}</td>
+            <td>
+              {% if inv.role == 'admin' %}
+              <span class="wf-tag err">admin</span>
+              {% elif inv.role == 'editor' %}
+              <span class="wf-tag warn">editor</span>
+              {% else %}
+              <span class="wf-tag">viewer</span>
+              {% endif %}
+            </td>
+            <td class="wf-text-right">
+              <form method="post" action="/settings/users/invitations/{{ inv.id }}/delete" style="display: inline;">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button type="submit" class="wf-icon-btn danger" title="Revoke"
+                  onclick="return confirm('Revoke this invitation?')">×</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="wf-empty dense">
+        <div class="wf-empty-body">No pending invitations.</div>
+      </div>
+      {% endif %}
+    </div>
+    <div class="wf-tablefoot">
+      <span>{{ invitations | length }} pending</span>
+    </div>
+  </div>
 </div>
-{% else %}
-<div class="wf-empty bordered">
-  <div class="wf-empty-body">No pending invitations.</div>
-</div>
-{% endif %}
 {% endblock %}

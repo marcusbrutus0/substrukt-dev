@@ -17,8 +17,7 @@
 {% if q %}{% set filter_params = filter_params ~ "q=" ~ q ~ "&" %}{% endif %}
 {% if status_filter != "all" %}{% set filter_params = filter_params ~ "status=" ~ status_filter ~ "&" %}{% endif %}
 
-{% if entries %}
-<div class="wf-panel wf-p-0">
+<div class="wf-panel wf-p-0 wf-grow">
   <div class="wf-filterbar">
     <div class="wf-input-group wf-grow">
       <span class="wf-input-addon">⌕</span>
@@ -28,12 +27,14 @@
         hx-include="[name='status']"
         class="wf-input sm">
     </div>
-    <select name="status" hx-get="/apps/{{ app.slug }}/content/{{ schema_slug }}" hx-trigger="change" hx-target="#main-content" hx-push-url="true" hx-include="[name='q']"
-      class="wf-select sm">
-      <option value="all"{% if status_filter == "all" %} selected{% endif %}>All</option>
-      <option value="published"{% if status_filter == "published" %} selected{% endif %}>Published</option>
-      <option value="draft"{% if status_filter == "draft" %} selected{% endif %}>Draft</option>
-    </select>
+    <div>
+      <select name="status" hx-get="/apps/{{ app.slug }}/content/{{ schema_slug }}" hx-trigger="change" hx-target="#main-content" hx-push-url="true" hx-include="[name='q']"
+              class="wf-select sm">
+        <option value="all"{% if status_filter == "all" %} selected{% endif %}>All</option>
+        <option value="published"{% if status_filter == "published" %} selected{% endif %}>Published</option>
+        <option value="draft"{% if status_filter == "draft" %} selected{% endif %}>Draft</option>
+      </select>
+    </div>
   </div>
 
   {% if user_role != "viewer" %}
@@ -59,88 +60,95 @@
   </div>
   {% endif %}
 
-  <table id="content-table" class="wf-table">
-    <thead>
-      <tr>
-        {% if user_role != "viewer" %}
-        <th style="width: 32px;"><input type="checkbox" id="select-all" onchange="toggleAll(this)" class="wf-check"></th>
-        {% endif %}
-        <th>
-          <a href="{{ base_url }}?{{ filter_params }}sort=_id&order={% if sort_field == '_id' and sort_order == 'asc' %}desc{% else %}asc{% endif %}" style="color: inherit;">
-            ID {% if sort_field == "_id" or sort_field == "" %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
-          </a>
-        </th>
-        <th>
-          <a href="{{ base_url }}?{{ filter_params }}sort=_status&order={% if sort_field == '_status' and sort_order == 'asc' %}desc{% else %}asc{% endif %}" style="color: inherit;">
-            Status {% if sort_field == "_status" %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
-          </a>
-        </th>
-        {% for col in columns %}
-        <th>
-          <a href="{{ base_url }}?{{ filter_params }}sort={{ column_keys[loop.index0] }}&order={% if sort_field == column_keys[loop.index0] and sort_order == 'asc' %}desc{% else %}asc{% endif %}" style="color: inherit;">
-            {{ col }} {% if sort_field == column_keys[loop.index0] %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
-          </a>
-        </th>
-        {% endfor %}
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for entry in entries %}
-      <tr>
-        {% if user_role != "viewer" %}
-        <td style="width: 32px;"><input type="checkbox" class="bulk-check wf-check" value="{{ entry.id }}" onchange="updateBulkBar()"></td>
-        {% endif %}
-        <td class="wf-mono wf-fg-muted">{{ entry.id }}</td>
-        <td>
-          {% if entry.status == "published" %}
-          <span class="wf-tag ok"><span class="dot"></span>Published</span>
-          {% else %}
-          <span class="wf-tag warn"><span class="dot"></span>Draft</span>
-          {% endif %}
-        </td>
-        {% for col in entry.columns %}
-        <td>
-          {%- if col == "true" -%}
-          <span class="wf-tag ok"><span class="dot"></span>Yes</span>
-          {%- elif col == "false" -%}
-          <span class="wf-tag">No</span>
-          {%- else -%}
-          {{ col }}
-          {%- endif -%}
-        </td>
-        {% endfor %}
-        <td class="wf-text-right" style="white-space: nowrap;">
-          <a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/edit">{% if user_role == "viewer" %}View{% else %}Edit{% endif %}</a>
+  <div class="wf-tablescroll wf-grow">
+    <table id="content-table" class="wf-table sticky pin-last">
+      <thead>
+        <tr>
           {% if user_role != "viewer" %}
-          <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/delete" hx-boost="false" onsubmit="return confirm('Delete this entry?')" style="display: inline; margin-left: 8px;">
-            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-            <button type="submit" class="wf-err" style="background: none; border: none; cursor: pointer; font-size: inherit;">Delete</button>
-          </form>
+            <th style="width: 32px;"><input type="checkbox" id="select-all" onchange="toggleAll(this)" class="wf-check"></th>
           {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+          <th>
+            <a href="{{ base_url }}?{{ filter_params }}sort=_id&order={% if sort_field == '_id' and sort_order == 'asc' %}desc{% else %}asc{% endif %}" style="color: inherit;">
+              ID {% if sort_field == "_id" or sort_field == "" %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
+            </a>
+          </th>
+          <th>
+            <a href="{{ base_url }}?{{ filter_params }}sort=_status&order={% if sort_field == '_status' and sort_order == 'asc' %}desc{% else %}asc{% endif %}" style="color: inherit;">
+              Status {% if sort_field == "_status" %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
+            </a>
+          </th>
+          {% for col in columns %}
+            <th>
+              <a href="{{ base_url }}?{{ filter_params }}sort={{ column_keys[loop.index0] }}&order={% if sort_field == column_keys[loop.index0] and sort_order == 'asc' %}desc{% else %}asc{% endif %}" style="color: inherit;">
+                {{ col }} {% if sort_field == column_keys[loop.index0] %}{% if sort_order == "desc" %}&#9660;{% else %}&#9650;{% endif %}{% endif %}
+              </a>
+            </th>
+          {% endfor %}
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if entries %}
+          {% for entry in entries %}
+            <tr>
+              {% if user_role != "viewer" %}
+                <td style="width: 32px;"><input type="checkbox" class="bulk-check wf-check" value="{{ entry.id }}" onchange="updateBulkBar()"></td>
+              {% endif %}
+              <td class="wf-mono wf-fg-muted">{{ entry.id }}</td>
+              <td>
+                {% if entry.status == "published" %}
+                  <span class="wf-tag ok"><span class="dot"></span>Published</span>
+                {% else %}
+                  <span class="wf-tag warn"><span class="dot"></span>Draft</span>
+                {% endif %}
+              </td>
+              {% for col in entry.columns %}
+                <td>
+                  {%- if col == "true" -%}
+                    <span class="wf-tag ok"><span class="dot"></span>Yes</span>
+                  {%- elif col == "false" -%}
+                    <span class="wf-tag">No</span>
+                  {%- else -%}
+                    {{ col }}
+                  {%- endif -%}
+                </td>
+              {% endfor %}
+              <td class="wf-text-right">
+                <a class="wf-btn sm" href="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/edit">{% if user_role == "viewer" %}View{% else %}Edit{% endif %}</a>
+                {% if user_role != "viewer" %}
+                  <form method="post" action="/apps/{{ app.slug }}/content/{{ schema_slug }}/{{ entry.id }}/delete" hx-boost="false" onsubmit="return confirm('Delete this entry?')" style="display: inline; margin-left: 8px;">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                    <button type="submit" class="wf-icon-btn danger" title="Delete">×</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <div class="wf-empty bordered">
+            <div class="wf-empty-title">{% if q %}No entries match your search{% else %}No entries yet{% endif %}</div>
+            {% if not q %}
+              <div class="wf-empty-body"><a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/new">Create your first entry</a>.</div>
+            {% endif %}
+          </div>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  <div class="wf-tablefoot">
+    <span>{{ page_start }}–{{ page_end }} OF {{ filtered }}</span>
+    <span style="flex: 1;"></span>
+    {% if has_prev or has_next %}
+      {% set sort_params = "" %}
+      {% if sort_field %}{% set sort_params = sort_params ~ "sort=" ~ sort_field ~ "&order=" ~ sort_order ~ "&" %}{% endif %}
+      <div class="wf-pagination">
+        {% if has_prev %}<a href="{{ base_url }}?{{ filter_params }}{{ sort_params }}page={{ page - 1 }}">←</a>{% else %}<button disabled>←</button>{% endif %}
+        <a class="is-active">{{ page }}</a>
+        {% if has_next %}<a href="{{ base_url }}?{{ filter_params }}{{ sort_params }}page={{ page + 1 }}">→</a>{% else %}<button disabled>→</button>{% endif %}
+      </div>
+    {% endif %}
+  </div>
 </div>
-{% if has_prev or has_next %}
-{% set sort_params = "" %}
-{% if sort_field %}{% set sort_params = sort_params ~ "sort=" ~ sort_field ~ "&order=" ~ sort_order ~ "&" %}{% endif %}
-<div class="wf-pagination wf-mt-4">
-  {% if has_prev %}<a href="{{ base_url }}?{{ filter_params }}{{ sort_params }}page={{ page - 1 }}">←</a>{% else %}<button disabled>←</button>{% endif %}
-  <span class="wf-fg-muted wf-t-sm">Page {{ page }}</span>
-  {% if has_next %}<a href="{{ base_url }}?{{ filter_params }}{{ sort_params }}page={{ page + 1 }}">→</a>{% else %}<button disabled>→</button>{% endif %}
-</div>
-{% endif %}
-{% else %}
-<div class="wf-empty bordered">
-  <div class="wf-empty-title">{% if q %}No entries match your search{% else %}No entries yet{% endif %}</div>
-  {% if not q %}
-  <div class="wf-empty-body"><a href="/apps/{{ app.slug }}/content/{{ schema_slug }}/new">Create your first entry</a>.</div>
-  {% endif %}
-</div>
-{% endif %}
 
 <script>
 function toggleAll(el) {

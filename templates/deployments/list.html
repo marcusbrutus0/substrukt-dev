@@ -15,124 +15,131 @@
 </div>
 {% endif %}
 
-{% if deployments %}
-<div class="wf-panel wf-p-0 wf-mb-8">
-  <table class="wf-table">
-    <thead>
-      <tr>
-        <th style="width: 32px;"></th>
-        <th>Name</th>
-        <th>URL</th>
-        <th>Mode</th>
-        <th>Drafts</th>
-        <th>Last Fired</th>
-        <th class="wf-text-right">Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for dep in deployments %}
-      <tr>
-        <td>
-          <span class="wf-dot {% if dep.is_dirty %}wf-warn{% else %}wf-ok{% endif %}"
-            title="{% if dep.is_dirty %}Changes pending{% else %}Up to date{% endif %}"></span>
-        </td>
-        <td style="font-weight: 600;">{{ dep.name }}</td>
-        <td class="wf-fg-muted wf-mono wf-truncate" style="max-width: 240px;" title="{{ dep.webhook_url }}">
-          {{ dep.webhook_url[:40] }}{% if dep.webhook_url|length > 40 %}...{% endif %}
-        </td>
-        <td>
-          {% if dep.auto_deploy %}
-          <span class="wf-tag accent">Auto ({{ dep.debounce_seconds }}s)</span>
-          {% else %}
-          <span class="wf-tag">Manual</span>
-          {% endif %}
-        </td>
-        <td>
-          {% if dep.include_drafts %}
-          <span class="wf-tag accent">Yes</span>
-          {% else %}
-          <span class="wf-fg-muted wf-t-sm">No</span>
-          {% endif %}
-        </td>
-        <td class="wf-fg-muted wf-mono">
-          {% if dep.last_fired %}{{ dep.last_fired|datefmt }}{% else %}Never{% endif %}
-        </td>
-        <td class="wf-text-right">
-          <div class="wf-f wf-ai-c wf-jc-e wf-gap-2">
-            <form method="post" action="/apps/{{ app.slug }}/deployments/{{ dep.slug }}/fire" style="display: inline;">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <button type="submit" class="wf-accent" style="background: none; border: none; cursor: pointer;">Fire</button>
-            </form>
-            {% if user_role == "admin" %}
-            <a href="/apps/{{ app.slug }}/deployments/{{ dep.slug }}/edit" class="wf-fg-muted">Edit</a>
-            <form method="post" action="/apps/{{ app.slug }}/deployments/{{ dep.slug }}/delete" style="display: inline;"
-              onsubmit="return confirm('Delete deployment {{ dep.name }}?')">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <button type="submit" class="wf-err" style="background: none; border: none; cursor: pointer;">Delete</button>
-            </form>
+<div class="wf-panel wf-p-0 wf-grow wf-mb-8">
+  <div class="wf-tablescroll wf-grow">
+    {% if deployments %}
+    <table class="wf-table sticky pin-last">
+      <thead>
+        <tr>
+          <th style="width: 32px;"></th>
+          <th>Name</th>
+          <th>URL</th>
+          <th>Mode</th>
+          <th>Drafts</th>
+          <th>Last Fired</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dep in deployments %}
+        <tr>
+          <td>
+            <span class="wf-dot {% if dep.is_dirty %}wf-warn{% else %}wf-ok{% endif %}"
+              title="{% if dep.is_dirty %}Changes pending{% else %}Up to date{% endif %}"></span>
+          </td>
+          <td class="strong">{{ dep.name }}</td>
+          <td class="wf-fg-muted wf-mono wf-truncate" style="max-width: 240px;" title="{{ dep.webhook_url }}">
+            {{ dep.webhook_url[:40] }}{% if dep.webhook_url|length > 40 %}...{% endif %}
+          </td>
+          <td>
+            {% if dep.auto_deploy %}
+            <span class="wf-tag accent">Auto ({{ dep.debounce_seconds }}s)</span>
+            {% else %}
+            <span class="wf-tag">Manual</span>
             {% endif %}
-          </div>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+          </td>
+          <td>
+            {% if dep.include_drafts %}
+            <span class="wf-tag accent">Yes</span>
+            {% else %}
+            <span class="wf-fg-muted wf-t-sm">No</span>
+            {% endif %}
+          </td>
+          <td class="wf-fg-muted wf-mono">
+            {% if dep.last_fired %}{{ dep.last_fired|datefmt }}{% else %}Never{% endif %}
+          </td>
+          <td>
+            <div class="wf-f wf-ai-c wf-jc-e wf-gap-2">
+              <form method="post" action="/apps/{{ app.slug }}/deployments/{{ dep.slug }}/fire">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button type="submit" class="wf-btn sm accent">Fire</button>
+              </form>
+              {% if user_role == "admin" %}
+              <a href="/apps/{{ app.slug }}/deployments/{{ dep.slug }}/edit" class="wf-btn sm">Edit</a>
+              <form method="post" action="/apps/{{ app.slug }}/deployments/{{ dep.slug }}/delete"
+                onsubmit="return confirm('Delete deployment {{ dep.name }}?')">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button type="submit" class="wf-btn sm danger">Delete</button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="wf-empty dense"><div class="wf-empty-glyph">∅</div><div class="wf-empty-title">No deployments configured</div><div class="wf-empty-body">Create one to start deploying.</div></div>
+    {% endif %}
+  </div>
+  <div class="wf-tablefoot">
+    <span>{{ deployments | length }} deployment{{ "s" if deployments | length != 1 else "" }}</span>
+  </div>
 </div>
-{% else %}
-<div class="wf-empty bordered wf-mb-8">
-  <div class="wf-empty-title">No deployments configured</div>
-  <div class="wf-empty-body">Create one to start deploying.</div>
-</div>
-{% endif %}
 
 {% if history %}
 <h2 class="wf-mb-4">Webhook History</h2>
-<div class="wf-panel wf-p-0">
-  <table class="wf-table">
-    <thead>
-      <tr>
-        <th>Time</th>
-        <th>Deployment</th>
-        <th>Source</th>
-        <th>Status</th>
-        <th>HTTP</th>
-        <th>Time (ms)</th>
-        <th>Attempts</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for entry in history %}
-      <tr>
-        <td class="wf-fg-muted">{{ entry.created_at|datefmt }}</td>
-        <td>
-          <span class="wf-tag accent">{{ entry.deployment_name }}</span>
-        </td>
-        <td class="wf-fg-muted">{{ entry.trigger_source }}</td>
-        <td>
-          {% if entry.status == "success" %}
-          <span class="wf-tag ok"><span class="dot"></span>Success</span>
-          {% else %}
-          <span class="wf-tag err"><span class="dot"></span>Failed</span>
-          {% endif %}
-        </td>
-        <td class="wf-fg-muted wf-mono">{{ entry.http_status if entry.http_status else "—" }}</td>
-        <td class="wf-fg-muted wf-mono">{{ entry.response_time_ms if entry.response_time_ms else "—" }}</td>
-        <td>
-          {% if entry.attempt_count > 1 %}
-          <span class="wf-tag">{{ entry.attempt_count }} attempts</span>
-          {% else %}
-          <span class="wf-fg-muted wf-t-sm">1</span>
-          {% endif %}
-        </td>
-      </tr>
-      {% if entry.status == "failed" and entry.error_message %}
-      <tr>
-        <td colspan="7" class="wf-err wf-mono wf-t-sm">{{ entry.error_message }}</td>
-      </tr>
-      {% endif %}
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="wf-panel wf-p-0 wf-grow">
+  <div class="wf-tablescroll wf-grow">
+    <table class="wf-table sticky">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Deployment</th>
+          <th>Source</th>
+          <th>Status</th>
+          <th>HTTP</th>
+          <th>Time (ms)</th>
+          <th>Attempts</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in history %}
+        <tr>
+          <td class="wf-fg-muted">{{ entry.created_at|datefmt }}</td>
+          <td>
+            <span class="wf-tag accent">{{ entry.deployment_name }}</span>
+          </td>
+          <td class="wf-fg-muted">{{ entry.trigger_source }}</td>
+          <td>
+            {% if entry.status == "success" %}
+            <span class="wf-tag ok"><span class="dot"></span>Success</span>
+            {% else %}
+            <span class="wf-tag err"><span class="dot"></span>Failed</span>
+            {% endif %}
+          </td>
+          <td class="wf-fg-muted wf-mono">{{ entry.http_status if entry.http_status else "—" }}</td>
+          <td class="wf-fg-muted wf-mono">{{ entry.response_time_ms if entry.response_time_ms else "—" }}</td>
+          <td>
+            {% if entry.attempt_count > 1 %}
+            <span class="wf-tag">{{ entry.attempt_count }} attempts</span>
+            {% else %}
+            <span class="wf-fg-muted wf-t-sm">1</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% if entry.status == "failed" and entry.error_message %}
+        <tr>
+          <td colspan="7" class="wf-err wf-mono wf-t-sm">{{ entry.error_message }}</td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="wf-tablefoot">
+    <span>{{ history | length }} entr{{ "ies" if history | length != 1 else "y" }}</span>
+  </div>
 </div>
 {% endif %}
 {% endblock %}

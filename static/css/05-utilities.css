@@ -6,6 +6,7 @@
 /* Display */
 .wf-f { display: flex; } .wf-if { display: inline-flex; }
 .wf-g { display: grid; } .wf-ib { display: inline-block; }
+.wf-block { display: block; }
 .wf-hidden { display: none !important; }
 
 /* Direction + wrap */
