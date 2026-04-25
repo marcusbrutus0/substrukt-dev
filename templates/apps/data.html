@@ -54,17 +54,21 @@
     <p class="wf-fg-muted wf-t-sm wf-mb-4">Import a .tar.gz bundle. <span class="wf-err" style="font-weight: 600;">This will overwrite existing schemas, content, and uploads for this app.</span></p>
     <form id="import-form" method="post" action="/apps/{{ app.slug }}/data/import" enctype="multipart/form-data" hx-disable>
       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-      <div class="wf-f wf-gap-3 wf-ai-e">
+      <label class="wf-dropzone" id="import-dropzone" data-upload-zone>
         <input type="file" name="bundle" accept=".tar.gz,.tgz,application/gzip" required
-          id="bundle-input"
-          onchange="document.getElementById('import-btn').disabled=!this.files.length"
-          class="wf-input wf-grow">
-        <button type="button" id="import-btn" disabled
-          class="wf-btn primary"
-          onclick="showImportConfirm()">
-          Import Bundle
-        </button>
-      </div>
+          id="bundle-input" class="wf-dropzone-input" data-upload-input
+          onchange="document.getElementById('import-btn').disabled=!this.files.length">
+        <div class="wf-dropzone-frame">
+          <div class="wf-dropzone-glyph upload-zone-glyph">&darr;</div>
+          <div class="wf-dropzone-title upload-zone-title">Drop bundle or click</div>
+          <div class="wf-dropzone-hint upload-zone-hint">.tar.gz &middot; exported app bundle</div>
+        </div>
+      </label>
+      <button type="button" id="import-btn" disabled
+        class="wf-btn primary wf-mt-4"
+        onclick="showImportConfirm()">
+        Import Bundle
+      </button>
     </form>
   </div>
 </div>
