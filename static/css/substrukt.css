@@ -22,10 +22,11 @@
 .wf-shell {
   display: grid;
   grid-template-columns: 240px 1fr;
-  grid-template-rows: 1fr 22px;
-  grid-template-areas: "side main" "ml ml";
+  grid-template-rows: 1fr 22px 22px;
+  grid-template-areas: "side main" "ml ml" "mb mb";
   height: 100vh;
 }
 .wf-shell > .wf-sidebar { grid-area: side; }
 .wf-shell > .wf-main { grid-area: main; }
 .wf-shell > .wf-modeline { grid-area: ml; }
+.wf-shell > .wf-minibuffer { grid-area: mb; }

@@ -372,7 +372,6 @@ fn render_field(
                     &serde_json::to_string(&value.unwrap_or(&Value::Null)).unwrap_or_default(),
                 );
 
-                // Show image thumbnail for image MIME types
                 let thumbnail = if mime.starts_with("image/") {
                     format!(
                         r#"<img src="/apps/{app_slug}/uploads/file/{hash}/{filename}" alt="{filename}" style="height: 64px; width: 64px; object-fit: cover; border: 1px solid var(--hairline);">"#
@@ -399,12 +398,14 @@ fn render_field(
                 r#"<div class="wf-field" style="margin-top: 16px;">
   <label for="{name}" class="wf-label">{label}{req_star}</label>
   {current_html}
-  <div class="wf-dropzone" data-upload-zone>
-    <div class="upload-zone-prompt wf-dropzone-title">Drag a file here or click to browse</div>
-    <div class="upload-zone-info wf-hidden" style="font-size: 13px; margin-top: 8px;"></div>
-    <div class="upload-zone-preview wf-hidden" style="margin-top: 8px; display: flex; justify-content: center;"></div>
+  <label class="wf-dropzone" data-upload-zone>
     <input type="file" id="{name}" name="{name}" class="wf-dropzone-input" data-upload-input{req_attr}>
-  </div>
+    <div class="wf-dropzone-frame">
+      <div class="wf-dropzone-glyph upload-zone-glyph">&darr;</div>
+      <div class="wf-dropzone-title upload-zone-title">Drop files or click</div>
+      <div class="wf-dropzone-hint upload-zone-hint">Any file type accepted</div>
+    </div>
+  </label>
 {hint_html}</div>
 "#
             )
@@ -960,13 +961,20 @@ mod tests {
             "should have upload input"
         );
         assert!(
-            html.contains("Drag a file here or click to browse"),
+            html.contains("wf-dropzone-frame"),
+            "should have dropzone frame"
+        );
+        assert!(
+            html.contains("wf-dropzone-glyph"),
+            "should have dropzone glyph"
+        );
+        assert!(
+            html.contains("Drop files or click"),
             "should have prompt text"
         );
-        assert!(html.contains("upload-zone-info"), "should have info area");
         assert!(
-            html.contains("upload-zone-preview"),
-            "should have preview area"
+            html.contains("wf-dropzone-hint"),
+            "should have hint text"
         );
         assert!(
             html.contains("wf-dropzone-input"),

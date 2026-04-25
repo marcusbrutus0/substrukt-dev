@@ -110,8 +110,97 @@
       <span class="wf-ml-fill" aria-hidden="true"></span>
       <span class="wf-ml-seg">{{ current_username }}</span>
     </div>
+    <div class="wf-minibuffer" id="minibuffer" role="log" aria-live="polite" aria-label="Echo area">
+      <span class="wf-minibuffer-prompt">&lambda;</span>
+      <span class="wf-minibuffer-msg" id="mb-msg"></span>
+      <span class="wf-minibuffer-time" id="mb-time"></span>
+      <div class="wf-minibuffer-history" id="mb-history" aria-hidden="true">
+        <div class="row is-empty"><span class="msg">No messages yet.</span></div>
+      </div>
+    </div>
   </div>
   <script>
+    (function() {
+      var msgEl = document.getElementById('mb-msg');
+      var timeEl = document.getElementById('mb-time');
+      var historyEl = document.getElementById('mb-history');
+      var KINDS = ['ok', 'warn', 'err', 'info'];
+      var HISTORY_MAX = 8;
+      var STALE_MS = 5000;
+      var staleTimer = null;
+      var historyItems = [];
+
+      function fmtTime(d) {
+        d = d || new Date();
+        function pad(n) { return String(n).padStart(2, '0'); }
+        return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      }
+
+      function renderHistory() {
+        while (historyEl.firstChild) historyEl.removeChild(historyEl.firstChild);
+        if (!historyItems.length) {
+          var empty = document.createElement('div');
+          empty.className = 'row is-empty';
+          var emptyMsg = document.createElement('span');
+          emptyMsg.className = 'msg';
+          emptyMsg.textContent = 'No messages yet.';
+          empty.appendChild(emptyMsg);
+          historyEl.appendChild(empty);
+          return;
+        }
+        var items = historyItems.slice(-HISTORY_MAX).reverse();
+        for (var i = 0; i < items.length; i++) {
+          var h = items[i];
+          var row = document.createElement('div');
+          row.className = 'row' + (h.kind && KINDS.indexOf(h.kind) !== -1 ? ' is-' + h.kind : '');
+          var timeSpan = document.createElement('span');
+          timeSpan.className = 'time';
+          timeSpan.textContent = h.time;
+          var msgSpan = document.createElement('span');
+          msgSpan.className = 'msg';
+          msgSpan.textContent = h.msg;
+          row.appendChild(timeSpan);
+          row.appendChild(msgSpan);
+          historyEl.appendChild(row);
+        }
+      }
+
+      function echo(msg, opts) {
+        if (msg == null || msg === '') return;
+        opts = opts || {};
+        var kind = opts.kind && KINDS.indexOf(opts.kind) !== -1 ? opts.kind : '';
+        msgEl.className = 'wf-minibuffer-msg';
+        void msgEl.offsetWidth;
+        msgEl.textContent = msg;
+        if (kind) msgEl.classList.add('is-' + kind);
+        msgEl.classList.add('is-visible');
+        var t = fmtTime();
+        timeEl.textContent = t;
+        historyItems.push({ msg: msg, kind: kind, time: t });
+        if (historyItems.length > 40) historyItems.shift();
+        renderHistory();
+        clearTimeout(staleTimer);
+        if (!opts.sticky) {
+          staleTimer = setTimeout(function() { msgEl.classList.add('is-stale'); }, STALE_MS);
+        }
+      }
+
+      function clearEcho() {
+        clearTimeout(staleTimer);
+        msgEl.classList.remove('is-visible', 'is-stale', 'is-ok', 'is-warn', 'is-err', 'is-info');
+        msgEl.textContent = '';
+        timeEl.textContent = '';
+      }
+
+      window.wfEcho = echo;
+      window.wfEchoClear = clearEcho;
+
+      document.body.addEventListener('wfEcho', function(e) {
+        var d = e.detail || {};
+        echo(d.msg || '', { kind: d.kind || '', sticky: d.sticky || false });
+      });
+    })();
+
     function addArrayItem(name) {
       var container = document.getElementById('array-' + name);
       var template = document.getElementById('template-' + name);
@@ -167,9 +256,6 @@
       document.querySelectorAll('[data-upload-zone]:not(.upload-zone-init)').forEach(function(zone) {
         zone.classList.add('upload-zone-init');
         var input = zone.querySelector('[data-upload-input]');
-        var prompt = zone.querySelector('.upload-zone-prompt');
-        var info = zone.querySelector('.upload-zone-info');
-        var preview = zone.querySelector('.upload-zone-preview');
         if (!input) return;
 
         zone.addEventListener('dragover', function(e) {
@@ -192,19 +278,17 @@
         input.addEventListener('change', function() {
           if (!input.files || !input.files[0]) return;
           var file = input.files[0];
+          var glyph = zone.querySelector('.upload-zone-glyph');
+          var title = zone.querySelector('.upload-zone-title');
+          var hint = zone.querySelector('.upload-zone-hint');
 
-          // Show file info
-          info.textContent = file.name + ' (' + formatFileSize(file.size) + ', ' + (file.type || 'unknown type') + ')';
-          info.classList.remove('wf-hidden');
-          prompt.classList.add('wf-hidden');
+          title.textContent = file.name;
+          hint.textContent = formatFileSize(file.size) + ' · ' + (file.type || 'unknown type');
 
-          // Revoke previous preview URL if any
-          var prevImg = preview.querySelector('img');
+          var prevImg = glyph.querySelector('img');
           if (prevImg && prevImg.dataset.objectUrl) {
             URL.revokeObjectURL(prevImg.dataset.objectUrl);
           }
-          // Show image preview using safe DOM methods
-          while (preview.firstChild) preview.removeChild(preview.firstChild);
           if (file.type && file.type.startsWith('image/')) {
             var url = URL.createObjectURL(file);
             var img = document.createElement('img');
@@ -213,10 +297,10 @@
             img.dataset.objectUrl = url;
             img.style.cssText = 'height: 96px; max-width: 20rem; object-fit: contain; border: 1px solid var(--hairline);';
             img.onload = function() { URL.revokeObjectURL(url); };
-            preview.appendChild(img);
-            preview.classList.remove('wf-hidden');
+            while (glyph.firstChild) glyph.removeChild(glyph.firstChild);
+            glyph.appendChild(img);
           } else {
-            preview.classList.add('wf-hidden');
+            glyph.textContent = '✓';
           }
         });
       });
