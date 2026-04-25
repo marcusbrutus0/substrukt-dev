@@ -24,7 +24,7 @@ use crate::metrics;
 use crate::state::AppState;
 use crate::templates::base_for_htmx;
 
-pub fn build_router(state: AppState) -> Router {
+pub fn build_router(state: AppState, allowthem_auth_router: Router) -> Router {
     let auth_routes = auth::routes();
     let settings_routes = settings::routes();
     let apps_management = apps::routes();
@@ -44,7 +44,7 @@ pub fn build_router(state: AppState) -> Router {
             api::api_rate_limit,
         ));
 
-    Router::new()
+    let core = Router::new()
         .merge(auth_routes)
         .nest("/apps", apps_management)
         .nest("/apps/{app_slug}", app_content)
@@ -62,10 +62,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/metrics", axum::routing::get(metrics::metrics_handler))
         .nest_service("/static/css", ServeDir::new("static/css"))
         .fallback(not_found)
+        .with_state(state);
+
+    core.merge(allowthem_auth_router)
         .layer(middleware::from_fn(metrics::track_metrics))
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer(middleware::from_fn(security_headers))
-        .with_state(state)
 }
 
 /// Middleware that sets HTTP security headers on every response.
@@ -112,7 +114,7 @@ async fn not_found(
 }
 
 pub fn render_error(state: &AppState, status: u16, message: &str, is_htmx: bool) -> String {
-    render_error_with_nav(state, status, message, is_htmx, "", "", "")
+    render_error_with_nav(state, status, message, is_htmx, "", "", "", "")
 }
 
 pub fn render_error_with_nav(
@@ -123,6 +125,7 @@ pub fn render_error_with_nav(
     user_role: &str,
     current_username: &str,
     csrf_token: &str,
+    ath_csrf: &str,
 ) -> String {
     let Ok(tmpl) = state.templates.acquire_env() else {
         return format!("<h1>{status}</h1><p>{message}</p>");
@@ -135,6 +138,7 @@ pub fn render_error_with_nav(
             user_role => user_role,
             current_username => current_username,
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
         })
     {
         return html;

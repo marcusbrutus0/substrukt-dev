@@ -93,6 +93,7 @@ async fn list_entries(
     Query(params): Query<ListParams>,
 ) -> axum::response::Result<axum::response::Response> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
     let content_dir = state.config.app_content_dir(&app.app.slug);
     let schema_file = schema::get_schema(&schemas_dir, &schema_slug)
@@ -197,6 +198,7 @@ async fn list_entries(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -483,6 +485,7 @@ async fn new_entry_page(
             .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = username_str(&user);
     let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
@@ -518,6 +521,7 @@ async fn new_entry_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -541,6 +545,7 @@ async fn edit_entry_page(
     Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> axum::response::Result<axum::response::Response> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let flash = auth::take_flash(&session).await;
     let echo = auth::flash_echo_trigger(&flash);
     let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
@@ -592,6 +597,7 @@ async fn edit_entry_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -685,6 +691,7 @@ async fn create_entry(
     if let Err(validation_errors) = content::validate_content(&schema_file, &data, &ctx) {
         let errors: Vec<String> = validation_errors.iter().map(|e| e.to_string()).collect();
         let csrf_token = auth::ensure_csrf_token(&session).await;
+        let ath_csrf = auth::ath_csrf(&session).await;
         let ref_options =
             build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
         let form_html = content_form::render_form_fields(
@@ -699,6 +706,7 @@ async fn create_entry(
             && let Ok(html) = template.render(minijinja::context! {
                 base_template => base_for_htmx(is_htmx),
                 csrf_token => csrf_token,
+                ath_csrf => ath_csrf,
                 user_role => user_role,
                 current_username => current_username,
                 app => app.template_context(),
@@ -818,6 +826,7 @@ async fn update_entry(
     if let Err(validation_errors) = content::validate_content(&schema_file, &data, &ctx) {
         let errors: Vec<String> = validation_errors.iter().map(|e| e.to_string()).collect();
         let csrf_token = auth::ensure_csrf_token(&session).await;
+        let ath_csrf = auth::ath_csrf(&session).await;
         let ref_options =
             build_reference_options(&schema_file.schema, &state.cache, "", &app.app.slug);
         let form_html = content_form::render_form_fields(
@@ -832,6 +841,7 @@ async fn update_entry(
             && let Ok(html) = template.render(minijinja::context! {
                 base_template => base_for_htmx(is_htmx),
                 csrf_token => csrf_token,
+                ath_csrf => ath_csrf,
                 user_role => user_role,
                 current_username => current_username,
                 app => app.template_context(),
@@ -1478,6 +1488,7 @@ async fn entry_history(
     Path((_app_slug, schema_slug, entry_id)): Path<(String, String, String)>,
 ) -> axum::response::Result<Html<String>> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
     let app_dir = state.config.app_dir(&app.app.slug);
     let schema_file = schema::get_schema(&schemas_dir, &schema_slug)
@@ -1516,6 +1527,7 @@ async fn entry_history(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -1546,6 +1558,7 @@ async fn entry_diff(
     Query(params): Query<DiffParams>,
 ) -> axum::response::Result<Html<String>> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let schemas_dir = state.config.app_schemas_dir(&app.app.slug);
     let content_dir = state.config.app_content_dir(&app.app.slug);
     let app_dir = state.config.app_dir(&app.app.slug);
@@ -1622,6 +1635,7 @@ async fn entry_diff(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),

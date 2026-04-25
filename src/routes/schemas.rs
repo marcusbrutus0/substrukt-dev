@@ -58,6 +58,7 @@ async fn list_schemas(
         .collect();
 
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let flash = auth::take_flash(&session).await;
     let echo = auth::flash_echo_trigger(&flash);
     let user_role = &role.0;
@@ -77,6 +78,7 @@ async fn list_schemas(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -105,6 +107,7 @@ async fn new_schema_page(
             .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = user
         .username
@@ -133,6 +136,7 @@ async fn new_schema_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -277,6 +281,7 @@ async fn edit_schema_page(
             .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = user
         .username
@@ -299,6 +304,7 @@ async fn edit_schema_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -437,6 +443,7 @@ async fn render_schema_edit(
     current_username: &str,
 ) -> axum::response::Result<Html<String>> {
     let csrf_token = auth::ensure_csrf_token(session).await;
+    let ath_csrf = auth::ath_csrf(session).await;
     let tmpl = state
         .templates
         .acquire_env()
@@ -448,6 +455,7 @@ async fn render_schema_edit(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),

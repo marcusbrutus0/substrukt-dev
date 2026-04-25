@@ -34,6 +34,7 @@ fn htmx_aware_redirect(request: &Request, location: &str) -> Response {
 
 const FLASH_KEY: &str = "_flash";
 const CSRF_KEY: &str = "_csrf";
+const ATH_CSRF_KEY: &str = "_ath_csrf";
 
 /// Get the current authenticated user from request extensions.
 pub fn current_user(request: &Request) -> Option<&allowthem_core::User> {
@@ -48,6 +49,11 @@ pub fn current_user_role_from_ext(extensions: &axum::http::Extensions) -> Option
 /// Newtype to store the user's primary role in request extensions.
 #[derive(Clone)]
 pub struct CurrentUserRole(pub String);
+
+/// AllowThem's session-bound CSRF token, derived in require_auth and used by
+/// templates for POSTing to AllowThem routes (e.g. logout).
+#[derive(Clone)]
+pub struct AllowThemCsrf(pub String);
 
 /// Check that the current user has at least the given role level.
 /// Role hierarchy: admin > editor > viewer.
@@ -138,6 +144,17 @@ pub fn flash_echo_trigger(
     )
     .ok()?;
     Some(axum_htmx::HxResponseTrigger::after_settle([event]))
+}
+
+/// Read the AllowThem session-bound CSRF token stashed by require_auth.
+/// Used in template contexts for forms that POST to AllowThem routes.
+pub async fn ath_csrf(session: &Session) -> String {
+    session
+        .get::<String>(ATH_CSRF_KEY)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
 }
 
 /// Get or create a CSRF token for this session.
@@ -252,23 +269,21 @@ pub async fn require_auth(
 ) -> Response {
     let path = request.uri().path().to_string();
 
-    // Allow public paths
+    // Allow public paths (AllowThem handles all auth UI)
     if path.starts_with("/login")
-        || path.starts_with("/setup")
-        || path.starts_with("/signup")
+        || path.starts_with("/register")
+        || path.starts_with("/logout")
         || path.starts_with("/forgot-password")
-        || path.starts_with("/reset-password")
-        || path.starts_with("/verify-email")
-        || path.starts_with("/verify-pending")
-        || path.starts_with("/verify-resend")
+        || path.starts_with("/auth/reset-password")
+        || path.starts_with("/__allowthem/")
         || path.starts_with("/api/")
     {
         return next.run(request).await;
     }
 
-    // Redirect to setup if no users exist
+    // Redirect to register if no users exist (first user gets admin via events)
     if !state.has_users.load(std::sync::atomic::Ordering::Relaxed) {
-        return htmx_aware_redirect(&request, "/setup");
+        return htmx_aware_redirect(&request, "/register");
     }
 
     // Parse allowthem session cookie
@@ -292,6 +307,16 @@ pub async fn require_auth(
 
     // Resolve primary role
     let role = resolve_user_role(&state, &user.id).await;
+
+    // Derive AllowThem's session-bound CSRF token and stash in the
+    // tower-session so templates can include it in POST forms that target
+    // AllowThem routes (e.g. /logout).
+    if let Ok(key) = state.ath.csrf_key() {
+        let csrf = allowthem_core::derive_csrf_token(&token, key);
+        if let Some(sess) = request.extensions().get::<Session>().cloned() {
+            let _ = sess.insert(ATH_CSRF_KEY, &csrf).await;
+        }
+    }
 
     request.extensions_mut().insert(CurrentUserRole(role));
     request.extensions_mut().insert(user);

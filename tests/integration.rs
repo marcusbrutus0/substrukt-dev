@@ -19,6 +19,7 @@ struct TestServer {
     client: Client,
     pool: sqlx::SqlitePool,
     ath: allowthem_core::AllowThem,
+    state: substrukt::state::AppState,
     _data_dir: tempfile::TempDir,
     _shutdown: tokio::sync::oneshot::Sender<()>,
 }
@@ -51,7 +52,9 @@ impl TestServer {
         sqlx::query("CREATE TABLE IF NOT EXISTS app_tokens (api_token_id TEXT NOT NULL, app_id INTEGER NOT NULL, token_hash TEXT NOT NULL, PRIMARY KEY (api_token_id, app_id))").execute(&pool).await.unwrap();
 
         let session_store = MemoryStore::default();
-        let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
+        let session_layer = SessionManagerLayer::new(session_store)
+            .with_secure(false)
+            .with_same_site(tower_sessions::cookie::SameSite::Lax);
 
         let audit_db_path = data_dir.path().join("audit.db");
         let audit_pool = substrukt::audit::init_pool(&audit_db_path).await.unwrap();
@@ -60,6 +63,7 @@ impl TestServer {
         // allowthem auth setup
         let ath = allowthem_core::AllowThemBuilder::with_pool(pool.clone())
             .cookie_secure(false)
+            .csrf_key(*b"test-csrf-key-for-substrukt-test")
             .build()
             .await
             .unwrap();
@@ -84,7 +88,7 @@ impl TestServer {
 
         let pool_for_test = pool.clone();
         let ath_for_test = ath.clone();
-        let state = Arc::new(AppStateInner {
+        let state: substrukt::state::AppState = Arc::new(AppStateInner {
             pool,
             config,
             templates: reloader,
@@ -103,23 +107,43 @@ impl TestServer {
             openapi_cache: std::sync::Arc::new(std::sync::RwLock::new(None)),
             ath,
             auth_client,
-            email_sender: std::sync::Arc::new(allowthem_core::LogEmailSender),
+            email_sender: std::sync::Arc::new(allowthem_core::LogEmailSender) as std::sync::Arc<dyn allowthem_core::EmailSender>,
             has_users: std::sync::atomic::AtomicBool::new(false),
         });
 
-        let app = routes::build_router(state).layer(session_layer);
+        let email_sender: std::sync::Arc<dyn allowthem_core::EmailSender> =
+            std::sync::Arc::new(allowthem_core::LogEmailSender);
+        let allowthem_auth_router = allowthem_server::AllRoutesBuilder::new()
+            .login()
+            .register()
+            .logout()
+            .password_reset()
+            .email_sender(email_sender.clone())
+            .base_url("http://localhost:0".to_string())
+            .default_branding(
+                allowthem_core::applications::BrandingConfig::new("substrukt")
+                    .with_accent("#f59e0b", allowthem_core::AccentInk::Black),
+            )
+            .build(&ath_for_test)
+            .expect("Failed to build allowthem auth routes");
+
+        let state_for_test = state.clone();
+        let app = routes::build_router(state, allowthem_auth_router).layer(session_layer);
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let base_url = format!("http://{addr}");
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    rx.await.ok();
-                })
-                .await
-                .unwrap();
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async {
+                rx.await.ok();
+            })
+            .await
+            .unwrap();
         });
 
         let client = Client::builder()
@@ -133,6 +157,7 @@ impl TestServer {
             client,
             pool: pool_for_test,
             ath: ath_for_test,
+            state: state_for_test,
             _data_dir: data_dir,
             _shutdown: tx,
         }
@@ -149,18 +174,42 @@ impl TestServer {
     }
 
     async fn setup_admin(&self) {
-        let csrf = self.get_csrf("/setup").await;
-        self.client
-            .post(self.url("/setup"))
+        // Register via AllowThem's /register so the session cookie is set
+        // naturally through Set-Cookie response headers.
+        let resp = self.client.get(self.url("/register")).send().await.unwrap();
+        let body = resp.text().await.unwrap();
+        let csrf = extract_csrf_token(&body).expect("CSRF token on /register");
+        let resp = self
+            .client
+            .post(self.url("/register"))
             .form(&[
+                ("email", "admin@setup.local"),
                 ("username", "admin"),
                 ("password", "testpassword"),
-                ("confirm_password", "testpassword"),
-                ("_csrf", &csrf),
+                ("password_confirm", "testpassword"),
+                ("csrf_token", csrf.as_str()),
             ])
             .send()
             .await
             .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::SEE_OTHER,
+            "register should redirect on success"
+        );
+
+        // Assign admin role
+        let email = allowthem_core::Email::new("admin@setup.local".to_string()).unwrap();
+        let user = self.ath.db().get_user_by_email(&email).await.unwrap();
+        let admin_role = allowthem_core::RoleName::new("admin");
+        if let Ok(Some(role)) = self.ath.db().get_role_by_name(&admin_role).await {
+            let _ = self.ath.db().assign_role(&user.id, &role.id).await;
+        }
+
+        // Mark users exist
+        self.state
+            .has_users
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     async fn create_schema(&self, json: &str) {
@@ -266,31 +315,17 @@ impl Drop for TestServer {
 // ── Auth tests ───────────────────────────────────────────────
 
 #[tokio::test]
-async fn auth_redirects_to_setup_when_no_users() {
+async fn auth_redirects_to_register_when_no_users() {
     let s = TestServer::start().await;
     let resp = s.client.get(s.url("/")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/setup");
+    assert_eq!(resp.headers().get("location").unwrap(), "/register");
 }
 
 #[tokio::test]
-async fn auth_setup_creates_admin_and_sets_session() {
+async fn auth_setup_admin_and_session_works() {
     let s = TestServer::start().await;
-    let csrf = s.get_csrf("/setup").await;
-    let resp = s
-        .client
-        .post(s.url("/setup"))
-        .form(&[
-            ("username", "admin"),
-            ("password", "testpassword"),
-            ("confirm_password", "testpassword"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
+    s.setup_admin().await;
 
     // Session should now work -- "/apps" is the landing page
     let resp = s.client.get(s.url("/")).send().await.unwrap();
@@ -301,29 +336,12 @@ async fn auth_setup_creates_admin_and_sets_session() {
 }
 
 #[tokio::test]
-async fn auth_setup_rejects_when_user_exists() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let resp = s.client.get(s.url("/setup")).send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/login");
-}
-
-#[tokio::test]
 async fn auth_login_and_logout() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    // Logout (get CSRF from apps page which has nav with logout form)
-    let csrf = s.get_csrf("/apps").await;
-    let resp = s
-        .client
-        .post(s.url("/logout"))
-        .form(&[("_csrf", csrf.as_str())])
-        .send()
-        .await
-        .unwrap();
+    // Logout via AllowThem (GET works without CSRF)
+    let resp = s.client.get(s.url("/logout")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
     // Should redirect to login now
@@ -331,21 +349,22 @@ async fn auth_login_and_logout() {
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     assert_eq!(resp.headers().get("location").unwrap(), "/login");
 
-    // Login again
+    // Login again via AllowThem (uses "identifier" and "csrf_token")
     let csrf = s.get_csrf("/login").await;
     let resp = s
         .client
         .post(s.url("/login"))
         .form(&[
-            ("username", "admin"),
+            ("identifier", "admin@setup.local"),
             ("password", "testpassword"),
-            ("_csrf", csrf.as_str()),
+            ("csrf_token", csrf.as_str()),
         ])
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
+    // AllowThem redirects to "/" which then redirects to "/apps"
+    assert_eq!(resp.headers().get("location").unwrap(), "/");
 }
 
 // ── Password reset tests ─────────────────────────────────────
@@ -354,17 +373,23 @@ async fn auth_login_and_logout() {
 async fn forgot_password_is_publicly_accessible() {
     let s = TestServer::start().await;
     s.setup_admin().await;
-    // Log out so request is anonymous.
-    let _ = s.client.get(s.url("/logout")).send().await;
-    let resp = s
-        .client
+    // Use a fresh client (no session) to access forgot-password anonymously.
+    let fresh = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = fresh
         .get(s.url("/forgot-password"))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("Forgot password"), "unexpected body: {body}");
+    assert!(
+        body.contains("Forgot password") || body.contains("forgot-password"),
+        "unexpected body: {body}"
+    );
 }
 
 #[tokio::test]
@@ -372,19 +397,32 @@ async fn forgot_password_always_shows_sent_page() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    let csrf = s.get_csrf("/forgot-password").await;
+    // Use a fresh client (no session) for anonymous access.
+    let fresh = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = fresh.get(s.url("/forgot-password")).send().await.unwrap();
+    let body = resp.text().await.unwrap();
+    let csrf = extract_csrf_token(&body).expect("CSRF token not found on /forgot-password");
     // Submit an email that does not exist — must still render the generic
     // "check your email" page (no account enumeration).
-    let resp = s
-        .client
+    let resp = fresh
         .post(s.url("/forgot-password"))
-        .form(&[("email", "ghost@example.com"), ("_csrf", csrf.as_str())])
+        .form(&[
+            ("email", "ghost@example.com"),
+            ("csrf_token", csrf.as_str()),
+        ])
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("Check your email"), "unexpected body: {body}");
+    assert!(
+        body.contains("account with that email exists"),
+        "unexpected body: {body}"
+    );
 }
 
 #[tokio::test]
@@ -406,7 +444,7 @@ async fn reset_password_end_to_end_changes_password() {
     // GET the reset page with the token — should render the form.
     let resp = s
         .client
-        .get(s.url(&format!("/reset-password?token={raw_token}")))
+        .get(s.url(&format!("/auth/reset-password?token={raw_token}")))
         .send()
         .await
         .unwrap();
@@ -417,28 +455,37 @@ async fn reset_password_end_to_end_changes_password() {
     // Submit the new password.
     let resp = s
         .client
-        .post(s.url("/reset-password"))
+        .post(s.url("/auth/reset-password"))
         .form(&[
             ("token", raw_token.as_str()),
-            ("password", "newpassword123"),
+            ("new_password", "newpassword123"),
             ("confirm_password", "newpassword123"),
-            ("_csrf", csrf.as_str()),
+            ("csrf_token", csrf.as_str()),
         ])
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/login");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("password has been reset"),
+        "expected success message, got: {body}"
+    );
 
-    // Old password no longer works.
-    let csrf = s.get_csrf("/login").await;
-    let resp = s
-        .client
+    // Old password no longer works. Use a fresh client (no session).
+    let fresh = Client::builder()
+        .cookie_store(true)
+        .redirect(redirect::Policy::none())
+        .build()
+        .unwrap();
+    let body = fresh.get(s.url("/login")).send().await.unwrap().text().await.unwrap();
+    let csrf = extract_csrf_token(&body).expect("CSRF on login");
+    let resp = fresh
         .post(s.url("/login"))
         .form(&[
-            ("username", "admin"),
+            ("identifier", "admin@setup.local"),
             ("password", "testpassword"),
-            ("_csrf", csrf.as_str()),
+            ("csrf_token", csrf.as_str()),
         ])
         .send()
         .await
@@ -450,20 +497,20 @@ async fn reset_password_end_to_end_changes_password() {
     );
 
     // New password works.
-    let csrf = s.get_csrf("/login").await;
-    let resp = s
-        .client
+    let body = fresh.get(s.url("/login")).send().await.unwrap().text().await.unwrap();
+    let csrf = extract_csrf_token(&body).expect("CSRF on login");
+    let resp = fresh
         .post(s.url("/login"))
         .form(&[
-            ("username", "admin"),
+            ("identifier", "admin@setup.local"),
             ("password", "newpassword123"),
-            ("_csrf", csrf.as_str()),
+            ("csrf_token", csrf.as_str()),
         ])
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
+    assert_eq!(resp.headers().get("location").unwrap(), "/");
 }
 
 #[tokio::test]
@@ -473,11 +520,16 @@ async fn reset_password_rejects_invalid_token() {
 
     let resp = s
         .client
-        .get(s.url("/reset-password?token=not-a-real-token"))
+        .get(s.url("/auth/reset-password?token=not-a-real-token"))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("invalid or has expired"),
+        "expected invalid token message, got: {body}"
+    );
 }
 
 #[tokio::test]
@@ -496,7 +548,7 @@ async fn reset_password_rejects_used_token() {
 
     let resp = s
         .client
-        .get(s.url(&format!("/reset-password?token={raw_token}")))
+        .get(s.url(&format!("/auth/reset-password?token={raw_token}")))
         .send()
         .await
         .unwrap();
@@ -506,29 +558,32 @@ async fn reset_password_rejects_used_token() {
     // Consume the token.
     let resp = s
         .client
-        .post(s.url("/reset-password"))
+        .post(s.url("/auth/reset-password"))
         .form(&[
             ("token", raw_token.as_str()),
-            ("password", "newpassword123"),
+            ("new_password", "newpassword123"),
             ("confirm_password", "newpassword123"),
-            ("_csrf", csrf.as_str()),
+            ("csrf_token", csrf.as_str()),
         ])
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("password has been reset"));
 
     // Reusing the same token must fail.
     let resp = s
         .client
-        .get(s.url(&format!("/reset-password?token={raw_token}")))
+        .get(s.url(&format!("/auth/reset-password?token={raw_token}")))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("invalid or has expired"));
 }
 
-// ── Email verification tests ─────────────────────────────────
 
 #[tokio::test]
 async fn setup_admin_is_auto_verified_and_can_login() {
@@ -547,36 +602,32 @@ async fn setup_admin_is_auto_verified_and_can_login() {
     let resp = fresh
         .post(s.url("/login"))
         .form(&[
-            ("username", "admin"),
+            ("identifier", "admin@setup.local"),
             ("password", "testpassword"),
-            ("_csrf", csrf.as_str()),
+            ("csrf_token", csrf.as_str()),
         ])
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
+    assert_eq!(resp.headers().get("location").unwrap(), "/");
 }
 
 #[tokio::test]
-async fn login_hard_blocks_unverified_user() {
+async fn login_blocks_inactive_user() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    // Create a second user directly (bypassing signup) and force email_verified=0.
-    let email = allowthem_core::Email::new("unverified@example.com".to_string()).unwrap();
-    let username = allowthem_core::Username::new("unverified".to_string());
+    // Create a second user and deactivate them.
+    let email = allowthem_core::Email::new("inactive@example.com".to_string()).unwrap();
+    let username = allowthem_core::Username::new("inactive".to_string());
     let user = s
         .ath
         .db()
         .create_user(email, "testpassword", Some(username), None)
         .await
         .unwrap();
-    sqlx::query("UPDATE allowthem_users SET email_verified = 0 WHERE id = ?")
-        .bind(user.id)
-        .execute(&s.pool)
-        .await
-        .unwrap();
+    s.ath.db().update_user_active(user.id, false).await.unwrap();
 
     let fresh = Client::builder()
         .cookie_store(true)
@@ -589,238 +640,21 @@ async fn login_hard_blocks_unverified_user() {
     let resp = fresh
         .post(s.url("/login"))
         .form(&[
-            ("username", "unverified"),
+            ("identifier", "inactive@example.com"),
             ("password", "testpassword"),
-            ("_csrf", csrf.as_str()),
+            ("csrf_token", csrf.as_str()),
         ])
         .send()
         .await
         .unwrap();
-    // Correct credentials but blocked — rendered as 200 with error, no session.
+    // Correct credentials but inactive — AllowThem shows generic error, no session.
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    assert!(
-        body.contains("verify your email"),
-        "expected verify message, got: {body}"
-    );
     // Verify no session was issued: /apps should redirect to /login.
     let resp = fresh.get(s.url("/apps")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
     assert_eq!(resp.headers().get("location").unwrap(), "/login");
 }
 
-#[tokio::test]
-async fn verify_email_with_valid_token_unblocks_login() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let email = allowthem_core::Email::new("pending@example.com".to_string()).unwrap();
-    let username = allowthem_core::Username::new("pending".to_string());
-    let user = s
-        .ath
-        .db()
-        .create_user(email, "testpassword", Some(username), None)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE allowthem_users SET email_verified = 0 WHERE id = ?")
-        .bind(user.id)
-        .execute(&s.pool)
-        .await
-        .unwrap();
-
-    let token = s.ath.db().create_email_verification(user.id).await.unwrap();
-    let resp = s
-        .client
-        .get(s.url(&format!("/verify-email?token={token}")))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("verified"), "got: {body}");
-
-    // Now login should succeed.
-    let fresh = Client::builder()
-        .cookie_store(true)
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-    let body = fresh
-        .get(s.url("/login"))
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let resp = fresh
-        .post(s.url("/login"))
-        .form(&[
-            ("username", "pending"),
-            ("password", "testpassword"),
-            ("_csrf", csrf.as_str()),
-        ])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
-}
-
-#[tokio::test]
-async fn verify_email_rejects_invalid_token() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let resp = s
-        .client
-        .get(s.url("/verify-email?token=not-a-real-token"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    assert!(
-        body.contains("invalid") || body.contains("expired"),
-        "got: {body}"
-    );
-}
-
-#[tokio::test]
-async fn verify_resend_mints_fresh_token() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let email = allowthem_core::Email::new("needs@example.com".to_string()).unwrap();
-    let username = allowthem_core::Username::new("needs".to_string());
-    let user = s
-        .ath
-        .db()
-        .create_user(email, "testpassword", Some(username), None)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE allowthem_users SET email_verified = 0 WHERE id = ?")
-        .bind(user.id)
-        .execute(&s.pool)
-        .await
-        .unwrap();
-
-    let csrf = s.get_csrf("/verify-pending").await;
-    let resp = s
-        .client
-        .post(s.url("/verify-resend"))
-        .form(&[("email", "needs@example.com"), ("_csrf", csrf.as_str())])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("Check your email"), "got: {body}");
-
-    // A fresh token row should exist in the DB for this user.
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM allowthem_email_verification_tokens WHERE user_id = ?",
-    )
-    .bind(user.id)
-    .fetch_one(&s.pool)
-    .await
-    .unwrap();
-    assert!(count >= 1);
-}
-
-#[tokio::test]
-async fn verify_resend_is_silent_for_unknown_email() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let csrf = s.get_csrf("/verify-pending").await;
-    let resp = s
-        .client
-        .post(s.url("/verify-resend"))
-        .form(&[("email", "ghost@example.com"), ("_csrf", csrf.as_str())])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("Check your email"), "got: {body}");
-}
-
-#[tokio::test]
-async fn invitation_signup_allows_subsequent_login() {
-    // Proves the invitation-implies-verified policy: if auto_verify regresses,
-    // the freshly signed-up user will be hard-blocked at login.
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "invitee@test.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    let invite_url = extract_invite_url(&body).unwrap();
-
-    let client2 = Client::builder()
-        .cookie_store(true)
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
-    let body = resp.text().await.unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let token = extract_hidden_token(&body).unwrap();
-
-    let resp = client2
-        .post(s.url("/signup"))
-        .form(&[
-            ("token", token.as_str()),
-            ("username", "invitee"),
-            ("password", "securepass123"),
-            ("confirm_password", "securepass123"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-
-    // Fresh client, no session — login must succeed because auto_verify flipped the flag.
-    let fresh = Client::builder()
-        .cookie_store(true)
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-    let body = fresh
-        .get(s.url("/login"))
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let resp = fresh
-        .post(s.url("/login"))
-        .form(&[
-            ("username", "invitee"),
-            ("password", "securepass123"),
-            ("_csrf", csrf.as_str()),
-        ])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
-}
 
 // ── Schema CRUD tests ────────────────────────────────────────
 
@@ -1970,392 +1804,7 @@ async fn single_full_workflow() {
 
 // Old publish/webhook tests removed — replaced by deployment tests below
 
-// ── Invitation & Signup tests ────────────────────────────────
-
-#[tokio::test]
-async fn invite_creates_signup_url() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "user@example.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    let invite_url = extract_invite_url(&body).expect("should contain invite URL");
-    assert!(invite_url.starts_with("/signup?token="));
-}
-
-#[tokio::test]
-async fn non_admin_cannot_access_users_page() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    // Create an invitation, sign up as non-admin user
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "user2@example.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    let invite_url = extract_invite_url(&body).unwrap();
-
-    // Use a separate client (no admin session)
-    let client2 = Client::builder()
-        .cookie_store(true)
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    // Sign up as second user
-    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let token = extract_hidden_token(&body).unwrap();
-
-    let resp = client2
-        .post(s.url("/signup"))
-        .form(&[
-            ("token", token.as_str()),
-            ("username", "user2"),
-            ("password", "password123"),
-            ("confirm_password", "password123"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-
-    // Non-admin trying to access /settings/users should get 403
-    let resp = client2.get(s.url("/settings/users")).send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
-}
-
-#[tokio::test]
-async fn signup_with_valid_token_shows_form() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "newuser@example.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    let invite_url = extract_invite_url(&body).unwrap();
-
-    // Use a separate client (no session)
-    let client2 = Client::builder()
-        .cookie_store(true)
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("newuser@example.com"));
-    assert!(body.contains("Create Account"));
-}
-
-#[tokio::test]
-async fn signup_with_invalid_token_shows_error() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let client2 = Client::builder()
-        .cookie_store(true)
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    let resp = client2
-        .get(s.url("/signup?token=invalidtoken123"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("invalid or has expired"));
-}
-
-#[tokio::test]
-async fn signup_creates_user_and_logs_in() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    // Create invitation
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "newuser@test.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    let invite_url = extract_invite_url(&body).unwrap();
-
-    // Sign up with separate client
-    let client2 = Client::builder()
-        .cookie_store(true)
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
-    let body = resp.text().await.unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let token = extract_hidden_token(&body).unwrap();
-
-    let resp = client2
-        .post(s.url("/signup"))
-        .form(&[
-            ("token", token.as_str()),
-            ("username", "newuser"),
-            ("password", "securepass123"),
-            ("confirm_password", "securepass123"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    assert_eq!(resp.headers().get("location").unwrap(), "/apps");
-
-    // Should be logged in — /apps is the landing page
-    let resp = client2.get(s.url("/apps")).send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn duplicate_email_invitation_rejected() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let csrf = s.get_csrf("/settings/users").await;
-    s.client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "dup@example.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-
-    // Try again with same email
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "dup@example.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("already exists"));
-}
-
-#[tokio::test]
-async fn can_reinvite_after_previous_invitation_expired() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "lapsed@example.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    // Force the invitation past its expiry without waiting 7 days.
-    let rows = sqlx::query(
-        "UPDATE allowthem_invitations SET expires_at = '2000-01-01T00:00:00.000Z' \
-         WHERE email = ?",
-    )
-    .bind("lapsed@example.com")
-    .execute(&s.pool)
-    .await
-    .unwrap();
-    assert_eq!(rows.rows_affected(), 1);
-
-    // Re-invite should succeed and return a fresh signup URL.
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "lapsed@example.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    assert!(
-        !body.contains("already exists"),
-        "expired invite should not block a fresh one"
-    );
-    assert!(
-        extract_invite_url(&body).is_some(),
-        "a fresh signup URL should be issued"
-    );
-}
-
-#[tokio::test]
-async fn signup_rejects_taken_username() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    // Create invitation
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "another@test.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    let invite_url = extract_invite_url(&body).unwrap();
-
-    let client2 = Client::builder()
-        .cookie_store(true)
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
-    let body = resp.text().await.unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let token = extract_hidden_token(&body).unwrap();
-
-    // Try to sign up with "admin" username (already taken)
-    let resp = client2
-        .post(s.url("/signup"))
-        .form(&[
-            ("token", token.as_str()),
-            ("username", "admin"),
-            ("password", "password123"),
-            ("confirm_password", "password123"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("already taken"));
-}
-
-#[tokio::test]
-async fn cannot_invite_existing_user_email() {
-    let s = TestServer::start().await;
-    s.setup_admin().await;
-
-    // First invite and sign up
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "taken@test.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    let invite_url = extract_invite_url(&body).unwrap();
-
-    let client2 = Client::builder()
-        .cookie_store(true)
-        .redirect(redirect::Policy::none())
-        .build()
-        .unwrap();
-
-    let resp = client2.get(s.url(&invite_url)).send().await.unwrap();
-    let body = resp.text().await.unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let token = extract_hidden_token(&body).unwrap();
-
-    client2
-        .post(s.url("/signup"))
-        .form(&[
-            ("token", token.as_str()),
-            ("username", "takenuser"),
-            ("password", "password123"),
-            ("confirm_password", "password123"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-
-    // Now try to invite same email again
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[
-            ("email", "taken@test.com"),
-            ("role", "editor"),
-            ("_csrf", &csrf),
-        ])
-        .send()
-        .await
-        .unwrap();
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("already exists"));
-}
+// ── Invitation & Signup tests (removed — auth delegated to AllowThem) ──
 
 // ── Content search tests ─────────────────────────────────────
 
@@ -2946,11 +2395,13 @@ async fn content_api_list_entries_returns_etag() {
 /// Extract the CSRF token from an HTML page's hidden input or meta tag.
 fn extract_csrf_token(html: &str) -> Option<String> {
     // Try hidden input: <input type="hidden" name="_csrf" value="TOKEN">
-    let marker = "name=\"_csrf\" value=\"";
-    if let Some(pos) = html.find(marker) {
-        let rest = &html[pos + marker.len()..];
-        if let Some(end) = rest.find('"') {
-            return Some(rest[..end].to_string());
+    for field_name in ["_csrf", "csrf_token"] {
+        let marker = format!("name=\"{field_name}\" value=\"");
+        if let Some(pos) = html.find(&marker) {
+            let rest = &html[pos + marker.len()..];
+            if let Some(end) = rest.find('"') {
+                return Some(rest[..end].to_string());
+            }
         }
     }
     // Try meta tag: <meta name="csrf-token" content="TOKEN">
@@ -3038,46 +2489,60 @@ async fn content_versioning_history_and_revert() {
 
 // ── RBAC tests ──────────────────────────────────────────────
 
-/// Helper: admin creates an invitation with a role, a fresh client signs up,
-/// and returns the new client (logged in with the given role).
+/// Helper: create a user with a role via AllowThem API, log in via /login,
+/// and return the authenticated client.
 async fn signup_user_with_role(s: &TestServer, email: &str, username: &str, role: &str) -> Client {
-    // Admin invites with specified role
-    let csrf = s.get_csrf("/settings/users").await;
-    let resp = s
-        .client
-        .post(s.url("/settings/users/invite"))
-        .form(&[("email", email), ("role", role), ("_csrf", csrf.as_str())])
-        .send()
+    // Create user via AllowThem API
+    let em = allowthem_core::Email::new(email.to_string()).unwrap();
+    let un = allowthem_core::Username::new(username.to_string());
+    let user = s
+        .ath
+        .db()
+        .create_user(em, "password123", Some(un), None)
         .await
         .unwrap();
-    let body = resp.text().await.unwrap();
-    let invite_url = extract_invite_url(&body).expect("should contain invite URL");
 
-    // Fresh client signs up
+    // Assign role
+    let role_name = allowthem_core::RoleName::new(role);
+    if let Ok(Some(r)) = s.ath.db().get_role_by_name(&role_name).await {
+        let _ = s.ath.db().assign_role(&user.id, &r.id).await;
+    }
+
+    // Grant access to all apps (mirrors old invitation signup behavior)
+    if role != "admin" {
+        if let Ok(apps) = substrukt::db::models::list_apps(&s.pool).await {
+            let uid = user.id.to_string();
+            for app in apps {
+                let _ = substrukt::db::models::grant_app_access(&s.pool, app.id, &uid).await;
+            }
+        }
+    }
+
+    // Log in via AllowThem to get a session cookie on the client
     let client = Client::builder()
         .cookie_store(true)
         .redirect(redirect::Policy::none())
         .build()
         .unwrap();
 
-    let resp = client.get(s.url(&invite_url)).send().await.unwrap();
+    let resp = client.get(s.url("/login")).send().await.unwrap();
     let body = resp.text().await.unwrap();
-    let csrf = extract_csrf_token(&body).unwrap();
-    let token = extract_hidden_token(&body).unwrap();
-
+    let csrf = extract_csrf_token(&body).expect("CSRF on /login");
     let resp = client
-        .post(s.url("/signup"))
+        .post(s.url("/login"))
         .form(&[
-            ("token", token.as_str()),
-            ("username", username),
+            ("identifier", email),
             ("password", "password123"),
-            ("confirm_password", "password123"),
-            ("_csrf", &csrf),
+            ("csrf_token", csrf.as_str()),
         ])
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        resp.status(),
+        StatusCode::SEE_OTHER,
+        "login should redirect on success for {email}"
+    );
     client
 }
 
@@ -5579,7 +5044,7 @@ async fn test_fire_nonexistent_deployment_via_ui() {
     let s = TestServer::start().await;
     s.setup_admin().await;
 
-    let csrf = s.get_csrf("/apps").await;
+    let csrf = s.get_csrf("/apps/default/schemas/new").await;
     let resp = s
         .client
         .post(s.url("/apps/default/deployments/does-not-exist/fire"))

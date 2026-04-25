@@ -58,6 +58,7 @@ async fn list_deployments(
             .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = user
         .username
@@ -142,6 +143,7 @@ async fn list_deployments(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -171,6 +173,7 @@ async fn new_deployment_form(
             .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = user
         .username
@@ -189,6 +192,7 @@ async fn new_deployment_form(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -351,6 +355,7 @@ async fn edit_deployment_form(
             .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = user
         .username
@@ -385,6 +390,7 @@ async fn edit_deployment_form(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -708,6 +714,7 @@ async fn render_form_with_error(
     current_username: &str,
 ) -> axum::response::Result<axum::response::Response> {
     let csrf_token = auth::ensure_csrf_token(session).await;
+    let ath_csrf = auth::ath_csrf(session).await;
 
     let tmpl = state
         .templates
@@ -736,6 +743,7 @@ async fn render_form_with_error(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),

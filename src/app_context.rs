@@ -75,6 +75,11 @@ impl FromRequestParts<AppState> for AppContext {
         } else {
             String::new()
         };
+        let ath_csrf = if let Some(ref s) = session {
+            crate::auth::ath_csrf(s).await
+        } else {
+            String::new()
+        };
 
         let err_nav = |status: u16, msg: &str| {
             let html = render_error_with_nav(
@@ -85,6 +90,7 @@ impl FromRequestParts<AppState> for AppContext {
                 &role,
                 &current_username,
                 &csrf_token,
+                &ath_csrf,
             );
             (
                 StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),

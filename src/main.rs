@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -199,8 +200,10 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     let audit_logger = audit::AuditLogger::new(audit_pool);
 
     // allowthem auth system (shares substrukt's pool)
+    let csrf_key: [u8; 32] = rand::random();
     let ath = allowthem_core::AllowThemBuilder::with_pool(pool.clone())
         .cookie_secure(config.secure_cookies)
+        .csrf_key(csrf_key)
         .build()
         .await
         .expect("Failed to initialize allowthem");
@@ -239,6 +242,61 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     // Email sender — SMTP when env is configured, LogEmailSender otherwise.
     let smtp_cfg = substrukt::email::SmtpConfig::from_env()?;
     let email_sender = substrukt::email::build_sender(smtp_cfg)?;
+
+    // AllowThem built-in auth routes (login, register, logout, password reset)
+    let scheme = if config.secure_cookies {
+        "https"
+    } else {
+        "http"
+    };
+    let base_url = format!("{scheme}://localhost:{}", config.listen_port);
+    let (events_tx, events_rx) = tokio::sync::mpsc::unbounded_channel();
+    let allowthem_auth_router = allowthem_server::AllRoutesBuilder::new()
+        .login()
+        .register()
+        .logout()
+        .password_reset()
+        .email_sender(email_sender.clone())
+        .base_url(base_url)
+        .is_production(config.secure_cookies)
+        .events(events_tx)
+        .default_branding(
+            allowthem_core::applications::BrandingConfig::new("substrukt")
+                .with_accent("#f59e0b", allowthem_core::AccentInk::Black),
+        )
+        .build(&ath)
+        .expect("Failed to build allowthem auth routes");
+
+    // Auto-assign admin role to the first registered user.
+    {
+        let ath_events = ath.clone();
+        tokio::spawn(async move {
+            let mut rx = events_rx;
+            while let Some(event) = rx.recv().await {
+                let allowthem_core::AuthEvent::Registered(ref e) = event else {
+                    continue;
+                };
+                let user_count = ath_events
+                    .db()
+                    .list_users()
+                    .await
+                    .map(|u| u.len())
+                    .unwrap_or(0);
+                if user_count == 1 {
+                    let admin_role = allowthem_core::RoleName::new("admin");
+                    if let Ok(Some(role)) =
+                        ath_events.db().get_role_by_name(&admin_role).await
+                    {
+                        let _ = ath_events.db().assign_role(&e.user.id, &role.id).await;
+                    }
+                    tracing::info!(
+                        user_id = %e.user.id,
+                        "auto-assigned admin role to first registered user"
+                    );
+                }
+            }
+        });
+    }
 
     // Migrate old single-app layout to multi-app
     substrukt::migrate_single_app_layout(&config.data_dir)?;
@@ -321,7 +379,7 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
         config.data_dir.clone(),
     );
 
-    let app = routes::build_router(state)
+    let app = routes::build_router(state, allowthem_auth_router)
         .layer(axum::extract::DefaultBodyLimit::max(config.max_body_size))
         .layer(session_layer)
         .layer(tower_http::trace::TraceLayer::new_for_http());
@@ -330,9 +388,12 @@ async fn run_server(config: Config, api_rate_limit: usize) -> eyre::Result<()> {
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!("Listening on {addr}");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     if let Some(ref token) = backup_cancel {
         token.cancel();

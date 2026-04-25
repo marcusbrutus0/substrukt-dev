@@ -63,6 +63,7 @@ async fn users_page(
     let users = state.ath.db().list_users().await.unwrap_or_default();
 
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let flash = auth::take_flash(&session).await;
     let echo = auth::flash_echo_trigger(&flash);
 
@@ -103,6 +104,7 @@ async fn users_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             invitations => inv_data,
@@ -289,6 +291,7 @@ async fn invite_user(
     }
 
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let tmpl = state
         .templates
         .acquire_env()
@@ -300,6 +303,7 @@ async fn invite_user(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             invitations => inv_data,
@@ -351,6 +355,7 @@ async fn render_users_with_error(
     }
 
     let csrf_token = auth::ensure_csrf_token(session).await;
+    let ath_csrf = auth::ath_csrf(session).await;
     let tmpl = state
         .templates
         .acquire_env()
@@ -362,6 +367,7 @@ async fn render_users_with_error(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             invitations => inv_data,
@@ -380,6 +386,7 @@ async fn profile_page(
     session: Session,
 ) -> axum::response::Result<axum::response::Response> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let flash = auth::take_flash(&session).await;
     let echo = auth::flash_echo_trigger(&flash);
     let (flash_kind, flash_message) = flash.unwrap_or_default();
@@ -397,6 +404,7 @@ async fn profile_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             username => current_username,
@@ -769,6 +777,7 @@ async fn audit_log_page(
     };
 
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = username_str(&user);
     let tmpl = state
@@ -782,6 +791,7 @@ async fn audit_log_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             entries => entry_data,
@@ -900,6 +910,7 @@ async fn backups_page(
     let (flash_kind, flash_message) = flash.unwrap_or_default();
 
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = username_str(&user);
 
@@ -937,6 +948,7 @@ async fn backups_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             config => minijinja::context! {

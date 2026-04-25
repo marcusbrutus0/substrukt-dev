@@ -57,6 +57,7 @@ async fn list_apps(
     let user_role = role.0.clone();
     let current_username = username_str(&user);
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let flash = auth::take_flash(&session).await;
     let echo = auth::flash_echo_trigger(&flash);
 
@@ -97,6 +98,7 @@ async fn list_apps(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             apps => app_data,
@@ -122,6 +124,7 @@ async fn new_app_form(
             .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = username_str(&user);
 
@@ -136,6 +139,7 @@ async fn new_app_form(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
         })
@@ -220,6 +224,7 @@ async fn app_settings(
             .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = username_str(&user);
     let flash = auth::take_flash(&session).await;
@@ -280,6 +285,7 @@ async fn app_settings(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
@@ -517,6 +523,7 @@ async fn data_page(
             .into());
     }
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
     let user_role = &role.0;
     let current_username = username_str(&user);
     let flash = auth::take_flash(&session).await;
@@ -541,6 +548,7 @@ async fn data_page(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),

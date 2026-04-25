@@ -64,6 +64,7 @@ async fn list_uploads(
     Query(filter): Query<UploadFilter>,
 ) -> Result<Html<String>, StatusCode> {
     let csrf_token = auth::ensure_csrf_token(&session).await;
+    let ath_csrf = auth::ath_csrf(&session).await;
 
     let rows =
         match (&filter.q, &filter.schema) {
@@ -212,6 +213,7 @@ async fn list_uploads(
         .render(minijinja::context! {
             base_template => base_for_htmx(is_htmx),
             csrf_token => csrf_token,
+            ath_csrf => ath_csrf,
             user_role => user_role,
             current_username => current_username,
             app => app.template_context(),
