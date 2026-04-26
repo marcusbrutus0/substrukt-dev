@@ -83,7 +83,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "allowthem-core"
-version = "0.0.4"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bff63741ed332bd734ea06198c73a0d0bb530608f6b0f8e913606de734a7038"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -110,7 +112,9 @@ dependencies = [
 
 [[package]]
 name = "allowthem-server"
-version = "0.0.4"
+version = "0.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4265fffe2a7df90fff91ccf204e76b10cac3df33b09e013182a5cff713bbadbb"
 dependencies = [
  "allowthem-core",
  "axum",
@@ -3810,7 +3814,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "substrukt"
-version = "0.13.2"
+version = "0.13.3"
 dependencies = [
  "allowthem-core",
  "allowthem-server",
