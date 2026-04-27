@@ -1,13 +1,13 @@
 <div class="wf-mnav">
   <div class="wf-wordmark">
-    <img src="{{ site.path_prefix }}/images/roundedicon.svg" alt="Substrukt" width="22" height="22">
+    <img src="/images/roundedicon.svg" alt="Substrukt" width="22" height="22">
     <span class="wf-wordmark-name">SUBSTRUKT</span>
   </div>
   {% for item in nav %}
     {% if "external" in item %}
       <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.label }}</a>
     {% else %}
-      <a href="{{ site.path_prefix }}{{ item.url }}">{{ item.label }}</a>
+      <a href="{{ item.url }}">{{ item.label }}</a>
     {% endif %}
   {% endfor %}
   <div class="wf-mnav-spacer"></div>
