@@ -1,6 +1,7 @@
 [site]
 name = "Substrukt"
-base_url = "https://substrukt.dev"
+base_url = "https://wavefunk.github.io/substrukt"
+path_prefix = "/substrukt"
 
 [build]
 fragments = true
