@@ -1,0 +1,55 @@
+- section: User Guide
+  pages:
+    - slug: introduction
+      title: Introduction
+    - slug: getting-started
+      title: Getting Started
+    - slug: configuration
+      title: Configuration
+    - slug: schemas
+      title: Schemas
+    - slug: field-types
+      title: Field Types
+    - slug: storage-modes
+      title: Storage Modes
+    - slug: single-vs-collection
+      title: Single vs Collection
+    - slug: content-management
+      title: Content Management
+    - slug: uploads
+      title: File Uploads
+    - slug: import-export
+      title: Import and Export
+    - slug: webhooks
+      title: Deployments
+
+- section: API Reference
+  pages:
+    - slug: api-authentication
+      title: Authentication
+    - slug: api-schemas
+      title: Schemas API
+    - slug: api-content
+      title: Content API
+    - slug: api-uploads
+      title: Uploads API
+    - slug: api-sync
+      title: Sync API
+    - slug: api-publish
+      title: Deployments API
+
+- section: Operations
+  pages:
+    - slug: deployment
+      title: Deployment
+    - slug: security
+      title: Security
+    - slug: observability
+      title: Observability
+
+- section: Reference
+  pages:
+    - slug: data-directory
+      title: Data Directory Layout
+    - slug: architecture
+      title: Architecture

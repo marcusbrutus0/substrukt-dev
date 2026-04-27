@@ -1,0 +1,96 @@
+---
+data:
+  nav:
+    file: "nav.yaml"
+  features:
+    file: "features.yaml"
+  steps:
+    file: "how-it-works.yaml"
+---
+{% extends "_marketing.html" %}
+
+{% block title %}Substrukt — Schema-driven CMS built in Rust{% endblock %}
+
+{% block content %}
+<!-- HERO -->
+<section class="mk-hero">
+  <div class="mk-hero-grid" aria-hidden="true"></div>
+  <div class="mk-hero-inner">
+    <div class="mk-hero-eyebrow">SUBSTRUKT · OPEN SOURCE CMS</div>
+    <h1>Schema-driven CMS, built in <em>Rust</em>.</h1>
+    <p>Define content types with JSON Schema. Edit through a web UI. Store as files. Serve via API.</p>
+    <div class="mk-hero-cta">
+      <a href="/docs/introduction" class="wf-btn lg primary">Read the docs</a>
+      <a href="https://github.com/wavefunk/substrukt" class="wf-btn lg" target="_blank" rel="noopener">GitHub</a>
+      <span class="sep"></span>
+      <code class="shell-line"><span class="prompt">$</span>docker pull ghcr.io/wavefunk/substrukt</code>
+    </div>
+  </div>
+  <div class="mk-hero-stats">
+    <div><div class="l">RUNTIME</div><div class="v">SINGLE BINARY</div></div>
+    <div><div class="l">SCHEMA</div><div class="v">JSON SCHEMA</div></div>
+    <div><div class="l">DATA</div><div class="v">REST API</div></div>
+    <div><div class="l">STORAGE</div><div class="v">FILES ON DISK</div></div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="mk-sect">
+  <div class="mk-sect-head">
+    <div>
+      <div class="mk-sect-kicker">— 01 / FEATURES</div>
+      <h2 class="mk-sect-title">Everything you need, nothing you don't.</h2>
+    </div>
+    <p class="mk-sect-sub">A schema-first CMS that stores content as files, serves it over a REST API, and fits in a single binary. No database server. No SaaS lock-in.</p>
+  </div>
+  <div class="mk-features">
+    {% for feat in features %}
+    <div class="mk-feat">
+      <div class="mk-feat-num">— 0{{ loop.index }}</div>
+      <h3 class="mk-feat-t">{{ feat.title }}</h3>
+      <p class="mk-feat-b">{{ feat.body }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="mk-sect">
+  <div class="mk-sect-head">
+    <div>
+      <div class="mk-sect-kicker">— 02 / HOW IT WORKS</div>
+      <h2 class="mk-sect-title">Four steps to content.</h2>
+    </div>
+    <p class="mk-sect-sub">Define your content types, edit them through a generated UI, consume via API, and sync between environments.</p>
+  </div>
+  <div class="mk-steps">
+    {% for step in steps %}
+    <div class="mk-step">
+      <div class="mk-step-num">— 0{{ loop.index }}</div>
+      <h3 class="mk-step-t">{{ step.title }}</h3>
+      <p class="mk-step-b">{{ step.body }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- QUICK START -->
+<section class="mk-sect mk-code">
+  <div class="mk-sect-head">
+    <div>
+      <div class="mk-sect-kicker">— 03 / QUICK START</div>
+      <h2 class="mk-sect-title">Up and running in minutes.</h2>
+    </div>
+    <p class="mk-sect-sub">Build from source or pull the Docker image. One command to start.</p>
+  </div>
+  <pre><code><span class="comment"># Build from source</span>
+git clone https://github.com/wavefunk/substrukt.git
+cd substrukt
+cargo build --release
+./target/release/substrukt serve
+
+<span class="comment"># Or run with Docker</span>
+docker build -t substrukt .
+docker run -p 3000:3000 -v substrukt-data:/data substrukt</code></pre>
+</section>
+{% endblock %}
