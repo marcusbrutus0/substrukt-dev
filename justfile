@@ -25,13 +25,6 @@ fmt:
 watch:
     bacon
 
-# Documentation (requires mdBook: cargo install mdbook)
-docs-build:
-    mdbook build docs
-
-docs-serve:
-    mdbook serve docs --open
-
 # --- Website ---
 
 # Sync design system CSS + fonts from sibling repo
