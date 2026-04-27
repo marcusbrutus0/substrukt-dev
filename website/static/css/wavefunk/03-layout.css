@@ -195,7 +195,7 @@ body.wf-app { overflow: hidden; height: 100vh; }
   height: 64px;
   border-bottom: var(--border-1) solid var(--hairline);
   display: flex; align-items: center;
-  padding: 0 var(--space-6); gap: var(--space-5);
+  padding: var(--space-5) var(--space-6); gap: var(--space-5);
   position: sticky; top: 0;
   background: var(--bg); z-index: var(--z-sticky);
 }
@@ -231,7 +231,8 @@ body.wf-app { overflow: hidden; height: 100vh; }
 .wf-docs-shell {
   display: grid;
   grid-template-columns: var(--wf-docs-side-w, 260px) 1fr var(--wf-docs-toc-w, 240px);
-  min-height: calc(100vh - 56px);
+  height: 100vh;
+  overflow: hidden;
 }
 @media (max-width: 1100px) {
   .wf-docs-shell { grid-template-columns: var(--wf-docs-side-w, 240px) 1fr; }
@@ -243,8 +244,13 @@ body.wf-app { overflow: hidden; height: 100vh; }
 }
 .wf-docs-side {
   border-right: var(--border-1) solid var(--hairline);
-  padding: var(--space-5) 0;
   overflow: auto;
+}
+.wf-docs-side .wf-brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: var(--space-4);
+  border-bottom: var(--border-1) solid var(--hairline-dim);
+  min-height: 56px;
 }
 .wf-docs-side a {
   display: block; padding: 6px var(--space-5);
@@ -260,6 +266,13 @@ body.wf-app { overflow: hidden; height: 100vh; }
   font-size: 10px; letter-spacing: 0.12em;
   color: var(--fg-faint); text-transform: uppercase;
   padding: 18px var(--space-5) 6px;
+}
+
+.wf-docs-shell .wf-prose h1 {
+    font-size: var(--fs-2xl);
+}
+.wf-docs-content {
+    overflow: auto;
 }
 
 /* Prose — long-form wrapper. */
@@ -289,13 +302,32 @@ body.wf-app { overflow: hidden; height: 100vh; }
   font-family: var(--font-mono);
 }
 
+.wf-docs-shell .wf-prose table {
+  width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 13px;
+}
+.wf-docs-shell .wf-prose th {
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--fg-faint); text-align: left;
+  padding: 8px 12px; border-bottom: 1px solid var(--hairline);
+}
+.wf-docs-shell .wf-prose td {
+  padding: 8px 12px; border-bottom: 1px solid var(--hairline-dim);
+  color: var(--fg); vertical-align: top;
+}
+
+.wf-docs-shell .wf-prose pre code {
+  background: transparent; border: 0; padding: 0;
+  color: inherit; font-size: inherit;
+}
+
 /* TOC column. */
 .wf-toc {
   border-left: var(--border-1) solid var(--hairline);
   padding: var(--space-7) var(--space-5);
   font-size: var(--fs-xs);
-  position: sticky; top: 56px;
-  height: calc(100vh - 56px); overflow: auto;
+  position: sticky;
+  height: 100vh; overflow: auto;
 }
 .wf-toc h4 {
   font-size: 10px; letter-spacing: 0.12em;
@@ -317,6 +349,7 @@ body.wf-app { overflow: hidden; height: 100vh; }
   gap: var(--space-4);
   margin-top: var(--space-7);
   border-top: var(--border-1) solid var(--hairline); padding-top: var(--space-5);
+  padding: var(--space-7);
 }
 .wf-docs-pager a {
   display: block; padding: 14px var(--space-4);

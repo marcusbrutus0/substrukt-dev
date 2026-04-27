@@ -34,11 +34,11 @@ sync-design:
 
 # Build the website
 site-build: sync-design
-    cd website && /home/nambiar/.cargo/target/release/eigen build
+    cd website && eigen build
 
 # Dev server with live reload
 site-dev: sync-design
-    cd website && /home/nambiar/.cargo/target/release/eigen dev --port 4000
+    cd website && eigen dev --port 4000
 
 # Create a new doc page (usage: just new-doc getting-started "Getting Started" "User Guide")
 new-doc slug title section:

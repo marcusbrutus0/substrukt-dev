@@ -1,21 +1,28 @@
 <aside class="wf-docs-side" id="sidebar">
-  <a href="/" class="wf-brand">
-    <div class="wf-avatar sm wf-accent-bg">S</div>
+  <a href="/" class="wf-brand" style="cursor: pointer;">
+    <img src="/images/roundedicon.svg" alt="Substrukt" width="24" height="24">
     <div>
       <div class="wf-brand-name">Substrukt</div>
       <div class="wf-caption">Docs</div>
     </div>
   </a>
 
-  {% for section in docs_nav %}
-  <div class="wf-docs-side-section">{{ section.section }}</div>
-  {% for page in section.pages %}
-  <a href="/docs/{{ page.slug }}"
-     hx-get="/_fragments/docs/{{ page.slug }}/doc_content.html"
-     hx-target="#doc-content"
-     hx-swap="outerHTML"
-     hx-push-url="/docs/{{ page.slug }}"
-     {% if page.slug == doc.slug %} class="is-active"{% endif %}>{{ page.title }}</a>
-  {% endfor %}
-  {% endfor %}
+  <div class="wf-docs-side-nav">
+    {% for section in docs_nav %}
+    <div class="wf-docs-side-section">{{ section.section }}</div>
+    {% for page in section.pages %}
+    <a href="/docs/{{ page.slug }}"
+       hx-get="/_fragments/docs/{{ page.slug }}/doc_content.html"
+       hx-target="#doc-content"
+       hx-swap="outerHTML"
+       hx-push-url="/docs/{{ page.slug }}"
+       {% if page.slug == doc.slug %} class="is-active"{% endif %}>{{ page.title }}</a>
+    {% endfor %}
+    {% endfor %}
+  </div>
+
+  <a href="https://wavefunk.io" target="_blank" rel="noopener" class="wf-docs-side-badge">
+    <svg width="12" height="10" viewBox="0 0 64 42" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><rect width="20" height="20" x="22" y="0" rx="4"/><rect width="20" height="20" x="44" y="0" rx="4"/><rect width="20" height="20" x="22" y="22" rx="4"/><rect width="20" height="20" x="0" y="22" rx="4"/></svg>
+    Built by Wavefunk
+  </a>
 </aside>

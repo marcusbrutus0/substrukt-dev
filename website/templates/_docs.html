@@ -3,60 +3,58 @@
 {% block title %}{{ doc.title }} — Substrukt Docs{% endblock %}
 
 {% block body %}
-<div class="wf-docs-shell">
-  {% block sidebar %}
-  {% include "_partials/docs-sidebar.html" %}
-  {% endblock %}
+  <div class="wf-docs-shell">
+    {% block sidebar %}
+      {% include "_partials/docs-sidebar.html" %}
+    {% endblock %}
 
-  {% block doc_content %}
-  <div id="doc-content" style="display: contents;">
-  <article class="wf-prose">
-    <div class="wf-crumbs">
-      <a href="/">HOME</a><span class="sep">/</span>
-      <a href="/docs/introduction">DOCS</a><span class="sep">/</span>
-      <span aria-current="page">{{ doc.title | upper }}</span>
-    </div>
+    {% block doc_content %}
+      <div id="doc-content" class="wf-docs-content">
+        <article class="wf-prose">
+          <div class="wf-crumbs">
+            <a href="/">HOME</a><span class="sep">/</span>
+            <a href="/docs/introduction">DOCS</a><span class="sep">/</span>
+            <span aria-current="page">{{ doc.title | upper }}</span>
+          </div>
 
-    <h1>{{ doc.title }}</h1>
-    {% if "lede" in doc and doc.lede %}
-    <p class="wf-lead">{{ doc.lede }}</p>
-    {% endif %}
+          <h1>{{ doc.title }}</h1>
+          {% if "lede" in doc and doc.lede %}
+            <p class="wf-lead">{{ doc.lede }}</p>
+          {% endif %}
 
-    <div id="docs-content">
-      {{ doc.body | markdown }}
-    </div>
-
-    <div class="wf-docs-pager">
-      {% if "prev_slug" in doc and doc.prev_slug %}
-      <a href="/docs/{{ doc.prev_slug }}"
-         hx-get="/_fragments/docs/{{ doc.prev_slug }}/doc_content.html"
-         hx-target="#doc-content"
-         hx-swap="outerHTML"
-         hx-push-url="/docs/{{ doc.prev_slug }}">
-        <span class="wf-docs-pager-k">&larr; PREV</span>
-        <span class="wf-docs-pager-t">{{ doc.prev_title }}</span>
-      </a>
-      {% else %}
-      <span></span>
-      {% endif %}
-      {% if "next_slug" in doc and doc.next_slug %}
-      <a href="/docs/{{ doc.next_slug }}" class="next"
-         hx-get="/_fragments/docs/{{ doc.next_slug }}/doc_content.html"
-         hx-target="#doc-content"
-         hx-swap="outerHTML"
-         hx-push-url="/docs/{{ doc.next_slug }}">
-        <span class="wf-docs-pager-k">NEXT &rarr;</span>
-        <span class="wf-docs-pager-t">{{ doc.next_title }}</span>
-      </a>
-      {% else %}
-      <span></span>
-      {% endif %}
-    </div>
-  </article>
-
-  {% include "_partials/docs-toc.html" %}
-  </div>
-  {% endblock %}
+          <div id="docs-content">
+            {{ doc.body | markdown }}
+          </div>
+        </article>
+        <div class="wf-docs-pager">
+          {% if "prev_slug" in doc and doc.prev_slug %}
+            <a href="/docs/{{ doc.prev_slug }}"
+               hx-get="/_fragments/docs/{{ doc.prev_slug }}/doc_content.html"
+               hx-target="#doc-content"
+               hx-swap="outerHTML"
+               hx-push-url="/docs/{{ doc.prev_slug }}">
+              <span class="wf-docs-pager-k">&larr; PREV</span>
+              <span class="wf-docs-pager-t">{{ doc.prev_title }}</span>
+            </a>
+          {% else %}
+            <span></span>
+          {% endif %}
+          {% if "next_slug" in doc and doc.next_slug %}
+            <a href="/docs/{{ doc.next_slug }}" class="next"
+               hx-get="/_fragments/docs/{{ doc.next_slug }}/doc_content.html"
+               hx-target="#doc-content"
+               hx-swap="outerHTML"
+               hx-push-url="/docs/{{ doc.next_slug }}">
+              <span class="wf-docs-pager-k">NEXT &rarr;</span>
+              <span class="wf-docs-pager-t">{{ doc.next_title }}</span>
+            </a>
+          {% else %}
+            <span></span>
+          {% endif %}
+        </div>
+      </div>
+    {% endblock %}
+    {% include "_partials/docs-toc.html" %}
 </div>
 
 <script>

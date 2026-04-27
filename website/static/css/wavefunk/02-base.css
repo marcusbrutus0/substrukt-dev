@@ -72,11 +72,7 @@ code, kbd, pre, samp {
   font-family: var(--font-mono);
   font-size: 0.95em;
 }
-code {
-  background: var(--ink-200);
-  border: var(--border-1) solid var(--hairline-dim);
-  padding: 1px 6px;
-}
+
 kbd {
   display: inline-block;
   min-width: 20px;
