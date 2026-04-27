@@ -2,75 +2,16 @@
 
 {% block title %}{{ doc.title }} — Substrukt Docs{% endblock %}
 
-{% block head %}
-<style>
-  body { background: var(--bg); }
-  .docs {
-    display: grid;
-    grid-template-columns: 240px minmax(0, 1fr) 200px;
-    min-height: 100vh;
-  }
-  .docs-side, .docs-toc {
-    position: sticky; top: 0; align-self: start;
-    height: 100vh; overflow: auto;
-    padding: 28px 0;
-  }
-  .docs-side { border-right: 1px solid var(--hairline); }
-  .docs-toc  { border-left: 1px solid var(--hairline); padding: 28px 20px; }
-  .docs-main { padding: 40px 48px 120px; max-width: 80ch; }
-
-  .docs-side-head { padding: 0 20px 16px; border-bottom: 1px solid var(--hairline); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
-  .docs-side-section { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-faint); padding: 14px 20px 6px; font-family: var(--font-mono); font-weight: 700; }
-  .docs-side a {
-    display: block; padding: 4px 20px;
-    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
-    color: var(--fg-muted); text-decoration: none;
-    border-left: 2px solid transparent;
-  }
-  .docs-side a:hover { color: var(--fg-strong); background: var(--ink-100); }
-  .docs-side a.is-active { color: var(--fg-strong); background: var(--ink-100); border-left-color: var(--accent); }
-
-  .docs-toc-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-faint); margin-bottom: 10px; }
-  .docs-toc a { display: block; padding: 4px 10px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.04em; color: var(--fg-muted); text-decoration: none; border-left: 2px solid transparent; }
-  .docs-toc a:hover { color: var(--fg-strong); }
-  .docs-toc a.is-active { color: var(--fg-strong); border-left-color: var(--accent); background: var(--ink-100); }
-
-  /* Prose */
-  .docs-main > h1 { font-family: var(--font-mono); font-size: 40px; font-weight: 800; text-transform: uppercase; letter-spacing: -0.02em; color: var(--fg-strong); margin: 0 0 12px; }
-  .docs-main > .lede { font-size: 16px; color: var(--fg); line-height: 1.65; max-width: 62ch; margin: 0 0 32px; }
-  .docs-prose h2 { font-family: var(--font-mono); font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: -0.01em; color: var(--fg-strong); margin: 48px 0 12px; padding-top: 20px; border-top: 1px solid var(--hairline); }
-  .docs-prose h3 { font-family: var(--font-mono); font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-strong); margin: 28px 0 10px; }
-  .docs-prose p, .docs-prose ul > li, .docs-prose ol > li { font-size: 14px; line-height: 1.7; color: var(--fg); }
-  .docs-prose p { margin: 0 0 14px; max-width: 68ch; }
-  .docs-prose ul, .docs-prose ol { padding-left: 22px; margin: 0 0 14px; }
-  .docs-prose pre { background: var(--ink-100); border: 1px solid var(--hairline-dim); padding: 14px 16px; font-family: var(--font-mono); font-size: 12px; line-height: 1.7; color: var(--fg); overflow-x: auto; margin: 0 0 16px; }
-  .docs-prose code { font-family: var(--font-mono); font-size: 0.9em; background: var(--ink-100); padding: 1px 5px; border: 1px solid var(--hairline-dim); color: var(--fg-strong); }
-  .docs-prose pre code { background: transparent; border: 0; padding: 0; color: inherit; font-size: inherit; }
-  .docs-prose table { width: 100%; border-collapse: collapse; margin: 0 0 16px; font-size: 13px; }
-  .docs-prose th { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-faint); text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--hairline); }
-  .docs-prose td { padding: 8px 12px; border-bottom: 1px solid var(--hairline-dim); color: var(--fg); vertical-align: top; }
-
-  .docs-foot { display: flex; justify-content: space-between; gap: 16px; border-top: 1px solid var(--hairline); padding-top: 20px; margin-top: 48px; }
-  .docs-foot a { text-decoration: none; display: flex; flex-direction: column; padding: 12px 16px; border: 1px solid var(--hairline-dim); flex: 1; }
-  .docs-foot a:hover { border-color: var(--accent); }
-  .docs-foot .k { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-faint); }
-  .docs-foot .t { font-family: var(--font-mono); font-size: 13px; color: var(--fg-strong); font-weight: 700; margin-top: 4px; }
-
-  @media (max-width: 1100px) { .docs { grid-template-columns: 240px 1fr; } .docs-toc { display: none; } }
-  @media (max-width: 800px) { .docs { grid-template-columns: 1fr; } .docs-side { display: none; } }
-</style>
-{% endblock %}
-
 {% block body %}
-<div class="docs">
+<div class="wf-docs-shell">
   {% block sidebar %}
   {% include "_partials/docs-sidebar.html" %}
   {% endblock %}
 
   {% block doc_content %}
   <div id="doc-content" style="display: contents;">
-  <main class="docs-main">
-    <div class="wf-crumbs" style="margin-bottom: 14px;">
+  <article class="wf-prose">
+    <div class="wf-crumbs">
       <a href="/">HOME</a><span class="sep">/</span>
       <a href="/docs/introduction">DOCS</a><span class="sep">/</span>
       <span aria-current="page">{{ doc.title | upper }}</span>
@@ -78,40 +19,40 @@
 
     <h1>{{ doc.title }}</h1>
     {% if "lede" in doc and doc.lede %}
-    <p class="lede">{{ doc.lede }}</p>
+    <p class="wf-lead">{{ doc.lede }}</p>
     {% endif %}
 
-    <div class="docs-prose" id="docs-content">
+    <div class="wf-prose" id="docs-content">
       {{ doc.body | markdown }}
     </div>
 
-    <div class="docs-foot">
+    <div class="wf-docs-pager">
       {% if "prev_slug" in doc and doc.prev_slug %}
       <a href="/docs/{{ doc.prev_slug }}"
          hx-get="/_fragments/docs/{{ doc.prev_slug }}/doc_content.html"
          hx-target="#doc-content"
          hx-swap="outerHTML"
          hx-push-url="/docs/{{ doc.prev_slug }}">
-        <span class="k">&larr; PREV</span>
-        <span class="t">{{ doc.prev_title }}</span>
+        <span class="wf-docs-pager-k">&larr; PREV</span>
+        <span class="wf-docs-pager-t">{{ doc.prev_title }}</span>
       </a>
       {% else %}
       <span></span>
       {% endif %}
       {% if "next_slug" in doc and doc.next_slug %}
-      <a href="/docs/{{ doc.next_slug }}" style="text-align: right;"
+      <a href="/docs/{{ doc.next_slug }}" class="next"
          hx-get="/_fragments/docs/{{ doc.next_slug }}/doc_content.html"
          hx-target="#doc-content"
          hx-swap="outerHTML"
          hx-push-url="/docs/{{ doc.next_slug }}">
-        <span class="k">NEXT &rarr;</span>
-        <span class="t">{{ doc.next_title }}</span>
+        <span class="wf-docs-pager-k">NEXT &rarr;</span>
+        <span class="wf-docs-pager-t">{{ doc.next_title }}</span>
       </a>
       {% else %}
       <span></span>
       {% endif %}
     </div>
-  </main>
+  </article>
 
   {% include "_partials/docs-toc.html" %}
   </div>
