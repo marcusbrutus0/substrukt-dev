@@ -1,11 +1,11 @@
 <aside class="docs-side" id="sidebar">
-  <div class="docs-side-head">
+  <a href="/" class="docs-side-head" style="text-decoration: none;">
     <div style="width: 20px; height: 20px; background: var(--accent); color: var(--accent-ink); display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-weight: 800; font-size: 12px;">S</div>
     <div>
       <div style="font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-strong);">Substrukt</div>
       <div style="font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-faint); margin-top: 2px;">Docs</div>
     </div>
-  </div>
+  </a>
 
   {% for section in docs_nav %}
   <div class="docs-side-section">{{ section.section }}</div>
