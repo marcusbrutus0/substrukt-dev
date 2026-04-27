@@ -1,9 +1,16 @@
 
 ## Docker
 
-The recommended way to deploy Substrukt in production.
+The recommended way to deploy Substrukt in production. A pre-built image is available on the GitHub Container Registry.
 
-### Build the image
+### Pull and run
+
+```sh
+docker pull ghcr.io/wavefunk/substrukt
+docker run -p 3000:3000 -v substrukt-data:/data ghcr.io/wavefunk/substrukt
+```
+
+### Build from source
 
 ```sh
 docker build -t substrukt .
@@ -12,12 +19,6 @@ docker build -t substrukt .
 The Dockerfile uses a multi-stage build:
 1. **Builder stage**: Compiles the Rust binary with `cargo build --release` using a nightly Rust image. Dependencies are cached separately for faster rebuilds.
 2. **Runtime stage**: Copies the binary and templates into a minimal Debian image with only `ca-certificates` installed.
-
-### Run the container
-
-```sh
-docker run -p 3000:3000 -v substrukt-data:/data substrukt
-```
 
 All persistent data is stored in the `/data` volume:
 - `substrukt.db` -- users, sessions, API tokens
@@ -44,7 +45,7 @@ docker run -p 8080:8080 \
 ```yaml
 services:
   substrukt:
-    build: .
+    image: ghcr.io/wavefunk/substrukt
     ports:
       - "3000:3000"
     volumes:

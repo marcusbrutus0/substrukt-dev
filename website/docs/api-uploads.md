@@ -36,7 +36,10 @@ If the same file is uploaded again (identical content, same SHA-256 hash), the e
 
 ```
 GET /api/v1/apps/:app_slug/uploads/:hash
+GET /api/v1/apps/:app_slug/uploads/:hash/:filename
 ```
+
+The second form preserves the original filename in the URL, which is useful for downloads.
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" \

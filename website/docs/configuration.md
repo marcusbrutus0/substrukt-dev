@@ -30,13 +30,15 @@ Backup frequency and retention are managed through the web UI at Settings > Back
 
 ## Commands
 
-Substrukt has four commands. If no command is specified, `serve` is the default.
+If no command is specified, `serve` is the default.
 
 ```
 substrukt serve                              # Start the web server
 substrukt import <path.tar.gz> --app <slug>  # Import a content bundle into an app
 substrukt export <path.tar.gz> --app <slug>  # Export an app's content as a bundle
 substrukt create-token <name> --app <slug>   # Create an API token for an app
+substrukt prime                              # Output AI-optimized workflow context
+substrukt onboard                            # Output a snippet for AGENTS.md / CLAUDE.md
 ```
 
 ### serve

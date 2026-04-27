@@ -1,10 +1,14 @@
 <p align="center">
-  <img src="website/roundedicon.svg" alt="Substrukt" width="80" height="80">
+  <img src="website/static/images/roundedicon.svg" alt="Substrukt" width="80" height="80">
 </p>
 
 <h1 align="center">Substrukt</h1>
 
 <p align="center">A schema-driven CMS built in Rust. Define content types with JSON Schema, edit data through a web UI, store it as JSON files on disk, and serve it via a REST API.</p>
+
+<p align="center">
+  <a href="https://substrukt.wavefunk.io">Documentation</a> · <a href="https://github.com/wavefunk/substrukt">GitHub</a>
+</p>
 
 ## Features
 
@@ -60,8 +64,8 @@ Open `http://localhost:3000`. On first visit you will be prompted to create an a
 ### Docker
 
 ```sh
-docker build -t substrukt .
-docker run -p 3000:3000 -v substrukt-data:/data substrukt
+docker pull ghcr.io/wavefunk/substrukt
+docker run -p 3000:3000 -v substrukt-data:/data ghcr.io/wavefunk/substrukt
 ```
 
 Data persists in the `/data` volume (schemas, content, uploads, databases).
@@ -92,6 +96,8 @@ substrukt serve                        # Start the web server (default)
 substrukt import <path> --app <slug>   # Import a bundle tar.gz into an app
 substrukt export <path> --app <slug>   # Export an app's data as bundle tar.gz
 substrukt create-token <name> --app <slug>  # Create an API token for an app
+substrukt prime                        # Output AI-optimized workflow context
+substrukt onboard                      # Output a minimal snippet for AGENTS.md / CLAUDE.md
 ```
 
 ## API reference
@@ -122,9 +128,22 @@ App-scoped endpoints are prefixed with `/api/v1/apps/:app_slug`.
 | DELETE | `/api/v1/apps/:app/content/:schema/:id` | Delete an entry |
 | POST | `/api/v1/apps/:app/content/:schema/:id/publish` | Publish an entry |
 | POST | `/api/v1/apps/:app/content/:schema/:id/unpublish` | Unpublish an entry (set to draft) |
+| GET | `/api/v1/apps/:app/content/:schema/:id/versions` | List version history |
+| GET | `/api/v1/apps/:app/content/:schema/:id/versions/:ts` | Get a specific version |
+| POST | `/api/v1/apps/:app/content/:schema/:id/versions/:ts/revert` | Revert to a version |
 | GET | `/api/v1/apps/:app/content/:schema/single` | Get a single-kind schema's entry |
 | PUT | `/api/v1/apps/:app/content/:schema/single` | Upsert a single-kind schema's entry |
 | DELETE | `/api/v1/apps/:app/content/:schema/single` | Delete a single-kind schema's entry |
+
+### Bulk operations
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/apps/:app/content/:schema/_bulk/create` | Create multiple entries |
+| POST | `/api/v1/apps/:app/content/:schema/_bulk/update` | Update multiple entries |
+| POST | `/api/v1/apps/:app/content/:schema/_bulk/delete` | Delete multiple entries |
+| POST | `/api/v1/apps/:app/content/:schema/_bulk/publish` | Publish multiple entries |
+| POST | `/api/v1/apps/:app/content/:schema/_bulk/unpublish` | Unpublish multiple entries |
 
 ### Uploads
 
@@ -132,6 +151,7 @@ App-scoped endpoints are prefixed with `/api/v1/apps/:app_slug`.
 |--------|----------|-------------|
 | POST | `/api/v1/apps/:app/uploads` | Upload a file (multipart) |
 | GET | `/api/v1/apps/:app/uploads/:hash` | Download a file by hash |
+| GET | `/api/v1/apps/:app/uploads/:hash/:filename` | Download with original filename |
 
 ### Sync
 

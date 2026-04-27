@@ -131,7 +131,41 @@ POST /api/v1/apps/:app_slug/content/:schema_slug/:entry_id/publish
 POST /api/v1/apps/:app_slug/content/:schema_slug/:entry_id/unpublish
 ```
 
-See [Deployments API](./api-publish.md) for details.
+See [Publish API](./api-publish.md) for details.
+
+### Version history
+
+List saved versions of an entry:
+
+```
+GET /api/v1/apps/:app_slug/content/:schema_slug/:entry_id/versions
+```
+
+Get a specific version by timestamp:
+
+```
+GET /api/v1/apps/:app_slug/content/:schema_slug/:entry_id/versions/:timestamp
+```
+
+Revert an entry to a previous version:
+
+```
+POST /api/v1/apps/:app_slug/content/:schema_slug/:entry_id/versions/:timestamp/revert
+```
+
+Requires editor role or above.
+
+### Bulk operations
+
+Create, update, or delete multiple entries in a single request. All bulk endpoints require editor role or above.
+
+```
+POST /api/v1/apps/:app_slug/content/:schema_slug/_bulk/create
+POST /api/v1/apps/:app_slug/content/:schema_slug/_bulk/update
+POST /api/v1/apps/:app_slug/content/:schema_slug/_bulk/delete
+POST /api/v1/apps/:app_slug/content/:schema_slug/_bulk/publish
+POST /api/v1/apps/:app_slug/content/:schema_slug/_bulk/unpublish
+```
 
 ## Single endpoints
 
