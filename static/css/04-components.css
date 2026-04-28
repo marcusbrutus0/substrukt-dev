@@ -777,6 +777,11 @@
   max-height: 80vh;
 }
 .wf-modal.is-open { display: flex; }
+.wf-modal.wf-modal--lg {
+  width: min(1200px, calc(100vw - 64px));
+  max-height: calc(100vh - 64px);
+  top: 32px;
+}
 .wf-modal-head {
   padding: var(--space-4);
   border-bottom: var(--border-1) solid var(--hairline);
