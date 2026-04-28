@@ -346,6 +346,45 @@ fn render_field(
 "#
             )
         }
+        ("string", Some("markdown-richtext")) => {
+            let current_json = value
+                .filter(|v| v.is_object())
+                .map(|v| serde_json::to_string(v).unwrap_or_default())
+                .unwrap_or_default();
+            let preview_text = value
+                .and_then(|v| v.get("markdown"))
+                .and_then(|m| m.as_str())
+                .map(|md| {
+                    let plain: String = md.chars().filter(|c| !matches!(c, '#' | '*' | '_' | '~' | '`' | '>' | '[' | ']' | '(' | ')' | '!')).collect();
+                    let trimmed = plain.trim();
+                    if trimmed.len() > 200 { format!("{}...", &trimmed[..200]) } else { trimmed.to_string() }
+                })
+                .unwrap_or_default();
+            let placeholder = if preview_text.is_empty() { "Click to edit" } else { &preview_text };
+            let escaped_json = escape_html_attr(&current_json);
+            let desc = get_description(schema).map(|d| format!(r#"<p style="color: var(--fg-muted); font-size: 12px; margin-top: 4px;">{d}</p>"#)).unwrap_or_default();
+            format!(
+                r#"<div class="wf-field" style="margin-top: 16px;" data-richtext data-richtext-name="{name}" data-richtext-app="{app_slug}">
+  <label class="wf-label">{label}{req_star}</label>
+  <input type="hidden" name="{name}" value="{escaped_json}">
+  <div data-richtext-preview style="padding: 12px; border: var(--border-1) solid var(--hairline); margin-top: 4px; font-size: 13px; color: var(--fg-muted); cursor: pointer; min-height: 48px;">{placeholder}</div>
+  <button type="button" class="wf-btn primary" style="margin-top: 8px;" data-richtext-open>Open Editor</button>
+  {desc}
+  <div class="wf-overlay" id="richtext-overlay-{name}"></div>
+  <div class="wf-modal wf-modal--lg" id="richtext-modal-{name}">
+    <div class="wf-modal-head">
+      <span class="wf-modal-title">EDIT: {label}</span>
+      <div style="display: flex; gap: var(--space-2);">
+        <button type="button" class="wf-btn" data-richtext-discard>Discard</button>
+        <button type="button" class="wf-btn primary" data-richtext-save>Save &amp; Close</button>
+      </div>
+    </div>
+    <div class="wf-modal-body" data-richtext-root style="padding: 0; flex: 1; overflow: auto;"></div>
+  </div>
+{req_msg}</div>
+"#
+            )
+        }
         ("string", Some("textarea")) => {
             let val = escape_html_attr(value.and_then(|v| v.as_str()).unwrap_or(""));
             let (constraint_attrs, hints) = string_constraints(schema, true);
@@ -720,6 +759,18 @@ fn form_data_to_json_inner(
                     }
                 } else {
                     Value::Null
+                }
+            }
+            ("string", Some("markdown-richtext")) => {
+                let val = form
+                    .iter()
+                    .find(|(k, _)| k == &field_name)
+                    .map(|(_, v)| v.as_str());
+                match val {
+                    Some(v) if !v.is_empty() => {
+                        serde_json::from_str(v).unwrap_or(Value::Null)
+                    }
+                    _ => Value::Null,
                 }
             }
             ("boolean", _) => {
@@ -1295,5 +1346,49 @@ mod tests {
     #[test]
     fn strip_array_indices_only_index() {
         assert_eq!(strip_array_indices("items[0]"), "items");
+    }
+
+    #[test]
+    fn render_richtext_empty() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string",
+                    "format": "markdown-richtext",
+                    "title": "Body"
+                }
+            }
+        });
+        let html = render_form_fields(&schema, None, "", &ReferenceOptions::new(), "test-app");
+        assert!(html.contains("data-richtext"), "should have data-richtext attribute");
+        assert!(html.contains("data-richtext-name=\"body\""), "should have field name");
+        assert!(html.contains("data-richtext-app=\"test-app\""), "should have app slug");
+        assert!(html.contains("wf-modal--lg"), "should use large modal");
+        assert!(html.contains("data-richtext-save"), "should have save button");
+        assert!(html.contains("data-richtext-discard"), "should have discard button");
+        assert!(html.contains("type=\"hidden\""), "should have hidden input");
+    }
+
+    #[test]
+    fn render_richtext_with_value() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string",
+                    "format": "markdown-richtext",
+                    "title": "Body"
+                }
+            }
+        });
+        let data = serde_json::json!({
+            "body": {
+                "markdown": "# Hello",
+                "html": "<h1>Hello</h1>"
+            }
+        });
+        let html = render_form_fields(&schema, Some(&data), "", &ReferenceOptions::new(), "test-app");
+        assert!(html.contains("Hello"), "should show preview text");
     }
 }
