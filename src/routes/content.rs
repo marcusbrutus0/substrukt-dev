@@ -489,6 +489,18 @@ fn resolve_richtext_upload_uris(data: &mut serde_json::Value, schema: &serde_jso
     }
 }
 
+fn schema_has_richtext(schema: &serde_json::Value) -> bool {
+    schema
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .map(|props| {
+            props.values().any(|prop| {
+                prop.get("format").and_then(|f| f.as_str()) == Some("markdown-richtext")
+            })
+        })
+        .unwrap_or(false)
+}
+
 async fn new_entry_page(
     Extension(user): Extension<allowthem_core::User>,
     Extension(role): Extension<auth::CurrentUserRole>,
@@ -551,6 +563,7 @@ async fn new_entry_page(
             schema_slug => schema_slug,
             is_new => true,
             form_fields => form_html,
+            has_richtext => schema_has_richtext(&schema_file.schema),
         })
         .map_err(|e| format!("Render error: {e}"))?;
     Ok(Html(html).into_response())
@@ -633,6 +646,7 @@ async fn edit_entry_page(
             entry_status => entry_status,
             flash_kind => flash.as_ref().map(|(k, _)| k.as_str()),
             flash_message => flash.as_ref().map(|(_, m)| m.as_str()),
+            has_richtext => schema_has_richtext(&schema_file.schema),
         })
         .map_err(|e| format!("Render error: {e}"))?;
     Ok((echo, Html(html)).into_response())
@@ -739,6 +753,7 @@ async fn create_entry(
                 is_new => true,
                 form_fields => form_html,
                 errors => errors,
+                has_richtext => schema_has_richtext(&schema_file.schema),
             })
         {
             return Html(html).into_response();
@@ -877,6 +892,7 @@ async fn update_entry(
                 is_new => false,
                 form_fields => form_html,
                 errors => errors,
+                has_richtext => schema_has_richtext(&schema_file.schema),
             })
         {
             return Html(html).into_response();
