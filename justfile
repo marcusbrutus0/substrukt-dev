@@ -51,3 +51,9 @@ new-doc slug title section:
     @printf -- '---\ndata:\n  doc:\n    file: "docs/{{slug}}.yaml"\n  docs_nav:\n    file: "docs-nav.yaml"\n---\n{%% extends "_docs.html" %%}\n' > website/templates/docs/{{slug}}.html
     @echo "Created _data/docs/{{slug}}.yaml and templates/docs/{{slug}}.html"
     @echo "Remember to add the page to _data/docs-nav.yaml"
+
+# Bundle the Milkdown editor (JS + CSS)
+bundle-editor:
+    cd editor && npm install && cd ..
+    esbuild editor/milkdown-editor.js --bundle --format=iife --minify --outfile=static/js/milkdown-editor.bundle.js
+    esbuild editor/milkdown-theme.css --bundle --minify --loader:.woff=empty --loader:.woff2=empty --loader:.ttf=empty --outfile=static/css/milkdown-theme.css

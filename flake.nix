@@ -63,6 +63,7 @@
               mdbook
               dolt
               nodejs
+              esbuild
             ];
 
             buildInputs = [

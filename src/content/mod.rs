@@ -761,16 +761,17 @@ fn evaluate_cross_field_rules(
     errors
 }
 
-/// Rewrite `{"type": "string", "format": "upload"}` properties to accept
-/// either a string or an object so that stored upload references pass validation.
+/// Rewrite `{"type": "string", "format": "upload"}` and
+/// `{"type": "string", "format": "markdown-richtext"}` properties to accept
+/// either a string or an object so that stored upload/richtext references pass validation.
 fn patch_upload_types(schema: &Value) -> Value {
     let mut schema = schema.clone();
     if let Some(props) = schema.get_mut("properties").and_then(|p| p.as_object_mut()) {
         for (_key, prop) in props.iter_mut() {
-            let is_upload = prop.get("type").and_then(|t| t.as_str()) == Some("string")
-                && prop.get("format").and_then(|f| f.as_str()) == Some("upload");
-            if is_upload {
-                // Allow string or object
+            let fmt = prop.get("format").and_then(|f| f.as_str());
+            let is_string = prop.get("type").and_then(|t| t.as_str()) == Some("string");
+            let needs_patch = is_string && matches!(fmt, Some("upload") | Some("markdown-richtext"));
+            if needs_patch {
                 if let Some(obj) = prop.as_object_mut() {
                     obj.remove("type");
                     obj.insert("type".to_string(), serde_json::json!(["string", "object"]));
@@ -856,6 +857,68 @@ pub fn render_markdown(input: &str) -> String {
     html::push_html(&mut html_output, parser);
     html_output.push_str("</div>");
     html_output
+}
+
+/// Resolve `upload:<hash>/<filename>` URIs in HTML `src` and `href` attributes to real URLs.
+/// Replaces `src="upload:hash/file"` with `src="/apps/<app_slug>/uploads/file/hash/file"`.
+/// Text content containing `upload:` is left untouched.
+pub fn resolve_upload_uris(html: &str, app_slug: &str) -> String {
+    let re = regex::Regex::new(r#"((?:src|href)=")upload:([^"]+)"#).unwrap();
+    re.replace_all(html, |caps: &regex::Captures| {
+        format!("{}/apps/{}/uploads/file/{}", &caps[1], app_slug, &caps[2])
+    })
+    .into_owned()
+}
+
+/// Walk a JSON value and project `markdown-richtext` fields to a plain string.
+/// By default (raw=false) each `{markdown, html}` object is replaced with its `html` string.
+/// When raw=true, the `markdown` string is used instead.
+pub fn project_richtext_fields(data: &mut Value, schema: &Value, raw: bool) {
+    project_richtext_fields_inner(data, schema, raw, 0);
+}
+
+fn project_richtext_fields_inner(data: &mut Value, schema: &Value, raw: bool, depth: usize) {
+    if depth > MAX_NESTING_DEPTH {
+        return;
+    }
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return;
+    };
+    let Some(obj) = data.as_object_mut() else {
+        return;
+    };
+    for (key, prop_schema) in props {
+        let field_type = prop_schema.get("type").and_then(|t| t.as_str());
+        let format = prop_schema.get("format").and_then(|f| f.as_str());
+
+        match (field_type, format) {
+            (Some("string"), Some("markdown-richtext")) => {
+                let projected = obj.get(key).and_then(|v| {
+                    let obj_val = v.as_object()?;
+                    let key_name = if raw { "markdown" } else { "html" };
+                    obj_val.get(key_name).cloned()
+                });
+                if let Some(val) = projected {
+                    obj.insert(key.clone(), val);
+                }
+            }
+            (Some("object"), _) => {
+                if let Some(nested) = obj.get_mut(key) {
+                    project_richtext_fields_inner(nested, prop_schema, raw, depth + 1);
+                }
+            }
+            (Some("array"), _) => {
+                if let Some(items_schema) = prop_schema.get("items")
+                    && let Some(Value::Array(arr)) = obj.get_mut(key)
+                {
+                    for item in arr.iter_mut() {
+                        project_richtext_fields_inner(item, items_schema, raw, depth + 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Walk a JSON value and render all markdown fields to HTML, based on the schema.
@@ -2773,5 +2836,93 @@ mod tests {
 
         let results = find_referencing_entries(&cache, &schemas_dir, "myapp", "authors", "alice");
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn resolve_upload_uris_in_src() {
+        let html = r#"<img src="upload:abc123/photo.jpg" alt="test">"#;
+        let result = resolve_upload_uris(html, "my-blog");
+        assert_eq!(result, r#"<img src="/apps/my-blog/uploads/file/abc123/photo.jpg" alt="test">"#);
+    }
+
+    #[test]
+    fn resolve_upload_uris_multiple() {
+        let html = r#"<img src="upload:aaa/a.jpg"><p>text</p><img src="upload:bbb/b.png">"#;
+        let result = resolve_upload_uris(html, "app");
+        assert!(result.contains(r#"src="/apps/app/uploads/file/aaa/a.jpg""#));
+        assert!(result.contains(r#"src="/apps/app/uploads/file/bbb/b.png""#));
+    }
+
+    #[test]
+    fn resolve_upload_uris_leaves_normal_urls() {
+        let html = r#"<img src="https://example.com/photo.jpg" alt="test">"#;
+        let result = resolve_upload_uris(html, "my-blog");
+        assert_eq!(result, html);
+    }
+
+    #[test]
+    fn resolve_upload_uris_in_href() {
+        let html = r#"<a href="upload:abc123/doc.pdf">Download</a>"#;
+        let result = resolve_upload_uris(html, "app");
+        assert_eq!(result, r#"<a href="/apps/app/uploads/file/abc123/doc.pdf">Download</a>"#);
+    }
+
+    #[test]
+    fn resolve_upload_uris_ignores_text_content() {
+        let html = r#"<p>The scheme is upload:something/file.txt</p>"#;
+        let result = resolve_upload_uris(html, "app");
+        assert_eq!(result, html, "should not replace upload: in text content");
+    }
+
+    #[test]
+    fn project_richtext_fields_html_mode() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "title": { "type": "string" },
+                "body": { "type": "string", "format": "markdown-richtext" }
+            }
+        });
+        let mut data = serde_json::json!({
+            "title": "Hello",
+            "body": {
+                "markdown": "# Hello",
+                "html": "<h1>Hello</h1>"
+            }
+        });
+        project_richtext_fields(&mut data, &schema, false);
+        assert_eq!(data["body"], serde_json::json!("<h1>Hello</h1>"));
+        assert_eq!(data["title"], serde_json::json!("Hello"));
+    }
+
+    #[test]
+    fn project_richtext_fields_raw_mode() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "body": { "type": "string", "format": "markdown-richtext" }
+            }
+        });
+        let mut data = serde_json::json!({
+            "body": {
+                "markdown": "# Hello",
+                "html": "<h1>Hello</h1>"
+            }
+        });
+        project_richtext_fields(&mut data, &schema, true);
+        assert_eq!(data["body"], serde_json::json!("# Hello"));
+    }
+
+    #[test]
+    fn project_richtext_fields_null_value() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "body": { "type": "string", "format": "markdown-richtext" }
+            }
+        });
+        let mut data = serde_json::json!({ "body": null });
+        project_richtext_fields(&mut data, &schema, false);
+        assert_eq!(data["body"], serde_json::json!(null));
     }
 }
