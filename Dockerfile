@@ -33,6 +33,7 @@ RUN useradd --create-home --shell /bin/bash --uid 1000 substrukt
 
 COPY --from=builder /build/target/release/substrukt /usr/local/bin/substrukt
 COPY --from=builder /build/templates /opt/substrukt/templates
+COPY static/ /opt/substrukt/static/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 WORKDIR /opt/substrukt
