@@ -240,7 +240,7 @@ pub fn render_form_fields(
     ref_options: &ReferenceOptions,
     app_slug: &str,
 ) -> String {
-    render_form_fields_inner(schema, data, prefix, ref_options, app_slug, 0)
+    render_form_fields_inner(schema, data, prefix, ref_options, app_slug, 0, 0)
 }
 
 fn render_form_fields_inner(
@@ -250,6 +250,7 @@ fn render_form_fields_inner(
     ref_options: &ReferenceOptions,
     app_slug: &str,
     depth: usize,
+    array_depth: usize,
 ) -> String {
     if depth > MAX_NESTING_DEPTH {
         return r#"<div class="wf-field" style="color: var(--err); font-size: 13px;">Error: maximum nesting depth exceeded</div>"#.to_string();
@@ -307,6 +308,7 @@ fn render_form_fields_inner(
             ref_options,
             app_slug,
             depth,
+            array_depth,
         ));
     }
 
@@ -324,6 +326,7 @@ fn render_field(
     ref_options: &ReferenceOptions,
     app_slug: &str,
     depth: usize,
+    array_depth: usize,
 ) -> String {
     let req_attr = if required { " required" } else { "" };
     let req_star = if required { " *" } else { "" };
@@ -573,7 +576,7 @@ fn render_field(
         }
         ("object", _) => {
             let inner =
-                render_form_fields_inner(schema, value, name, ref_options, app_slug, depth + 1);
+                render_form_fields_inner(schema, value, name, ref_options, app_slug, depth + 1, array_depth);
             format!(
                 r#"<fieldset style="border-top: 1px solid var(--hairline-dim); padding-top: 16px; margin-top: 16px;">
   <legend class="wf-label" style="padding: 0 4px;">{label}</legend>
@@ -610,13 +613,13 @@ fn render_field(
   </div>
   {}
 </div>"#,
-                        render_form_fields_inner(&items_schema, Some(item), &item_name, ref_options, app_slug, depth + 1)
+                        render_form_fields_inner(&items_schema, Some(item), &item_name, ref_options, app_slug, depth + 1, array_depth)
                     ));
                 }
             }
 
-            // Template for new items (hidden, used by JS)
-            let template_name = format!("{name}[__INDEX__]");
+            let placeholder = format!("__IDX_{array_depth}__");
+            let template_name = format!("{name}[{placeholder}]");
             let template_html = render_form_fields_inner(
                 &items_schema,
                 None,
@@ -624,6 +627,7 @@ fn render_field(
                 ref_options,
                 app_slug,
                 depth + 1,
+                array_depth + 1,
             );
 
             // Array constraints (hint only)
@@ -649,7 +653,7 @@ fn render_field(
     {items_html}
   </div>
   <template id="template-{name}">{template_html}</template>
-  <button type="button" onclick="addArrayItem('{name}')" class="wf-btn ghost sm" style="margin-top: 8px;">+ Add Item</button>
+  <button type="button" onclick="addArrayItem('{name}', {array_depth})" class="wf-btn ghost sm" style="margin-top: 8px;">+ Add Item</button>
 {hint_html}</div>
 "#
             )
