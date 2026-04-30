@@ -771,19 +771,19 @@ fn patch_upload_types(schema: &Value) -> Value {
 }
 
 fn patch_upload_types_recursive(schema: &mut Value) {
+    let fmt = schema.get("format").and_then(|f| f.as_str());
+    let is_string = schema.get("type").and_then(|t| t.as_str()) == Some("string");
+    if is_string && matches!(fmt, Some("upload") | Some("markdown-richtext")) {
+        if let Some(obj) = schema.as_object_mut() {
+            obj.remove("type");
+            obj.insert("type".to_string(), serde_json::json!(["string", "object"]));
+        }
+        return;
+    }
+
     if let Some(props) = schema.get_mut("properties").and_then(|p| p.as_object_mut()) {
         for (_key, prop) in props.iter_mut() {
-            let fmt = prop.get("format").and_then(|f| f.as_str());
-            let is_string = prop.get("type").and_then(|t| t.as_str()) == Some("string");
-            let needs_patch = is_string && matches!(fmt, Some("upload") | Some("markdown-richtext"));
-            if needs_patch {
-                if let Some(obj) = prop.as_object_mut() {
-                    obj.remove("type");
-                    obj.insert("type".to_string(), serde_json::json!(["string", "object"]));
-                }
-            } else {
-                patch_upload_types_recursive(prop);
-            }
+            patch_upload_types_recursive(prop);
         }
     }
     if let Some(items) = schema.get_mut("items") {

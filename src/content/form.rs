@@ -592,6 +592,7 @@ fn render_field(
                 .unwrap_or(Value::Object(Default::default()));
             let existing_items = value.and_then(|v| v.as_array());
             let mut items_html = String::new();
+            let items_is_object = items_schema.get("properties").is_some();
 
             if let Some(items) = existing_items {
                 for (i, item) in items.iter().enumerate() {
@@ -605,30 +606,44 @@ fn render_field(
                             escape_html_attr(&preview)
                         )
                     };
+                    let item_html = if items_is_object {
+                        render_form_fields_inner(&items_schema, Some(item), &item_name, ref_options, app_slug, depth + 1, array_depth)
+                    } else {
+                        let item_type = items_schema.get("type").and_then(|t| t.as_str()).unwrap_or("string");
+                        let item_format = items_schema.get("format").and_then(|f| f.as_str());
+                        let item_label = items_schema.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                        render_field(&item_name, item_label, item_type, item_format, &items_schema, Some(item), false, ref_options, app_slug, depth + 1, array_depth)
+                    };
                     items_html.push_str(&format!(
                         r#"<div class="array-item wf-framed" data-index="{i}">
   <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
     {preview_html}
     <button type="button" onclick="this.closest('.array-item').remove()" style="color: var(--err); background: none; border: none; cursor: pointer; flex-shrink: 0;">Remove</button>
   </div>
-  {}
+  {item_html}
 </div>"#,
-                        render_form_fields_inner(&items_schema, Some(item), &item_name, ref_options, app_slug, depth + 1, array_depth)
                     ));
                 }
             }
 
             let placeholder = format!("__IDX_{array_depth}__");
             let template_name = format!("{name}[{placeholder}]");
-            let template_html = render_form_fields_inner(
-                &items_schema,
-                None,
-                &template_name,
-                ref_options,
-                app_slug,
-                depth + 1,
-                array_depth + 1,
-            );
+            let template_html = if items_is_object {
+                render_form_fields_inner(
+                    &items_schema,
+                    None,
+                    &template_name,
+                    ref_options,
+                    app_slug,
+                    depth + 1,
+                    array_depth + 1,
+                )
+            } else {
+                let item_type = items_schema.get("type").and_then(|t| t.as_str()).unwrap_or("string");
+                let item_format = items_schema.get("format").and_then(|f| f.as_str());
+                let item_label = items_schema.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                render_field(&template_name, item_label, item_type, item_format, &items_schema, None, false, ref_options, app_slug, depth + 1, array_depth + 1)
+            };
 
             // Array constraints (hint only)
             let mut hints = Vec::new();
@@ -681,6 +696,12 @@ fn array_item_preview(item: &Value, items_schema: &Value) -> String {
             s.to_string()
         };
         return truncated;
+    }
+    // For upload objects (non-object item schema), show filename
+    if let Some(obj) = item.as_object() {
+        if let Some(Value::String(filename)) = obj.get("filename") {
+            return filename.clone();
+        }
     }
     // For object items, show first 1-2 string property values
     if let Some(obj) = item.as_object() {
@@ -842,6 +863,57 @@ fn form_data_to_json_inner(
     Value::Object(obj)
 }
 
+fn parse_simple_form_value(
+    field_type: &str,
+    format: Option<&str>,
+    form: &[(String, String)],
+    field_name: &str,
+) -> Option<Value> {
+    match (field_type, format) {
+        ("string", Some("upload")) => {
+            let current_key = format!("{field_name}.__current");
+            if let Some((_, val)) = form.iter().find(|(k, _)| k == &current_key) {
+                serde_json::from_str(val).ok()
+            } else {
+                None
+            }
+        }
+        ("boolean", _) => {
+            let val = form
+                .iter()
+                .rev()
+                .find(|(k, _)| k == field_name)
+                .map(|(_, v)| v.as_str())
+                .unwrap_or("false");
+            Some(Value::Bool(val == "true"))
+        }
+        ("number", _) => {
+            let val = form.iter().find(|(k, _)| k == field_name).map(|(_, v)| v.as_str());
+            match val {
+                Some(v) if !v.is_empty() => v
+                    .parse::<f64>()
+                    .ok()
+                    .and_then(|n| serde_json::Number::from_f64(n).map(Value::Number)),
+                _ => None,
+            }
+        }
+        ("integer", _) => {
+            let val = form.iter().find(|(k, _)| k == field_name).map(|(_, v)| v.as_str());
+            match val {
+                Some(v) if !v.is_empty() => v.parse::<i64>().ok().map(|n| Value::Number(n.into())),
+                _ => None,
+            }
+        }
+        _ => {
+            let val = form.iter().find(|(k, _)| k == field_name).map(|(_, v)| v.clone());
+            match val {
+                Some(v) if !v.is_empty() => Some(Value::String(v)),
+                _ => None,
+            }
+        }
+    }
+}
+
 fn parse_array_form_data(
     schema: &Value,
     form: &[(String, String)],
@@ -871,11 +943,22 @@ fn parse_array_form_data(
     }
     indices.sort();
 
+    let items_is_object = items_schema.get("properties").is_some();
+    let item_type = items_schema
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("string");
+    let item_format = items_schema.get("format").and_then(|f| f.as_str());
+
     let items: Vec<Value> = indices
         .into_iter()
-        .map(|i| {
+        .filter_map(|i| {
             let item_prefix = format!("{prefix}[{i}]");
-            form_data_to_json_inner(items_schema, form, &item_prefix, depth)
+            if items_is_object {
+                Some(form_data_to_json_inner(items_schema, form, &item_prefix, depth))
+            } else {
+                parse_simple_form_value(item_type, item_format, form, &item_prefix)
+            }
         })
         .collect();
 

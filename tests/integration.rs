@@ -9648,3 +9648,109 @@ async fn upload_in_array_saves_correctly() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+const DIRECT_UPLOAD_ARRAY_SCHEMA: &str = r#"{
+    "x-substrukt": {"title": "Files", "slug": "files", "storage": "directory"},
+    "type": "object",
+    "properties": {
+        "name": {"type": "string", "title": "Name"},
+        "documents": {
+            "type": "array",
+            "title": "Documents",
+            "items": {"type": "string", "format": "upload", "title": "Document"}
+        }
+    },
+    "required": ["name"]
+}"#;
+
+#[tokio::test]
+async fn direct_upload_array_saves_correctly() {
+    let s = TestServer::start().await;
+    s.setup_admin().await;
+    s.create_schema(DIRECT_UPLOAD_ARRAY_SCHEMA).await;
+
+    let csrf = s.get_csrf("/apps/default/content/files/new").await;
+    let file1 = reqwest::multipart::Part::bytes(b"file one data".to_vec())
+        .file_name("report.pdf")
+        .mime_str("application/pdf")
+        .unwrap();
+    let file2 = reqwest::multipart::Part::bytes(b"file two data".to_vec())
+        .file_name("photo.png")
+        .mime_str("image/png")
+        .unwrap();
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("name", "My Documents")
+        .part("documents[0]", file1)
+        .part("documents[1]", file2);
+    let resp = s
+        .client
+        .post(s.url("/apps/default/content/files/new"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER, "Entry should save");
+
+    let token = s.create_api_token("direct-upload-test").await;
+    let api = Client::builder().cookie_store(false).build().unwrap();
+    let resp = api
+        .get(s.url("/api/v1/apps/default/content/files?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let entries = body.as_array().expect("entries");
+    assert_eq!(entries.len(), 1);
+
+    let docs = entries[0]["documents"].as_array().expect("documents array");
+    assert_eq!(docs.len(), 2);
+    assert_eq!(docs[0]["filename"], "report.pdf");
+    assert_eq!(docs[0]["mime"], "application/pdf");
+    assert!(docs[0]["hash"].is_string());
+    assert_eq!(docs[1]["filename"], "photo.png");
+    assert_eq!(docs[1]["mime"], "image/png");
+
+    // Re-save via edit (preserves existing uploads via __current)
+    let csrf = s.get_csrf("/apps/default/content/files/my-documents/edit").await;
+    let edit_html = s
+        .client
+        .get(s.url("/apps/default/content/files/my-documents/edit"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(edit_html.contains("report.pdf"), "edit page should show existing upload");
+
+    let current0 = serde_json::to_string(&docs[0]).unwrap();
+    let current1 = serde_json::to_string(&docs[1]).unwrap();
+    let form = reqwest::multipart::Form::new()
+        .text("_csrf", csrf)
+        .text("name", "My Documents")
+        .text("documents[0].__current", current0)
+        .text("documents[1].__current", current1);
+    let resp = s
+        .client
+        .post(s.url("/apps/default/content/files/my-documents"))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER, "Edit should save");
+
+    let resp = api
+        .get(s.url("/api/v1/apps/default/content/files?status=all"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let docs = body[0]["documents"].as_array().expect("preserved docs");
+    assert_eq!(docs.len(), 2, "uploads should be preserved on re-save");
+    assert_eq!(docs[0]["filename"], "report.pdf");
+    assert_eq!(docs[1]["filename"], "photo.png");
+}
